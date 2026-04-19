@@ -1,0 +1,390 @@
+// ─────────────────────────────────────────────────────────
+//  PRISMA SCHEMA – Chatbot Fantasías (Multi-Branch)
+//  Base de datos: MySQL
+// ─────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Sucursal (Branch) ──
+model Branch {
+  id              Int       @id @default(autoincrement())
+  name            String    @db.VarChar(100)
+  city            String    @db.VarChar(80)
+  address         String?   @db.VarChar(200)
+  phone           String?   @db.VarChar(20)
+  
+  // Coordenadas para proximidad
+  latitude        Float?
+  longitude       Float?
+
+  isActive        Boolean   @default(true)
+  isAuthorized    Boolean   @default(false)
+  
+  // Wompi per branch (Encrypted)
+  wompiMerchantId    String?   @db.VarChar(100)
+  wompiPublicKey     String?   @db.VarChar(200)
+  wompiPrivateKey    String?   @db.Text
+  wompiIntegritySecret String? @db.Text
+  
+  // Notificaciones WhatsApp
+  notificationGroupName String? @db.VarChar(200)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relaciones
+  users           User[]
+  contacts        Contact[]
+  products        Product[]
+  orders          Order[]
+  conversations   Conversation[]
+  campaigns       Campaign[]
+  metrics         DailyMetric[]
+  employeeAccess  EmployeeAccess[]
+
+  @@index([city])
+  @@index([isActive])
+}
+
+// ── Acceso Empleados ──
+model EmployeeAccess {
+  id              Int       @id @default(autoincrement())
+  phone           String    @db.VarChar(20)
+  name            String?   @db.VarChar(100)
+
+  // Link a la sucursal
+  branchId        Int
+  branch          Branch    @relation(fields: [branchId], references: [id])
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([phone, branchId])
+  @@index([branchId])
+}
+
+// ── Usuario / Admin ──
+model User {
+  id              Int       @id @default(autoincrement())
+  username        String    @unique @db.VarChar(50)
+  email           String    @unique @db.VarChar(100)
+  password        String    @db.VarChar(255) // Hash Bcrypt
+  role            UserRole  @default(MANAGER)
+  
+  isApproved      Boolean   @default(false)
+  isActive        Boolean   @default(true)
+
+  branchId        Int?
+  branch          Branch?   @relation(fields: [branchId], references: [id])
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([branchId])
+}
+
+// ── Contacto / Cliente ──
+model Contact {
+  id              Int       @id @default(autoincrement())
+  phone           String    @db.VarChar(20)
+  name            String?   @db.VarChar(100)
+  city            String?   @db.VarChar(80)
+
+  // Multi-tenant
+  branchId        Int?
+  branch          Branch?   @relation(fields: [branchId], references: [id])
+
+  // Clasificación IA
+  clientType      ClientType    @default(NUEVO)
+  confidenceLevel ConfidenceLevel @default(BAJO)
+  purchaseStage   PurchaseStage @default(CURIOSO)
+
+  // Métricas del cliente
+  totalPurchases  Int       @default(0)
+  totalSpent      Decimal   @default(0) @db.Decimal(12, 2)
+  lastPurchaseAt  DateTime?
+  lastMessageAt   DateTime?
+  messageCount    Int       @default(0)
+
+  // Segmentación
+  tags            String?   @db.Text
+  notes           String?   @db.Text
+  isActive        Boolean   @default(true)
+  isBlocked       Boolean   @default(false)
+
+  // Timestamps
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relaciones
+  conversations   Conversation[]
+  orders          Order[]
+
+  @@unique([phone, branchId]) // Un teléfono es único dentro de una sucursal
+  @@index([city])
+  @@index([clientType])
+  @@index([isActive])
+  @@index([branchId])
+}
+
+// ── Conversación ──
+model Conversation {
+  id              Int       @id @default(autoincrement())
+  contactId       Int
+  contact         Contact   @relation(fields: [contactId], references: [id])
+  
+  // Multi-tenant
+  branchId        Int?
+  branch          Branch?   @relation(fields: [branchId], references: [id])
+
+  // Estado
+  status          ConversationStatus @default(ACTIVE)
+  currentFlow     String?   @db.VarChar(50)
+
+  // Contexto para IA (historial resumido)
+  context         Json?
+
+  // Métricas
+  messageCount    Int       @default(0)
+  convertedToSale Boolean   @default(false)
+  escalated       Boolean   @default(false)
+
+  // Timestamps
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  // Relaciones
+  messages        Message[]
+
+  @@index([contactId])
+  @@index([branchId])
+  @@index([status])
+}
+
+// ── Mensaje individual ──
+model Message {
+  id              Int       @id @default(autoincrement())
+  conversationId  Int
+  conversation    Conversation @relation(fields: [conversationId], references: [id])
+
+  role            MessageRole
+  content         String    @db.Text
+  messageType     String    @default("text") @db.VarChar(20)
+
+  // Metadata
+  waMessageId     String?   @db.VarChar(100)
+  tokensUsed      Int?
+
+  createdAt       DateTime  @default(now())
+
+  @@index([conversationId])
+}
+
+// ── Producto ──
+model Product {
+  id              Int       @id @default(autoincrement())
+  name            String    @db.VarChar(200)
+  description     String?   @db.Text
+  price           Decimal   @db.Decimal(12, 2)
+
+  // Multi-tenant
+  branchId        Int?
+  branch          Branch?   @relation(fields: [branchId], references: [id])
+
+  // Categorización emocional
+  category        ProductCategory
+  emotionalDesc   String?   @db.Text
+  isFeatured      Boolean   @default(false)
+
+  // Wompi
+  wompiPaymentLink  String?   @db.VarChar(500)
+
+  // Stock
+  stock           Int       @default(0)
+  isAvailable     Boolean   @default(true)
+
+  // Media
+  imageUrl        String?   @db.VarChar(500)
+
+  // Datos del Excel original
+  excelRef        String?   @db.VarChar(50)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relaciones
+  orderItems      OrderItem[]
+
+  @@index([category])
+  @@index([branchId])
+  @@index([isFeatured])
+}
+
+// ── Pedido / Orden ──
+model Order {
+  id              Int       @id @default(autoincrement())
+  contactId       Int
+  contact         Contact   @relation(fields: [contactId], references: [id])
+
+  // Multi-tenant
+  branchId        Int?
+  branch          Branch?   @relation(fields: [branchId], references: [id])
+
+  // Pago
+  wompiTransactionId String?  @db.VarChar(200)
+  wompiPaymentLink  String?   @db.VarChar(500)
+  amount          Decimal   @db.Decimal(12, 2)
+  currency        String    @default("cop") @db.VarChar(10)
+  status          OrderStatus @default(PENDING)
+
+  // Envío
+  shippingCity    String?   @db.VarChar(80)
+  shippingAddress String?   @db.Text
+  trackingNumber  String?   @db.VarChar(100)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relaciones
+  items           OrderItem[]
+
+  @@index([contactId])
+  @@index([branchId])
+  @@index([status])
+}
+
+// ── Items del pedido ──
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  orderId   Int
+  order     Order   @relation(fields: [orderId], references: [id])
+  productId Int
+  product   Product @relation(fields: [productId], references: [id])
+  quantity  Int     @default(1)
+  price     Decimal @db.Decimal(12, 2)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+// ── Campañas ──
+model Campaign {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  message     String    @db.Text
+  targetFilter Json?
+
+  // Multi-tenant
+  branchId    Int?
+  branch      Branch?   @relation(fields: [branchId], references: [id])
+
+  // Métricas
+  totalTargets  Int     @default(0)
+  sentCount     Int     @default(0)
+  deliveredCount Int    @default(0)
+  responseCount Int     @default(0)
+
+  status      CampaignStatus @default(DRAFT)
+  scheduledAt DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([branchId])
+  @@index([status])
+}
+
+// ── Métricas diarias ──
+model DailyMetric {
+  id                    Int      @id @default(autoincrement())
+  date                  DateTime @db.Date
+  
+  // Multi-tenant
+  branchId              Int?
+  branch                Branch?  @relation(fields: [branchId], references: [id])
+
+  totalMessages         Int      @default(0)
+  totalConversations    Int      @default(0)
+  newContacts           Int      @default(0)
+  salesCount            Int      @default(0)
+  salesAmount           Decimal  @default(0) @db.Decimal(12, 2)
+  chatToSaleConversion  Decimal  @default(0) @db.Decimal(5, 2)
+  avgConversationTimeMs Int      @default(0)
+  escalationCount       Int      @default(0)
+  topProducts           Json?
+
+  @@unique([date, branchId])
+  @@index([branchId])
+}
+
+// ── Enums ──
+enum UserRole {
+  ADMIN
+  MANAGER
+}
+
+enum ClientType {
+  NUEVO
+  TIMIDO
+  EXPLORADOR
+  DECIDIDO
+  RECURRENTE
+}
+
+enum ConfidenceLevel {
+  BAJO
+  MEDIO
+  ALTO
+}
+
+enum PurchaseStage {
+  CURIOSO
+  INTERESADO
+  DECIDIDO
+}
+
+enum ConversationStatus {
+  ACTIVE
+  CLOSED
+  ESCALATED
+  PAUSED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ProductCategory {
+  CONEXION_PAREJA
+  EXPLORACION_SUAVE
+  SORPRESAS_DISCRETAS
+  EXPERIENCIAS_INTENSAS
+}
+
+enum OrderStatus {
+  PENDING
+  PAYMENT_SENT
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  CANCELLED
+}

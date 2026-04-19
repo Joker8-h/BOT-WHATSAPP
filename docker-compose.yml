@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # ── Base de datos MySQL ──
+  mysql:
+    image: mysql:8.0
+    container_name: fantasias-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_fantasias_2024
+      MYSQL_DATABASE: fantasias_chatbot
+      MYSQL_USER: fantasias
+      MYSQL_PASSWORD: fantasias_2024
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - fantasias-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Chatbot Fantasías ──
+  chatbot:
+    build: ./backend
+    container_name: fantasias-chatbot
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: mysql://fantasias:fantasias_2024@mysql:3306/fantasias_chatbot
+    ports:
+      - "3000:3000"
+    volumes:
+      - whatsapp_session:/app/.wwebjs_auth
+      - ./backend/data:/app/data
+      - ./backend/logs:/app/logs
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - fantasias-network
+
+volumes:
+  mysql_data:
+  whatsapp_session:
+
+networks:
+  fantasias-network:
+    driver: bridge
