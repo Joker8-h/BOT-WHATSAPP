@@ -1,71 +1,120 @@
 // ─────────────────────────────────────────────────────────
 //  UTILS: Excel Parser — Importa productos desde Excel
 // ─────────────────────────────────────────────────────────
-const XLSX = require('xlsx');
+const ExcelJS = require('exceljs');
 const path = require('path');
 const logger = require('./logger');
+const cloudinary = require('../config/cloudinary');
 
 /**
- * Lee un archivo Excel y retorna un array de objetos
- * @param {string} filePath — Ruta al archivo .xlsx
- * @param {string} sheetName — Nombre de la hoja (opcional, usa la primera)
- * @returns {array} Array de objetos con los datos
+ * Sube un buffer de imagen a Cloudinary
+ * @param {Buffer} buffer 
+ * @returns {Promise<string>} URL segura de la imagen
  */
-function parseExcel(filePath, sheetName = null) {
+function uploadBufferToCloudinary(buffer) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder: 'fantasias_products' },
+      (error, result) => {
+        if (error) {
+          logger.error('Error subiendo imagen a Cloudinary desde Excel:', error);
+          resolve(null); // Fallback suave
+        } else {
+          resolve(result.secure_url);
+        }
+      }
+    );
+    stream.end(buffer);
+  });
+}
+
+/**
+ * Lee un archivo Excel, extrae imágenes incrustadas, y retorna un array de objetos
+ * @param {string} filePath — Ruta al archivo .xlsx
+ * @returns {Promise<array>} Array de objetos con los datos y URLs de imágenes
+ */
+async function parseExcel(filePath) {
   try {
     const absolutePath = path.resolve(filePath);
-    const workbook = XLSX.readFile(absolutePath);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(absolutePath);
 
-    const sheet = sheetName
-      ? workbook.Sheets[sheetName]
-      : workbook.Sheets[workbook.SheetNames[0]];
-
+    const sheet = workbook.worksheets[0]; // Usar la primera hoja
     if (!sheet) {
-      throw new Error(`Hoja "${sheetName || 'primera'}" no encontrada`);
+      throw new Error(`Hoja no encontrada`);
     }
 
-    const data = XLSX.utils.sheet_to_json(sheet, {
-      defval: '', // Valor por defecto para celdas vacías
-      raw: false, // Convertir todo a strings
+    // 1. Obtener todas las filas (evitando fila 1 si es encabezado)
+    const rowsData = [];
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return; // Saltar encabezados
+
+      const values = row.values;
+      // ExcelJS row.values[1] es la columna A, [2] es B, etc.
+      rowsData.push({
+        rowNumber,
+        name: values[2] ? String(values[2]).trim() : '', // Columna B: NOMBRE
+        features: values[3] ? String(values[3]).trim() : '', // Columna C: CARACTERISTICAS
+        stock: parseInt(values[4]) || 0, // Columna D: CANTIDAD
+        price: parseFloat(String(values[5] || '0').replace(/[^0-9.]/g, '')) || 0, // Columna E: PRECIO
+        imageUrl: null // Se llenará en el paso 2 si hay imagen
+      });
     });
 
-    logger.info(`📊 Excel parseado: ${data.length} filas de "${absolutePath}"`);
-    return data;
+    // 2. Extraer imágenes y subirlas a Cloudinary
+    logger.info(`🔍 Buscando imágenes incrustadas en el Excel...`);
+    const images = sheet.getImages();
+    
+    for (const image of images) {
+      // image.range.tl.nativeRow es el índice base 0 de la fila donde está la esquina sup izq. de la imagen
+      const imgRowNumber = image.range.tl.nativeRow + 1; 
+      // image.range.tl.nativeCol es la columna (0 = A, 1 = B)
+      const imgColNumber = image.range.tl.nativeCol;
+
+      // Buscamos si la imagen está en la columna A (0)
+      if (imgColNumber === 0) {
+        const media = workbook.model.media.find(m => m.index === image.imageId);
+        if (media && media.buffer) {
+          // Encontrar a qué producto pertenece esta fila
+          const targetRow = rowsData.find(r => r.rowNumber === imgRowNumber);
+          if (targetRow) {
+            logger.info(`☁️ Subiendo imagen de la fila ${imgRowNumber}...`);
+            const url = await uploadBufferToCloudinary(media.buffer);
+            if (url) {
+              targetRow.imageUrl = url;
+            }
+          }
+        }
+      }
+    }
+
+    logger.info(`📊 Excel parseado: ${rowsData.length} filas procesadas de "${absolutePath}"`);
+    return rowsData;
   } catch (error) {
-    logger.error('Error parseando Excel:', error);
+    logger.error('Error parseando Excel asíncrono:', error);
     throw error;
   }
 }
 
 /**
  * Mapea datos del Excel al formato de producto de la BD
- * Adaptable según las columnas del Excel del usuario
  */
 function mapExcelToProducts(excelData) {
   return excelData.map((row, index) => {
-    // Intentar detectar columnas comunes
-    const name = row.Nombre || row.nombre || row.NOMBRE || row.Producto || row.producto || row.Name || `Producto ${index + 1}`;
-    const description = row.Descripcion || row.descripcion || row.DESCRIPCION || row.Description || '';
-    const rawPrice = row.Precio || row.precio || row.PRECIO || row.Price || row.Valor || row.valor || '0';
-    const price = parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || 0;
-    const category = mapCategory(row.Categoria || row.categoria || row.CATEGORIA || row.Category || '');
-    const stock = parseInt(row.Stock || row.stock || row.STOCK || row.Cantidad || row.cantidad || '0') || 0;
-    const ref = row.Ref || row.ref || row.REF || row.Codigo || row.codigo || row.SKU || row.sku || `EX-${index + 1}`;
-    const imageUrl = row.Imagen || row.imagen || row.ImageUrl || row.URL || '';
-    const branchId = row.Sucursal || row.sucursal || row.BranchId || row.branchId || null;
+    const category = mapCategory(''); // Por defecto
 
     return {
-      name: String(name).trim(),
-      description: String(description).trim(),
-      price,
+      name: row.name || `Producto ${index + 1}`,
+      description: row.features, // Usamos CARACTERISTICAS como description
+      price: row.price,
       category,
-      emotionalDesc: generateEmotionalDescription(name, category),
+      emotionalDesc: generateEmotionalDescription(row.name || `Producto ${index + 1}`, category),
       isFeatured: false,
-      stock,
-      isAvailable: price > 0,
-      imageUrl: String(imageUrl).trim() || null,
-      excelRef: String(ref).trim(),
-      branchId: branchId ? parseInt(branchId) : null
+      stock: row.stock,
+      isAvailable: row.price > 0,
+      imageUrl: row.imageUrl,
+      excelRef: `EX-${row.rowNumber}`,
+      branchId: null
     };
   }).filter(p => p.name && p.price > 0);
 }

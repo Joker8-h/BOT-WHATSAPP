@@ -416,8 +416,8 @@ class AdminController {
 
       logger.info(`📥 Archivo Excel recibido: ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`);
 
-      // 1. Parsear Excel
-      const rawData = parseExcel(req.file.path);
+      // 1. Parsear Excel (Ahora extrae imágenes asíncronamente)
+      const rawData = await parseExcel(req.file.path);
       if (rawData.length === 0) {
         return res.status(400).json({ success: false, error: 'El archivo está vacío' });
       }
