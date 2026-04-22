@@ -17,17 +17,28 @@ class GoogleSheetsService {
   _initAuth() {
     if (this.auth) return this.auth;
 
-    if (!fs.existsSync(this.keyFile)) {
-      logger.warn('⚠️ Google Service Account key file NOT FOUND. Two-way sync disabled.');
-      return null;
-    }
-
     try {
-      this.auth = new google.auth.GoogleAuth({
-        keyFile: this.keyFile,
-        scopes: this.scopes,
-      });
-      return this.auth;
+      // Intentar primero con variable de entorno (para producción/seguridad)
+      if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+        this.auth = new google.auth.GoogleAuth({
+          credentials,
+          scopes: this.scopes,
+        });
+        return this.auth;
+      }
+
+      // Si no hay env var, buscar el archivo físico (si existe)
+      if (fs.existsSync(this.keyFile)) {
+        this.auth = new google.auth.GoogleAuth({
+          keyFile: this.keyFile,
+          scopes: this.scopes,
+        });
+        return this.auth;
+      }
+
+      logger.warn('⚠️ Google Service Account NOT CONFIGURED (No env var nor key file). Two-way sync disabled.');
+      return null;
     } catch (error) {
       logger.error('❌ Error initializing Google Auth:', error);
       return null;

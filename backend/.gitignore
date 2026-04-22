@@ -7,3 +7,5 @@ data/database.sqlite
 dist/
 logs/
 *.log
+google-service-account.json
+src/config/google-service-account.json
