@@ -55,6 +55,25 @@ class WompiController {
           }
         });
 
+        // DESCONTAR STOCK Y ACTUALIZAR EXCEL (SI APLICA)
+        const googleSheetsService = require('../services/googleSheetsService');
+        for (const item of order.items) {
+          const product = item.product;
+          const newStock = Math.max(0, product.stock - item.quantity);
+          
+          // 1. Actualizar DB
+          await prisma.product.update({
+            where: { id: product.id },
+            data: { 
+              stock: newStock,
+              isAvailable: newStock > 0
+            }
+          });
+
+          // 2. Intentar actualizar Google Sheets (Dos-Vías)
+          await googleSheetsService.updateStock(product.id, newStock);
+        }
+
         // NOTIFICAR AL CLIENTE
         const chatId = `${order.contact.phone}@c.us`;
         const customerMsg = `✅ *¡Pago confirmado!* \n\nHola ${order.contact.name || ''}, hemos recibido tu pago por valor de ${formatCOP(order.amount)}. \n\nEstamos preparando tu pedido. Pronto te notificaremos cuando sea despachado. ¡Gracias por confiar en Fantasías! 🌹`;
@@ -67,6 +86,8 @@ class WompiController {
                                 `📍 *Sucursal:* ${order.branch.name} (${order.branch.city})\n` +
                                 `👤 *Cliente:* ${order.contact.name || order.contact.phone}\n` +
                                 `📦 *Productos:*\n${itemsList}\n\n` +
+                                `🏠 *DIRECCIÓN DE ENVÍO:* \n${order.shippingAddress || 'No especificada'}\n` +
+                                `🏙️ *Ciudad:* ${order.shippingCity || 'No especificada'}\n\n` +
                                 `💳 *Ref Wompi:* ${transaction.id}\n\n` +
                                 `🚀 ¡A preparar para despacho!`;
         

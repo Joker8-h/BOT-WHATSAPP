@@ -44,6 +44,13 @@ class AIService {
       });
       const closestBranch = this.findClosestBranch(contact, branches);
 
+      // 5b. Obtener última dirección de envío si existe
+      const lastOrder = contact?.id ? await prisma.order.findFirst({
+        where: { contactId: contact.id },
+        orderBy: { createdAt: 'desc' },
+        select: { shippingAddress: true, shippingCity: true }
+      }) : null;
+
       // 6. Construir el system prompt con contexto de productos, sucursales y LOGÍSTICA
       const systemPrompt = buildSystemPrompt(
         {
@@ -51,7 +58,9 @@ class AIService {
           city: contact?.city,
           clientType,
           purchaseStage: classification?.purchaseStage || contact?.purchaseStage || 'CURIOSO',
-          closestBranch: closestBranch ? `${closestBranch.name} (${closestBranch.address})` : 'nuestra sede principal'
+          closestBranch: closestBranch ? `${closestBranch.name} (${closestBranch.address})` : 'nuestra sede principal',
+          lastOrderAddress: lastOrder?.shippingAddress,
+          lastOrderCity: lastOrder?.shippingCity
         },
         products,
         currentBranch || closestBranch || {}
@@ -170,10 +179,31 @@ class AIService {
     if (response.includes('[ESCALAR]')) actions.shouldEscalate = true;
     if (response.includes('domicilio') && response.length < 500) actions.deliveryOption = 'DOMICILIO';
     
+    const nameMatch = response.match(/\[CAPTURAR_NOMBRE:(.+?)\]/);
+    if (nameMatch) {
+      actions.capturedName = nameMatch[1].trim();
+    }
+
+    const cityMatch = response.match(/\[CAPTURAR_CIUDAD:(.+?)\]/);
+    if (cityMatch) {
+      actions.capturedCity = cityMatch[1].trim();
+    }
+
+    const addressMatch = response.match(/\[CAPTURAR_DIRECCION:(.+?)\]/);
+    if (addressMatch) {
+      actions.capturedAddress = addressMatch[1].trim();
+    }
+
+    const neighborhoodMatch = response.match(/\[CAPTURAR_BARRIO:(.+?)\]/);
+    if (neighborhoodMatch) {
+      actions.capturedNeighborhood = neighborhoodMatch[1].trim();
+    }
+
     const saleMatch = response.match(/\[CERRAR_VENTA:(.+?)\]/);
     if (saleMatch) {
       actions.shouldCloseSale = true;
-      actions.productToSell = saleMatch[1].trim();
+      // Convertir a array de nombres, limpiando espacios
+      actions.productsToSell = saleMatch[1].split(',').map(p => p.trim());
     }
 
     // Extraer imágenes
@@ -190,6 +220,10 @@ class AIService {
       .replace(/\[ESCALAR\]/g, '')
       .replace(/\[CERRAR_VENTA:.+?\]/g, '')
       .replace(/\[IMAGEN:.+?\]/g, '')
+      .replace(/\[CAPTURAR_NOMBRE:.+?\]/g, '')
+      .replace(/\[CAPTURAR_CIUDAD:.+?\]/g, '')
+      .replace(/\[CAPTURAR_DIRECCION:.+?\]/g, '')
+      .replace(/\[CAPTURAR_BARRIO:.+?\]/g, '')
       .trim();
   }
 }

@@ -416,8 +416,8 @@ class AdminController {
 
       logger.info(`📥 Archivo Excel recibido: ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`);
 
-      // 1. Parsear Excel
-      const rawData = parseExcel(req.file.path);
+      // 1. Parsear Excel (Ahora extrae imágenes asíncronamente)
+      const rawData = await parseExcel(req.file.path);
       if (rawData.length === 0) {
         return res.status(400).json({ success: false, error: 'El archivo está vacío' });
       }
@@ -557,6 +557,30 @@ class AdminController {
     }
   }
 
+  async toggleConversationStatus(req, res) {
+    try {
+      const id = parseInt(req.params.id);
+      const { status } = req.body; // 'ACTIVE', 'PAUSED', 'ESCALATED'
+      const { branchId, role } = req.user;
+
+      const where = { id };
+      if (role === 'MANAGER') where.branchId = branchId;
+
+      const conversation = await prisma.conversation.findFirst({ where });
+      if (!conversation) return res.status(404).json({ success: false, error: 'Conversación no encontrada' });
+
+      const updated = await prisma.conversation.update({
+        where: { id },
+        data: { status }
+      });
+
+      logger.info(`💬 Estado de conversación ${id} cambiado a: ${status}`);
+      res.json({ success: true, data: updated });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
   // ═══════════════════════════════════════
   //  CAMPAÑAS
   // ═══════════════════════════════════════
@@ -597,7 +621,19 @@ class AdminController {
       if (!phone || !message) {
         return res.status(400).json({ success: false, error: 'phone y message son requeridos' });
       }
-      const chatId = phone.replace('+', '') + '@c.us';
+      
+      const chatId = phone.replace('+', '').replace(' ', '') + '@c.us';
+      
+      // Pausar automáticamente la conversación si existe
+      const contact = await prisma.contact.findFirst({ where: { phone: phone.replace('+', '').replace(' ', ''), branchId } });
+      if (contact) {
+        await prisma.conversation.updateMany({
+          where: { contactId: contact.id, status: 'ACTIVE' },
+          data: { status: 'PAUSED' }
+        });
+        logger.info(`🤫 Bot pausado automáticamente para ${phone} tras mensaje manual.`);
+      }
+
       const sent = await whatsappService.sendMessage(branchId, chatId, message);
       res.json({ success: sent });
     } catch (error) {
@@ -930,6 +966,75 @@ class AdminController {
       res.status(500).json({ success: false, error: error.message });
     }
   }
+
+  // ═══════════════════════════════════════
+  //  SYNC SOURCES (GOOGLE DRIVE / EXCEL)
+  // ═══════════════════════════════════════
+  async getSyncSources(req, res) {
+    try {
+      const { branchId } = req.user;
+      const sources = await prisma.syncSource.findMany({
+        where: { branchId },
+        orderBy: { createdAt: 'desc' }
+      });
+      res.json({ success: true, data: sources });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async createSyncSource(req, res) {
+    try {
+      const { branchId } = req.user;
+      const { name, url } = req.body;
+      if (!name || !url) return res.status(400).json({ success: false, error: 'Nombre y URL son requeridos' });
+
+      const source = await prisma.syncSource.create({
+        data: { name, url, branchId }
+      });
+
+      res.json({ success: true, data: source });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async deleteSyncSource(req, res) {
+    try {
+      const { branchId } = req.user;
+      const id = parseInt(req.params.id);
+      
+      const source = await prisma.syncSource.findFirst({ where: { id, branchId } });
+      if (!source) return res.status(404).json({ success: false, error: 'Fuente no encontrada' });
+
+      await prisma.syncSource.delete({ where: { id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async triggerSync(req, res) {
+    try {
+      const { branchId } = req.user;
+      const id = parseInt(req.params.id);
+      const syncService = require('../services/syncService');
+
+      const source = await prisma.syncSource.findFirst({ 
+        where: { id, branchId },
+        include: { branch: true }
+      });
+      if (!source) return res.status(404).json({ success: false, error: 'Fuente no encontrada' });
+
+      // No esperamos a que termine para no bloquear el request
+      syncService.syncSource(source);
+
+      res.json({ success: true, message: 'Sincronización iniciada en segundo plano' });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
 }
+
 
 module.exports = new AdminController();

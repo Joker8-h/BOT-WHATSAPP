@@ -13,6 +13,8 @@ const path = require('path');
 const fs = require('fs');
 
 const logger = require('./src/utils/logger');
+const cron = require('node-cron');
+const syncService = require('./src/services/syncService');
 const { connectDatabase, disconnectDatabase } = require('./src/config/database');
 const whatsappService = require('./src/services/whatsappService');
 const messageController = require('./src/controllers/messageController');
@@ -40,7 +42,7 @@ app.use(express.urlencoded({ extended: true }));
 // Rate limiting API
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: 6000,
   message: { success: false, error: 'Demasiadas solicitudes, intenta más tarde' },
 });
 app.use('/api', apiLimiter);
@@ -122,8 +124,15 @@ async function startServer() {
     campaignService.startScheduler();
 
     // 4. Autostart de sesiones autorizadas (Fase 1 Estabilidad)
-    // No bloqueamos el arranque del servidor, lo hacemos en background
     whatsappService.initAllActiveSessions();
+
+    // 4. Schedulers
+    // Sincronización automática de inventario (cada 15 minutos)
+    cron.schedule('*/15 * * * *', () => {
+      syncService.syncAll();
+    });
+    // Ejecutar una vez al inicio
+    syncService.syncAll();
 
     // 5. Servidor HTTP
     app.listen(PORT, () => {

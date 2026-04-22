@@ -15,6 +15,9 @@ class WhatsAppService {
     
     this.messageHandler = null;
 
+    // Flag para distinguir desconexiones manuales vs accidentales
+    this.manualLogout = new Set();
+
     // Configuración global anti-ban
     this.maxPerMinute = parseInt(process.env.MAX_MESSAGES_PER_MINUTE) || 20;
 
@@ -87,8 +90,7 @@ class WhatsAppService {
       },
       webVersionCache: {
         type: 'remote',
-        // Fuente confiable y actualizada para versiones de WhatsApp Web
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51.html',
       },
     });
 
@@ -120,14 +122,18 @@ class WhatsAppService {
       this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
       this.clients.delete(branchId);
 
-      // Si la desconexión no fue manual, intentamos re-inicializar
-      // esto generará un nuevo QR automáticamente si la sesión se perdió
-      logger.info(`🔄 Intentando regenerar QR para sucursal ${branchId} tras desconexión en 5s...`);
-      setTimeout(() => {
-        this.initializeBranch(branchId).catch(err => 
-          logger.error(`Error re-inicializando tras desconexión en ${branchId}:`, err)
-        );
-      }, 5000);
+      // Solo auto-reconectar si NO fue un cierre manual desde el admin
+      if (this.manualLogout.has(branchId)) {
+        logger.info(`🛑 Desconexión MANUAL de sucursal ${branchId}. No se reconectará.`);
+        this.manualLogout.delete(branchId);
+      } else {
+        logger.info(`🔄 Desconexión accidental. Regenerando QR para sucursal ${branchId} en 5s...`);
+        setTimeout(() => {
+          this.initializeBranch(branchId).catch(err => 
+            logger.error(`Error re-inicializando tras desconexión en ${branchId}:`, err)
+          );
+        }, 5000);
+      }
     });
 
     // Handler de mensajes entrantes
@@ -182,16 +188,48 @@ class WhatsAppService {
     try {
       await antiBanDelay();
       
-      // Sanitizar el destinatario por si viene con basura o formato lid
+      // Sanitizar el destinatario
       let chatId = to;
       if (!to.includes('@')) {
-        const cleanPhone = to.replace(/\D/g, ''); // Solo números
+        const cleanPhone = to.replace(/\D/g, ''); 
         chatId = `${cleanPhone}@c.us`;
       }
 
       const chat = await client.getChatById(chatId);
+
+      // --- Lógica de División de Mensajes Largos ---
+      const maxLength = 450;
+      if (text.length > maxLength) {
+        logger.info(`✂️ Mensaje largo detectado (${text.length} chars). Dividiendo...`);
+        
+        // Intentar dividir por párrafos (\n\n) o puntos (.)
+        const parts = [];
+        let remaining = text;
+
+        while (remaining.length > maxLength) {
+          let splitIndex = remaining.lastIndexOf('\n\n', maxLength);
+          if (splitIndex === -1) splitIndex = remaining.lastIndexOf('\n', maxLength);
+          if (splitIndex === -1) splitIndex = remaining.lastIndexOf('. ', maxLength);
+          if (splitIndex === -1) splitIndex = maxLength;
+
+          parts.push(remaining.substring(0, splitIndex).trim());
+          remaining = remaining.substring(splitIndex).trim();
+        }
+        if (remaining) parts.push(remaining);
+
+        // Enviar cada parte con delay de escritura
+        for (const part of parts) {
+          await chat.sendStateTyping();
+          const typingTime = Math.min(part.length * 25, 3000);
+          await new Promise(resolve => setTimeout(resolve, typingTime));
+          await client.sendMessage(chatId, part);
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Delay entre burbujas
+        }
+        return true;
+      }
+
+      // --- Envío Normal (Mensaje Corto) ---
       await chat.sendStateTyping();
-      
       const typingDelay = Math.min(text.length * 30, 3000);
       await new Promise(resolve => setTimeout(resolve, typingDelay));
 
@@ -332,9 +370,16 @@ class WhatsAppService {
   async destroyBranch(branchId) {
     const client = this.clients.get(branchId);
     if (client) {
+      // Marcar como cierre MANUAL para que el evento 'disconnected' NO reconecte
+      this.manualLogout.add(branchId);
+      try {
+        await client.logout(); // Cierra la sesión de WhatsApp (borra credenciales)
+      } catch (e) {
+        logger.warn(`⚠️ No se pudo hacer logout limpio de sucursal ${branchId}:`, e.message);
+      }
       await client.destroy();
       this.clients.delete(branchId);
-      this.sessions.delete(branchId);
+      this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
       return true;
     }
     return false;

@@ -496,3 +496,26 @@ body {
   .page-content { padding: 1rem; }
   .metrics-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ── PRODUCTOS DESACTIVADOS ── */
+.product-card.deactivated {
+  opacity: 0.6;
+  filter: grayscale(0.8);
+  border: 1px dashed var(--text-3);
+  position: relative;
+}
+
+.product-card.deactivated::after {
+  content: 'NO DISPONIBLE';
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: var(--text-2);
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  z-index: 10;
+}

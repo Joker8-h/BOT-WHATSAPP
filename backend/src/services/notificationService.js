@@ -10,28 +10,38 @@ class NotificationService {
    */
   async notifyEmployees(whatsappService, branchId, message) {
     try {
-      // 1. Obtener empleados autorizados de la DB para esta branch
+      // 1. Obtener datos de la sucursal (para el grupo) y empleados
+      const branch = await prisma.branch.findUnique({
+        where: { id: branchId },
+        select: { notificationGroupName: true, name: true }
+      });
+
       const employees = await prisma.employeeAccess.findMany({
         where: { branchId }
       });
 
-      if (employees.length === 0) {
-          logger.warn(`⚠️ No hay empleados configurados en la DB para la sucursal ${branchId}`);
-          return;
-      }
-
       const fullMessage = `🚨 *NOTIFICACIÓN FANTASÍAS* 🚨\n\n${message}`;
 
-      for (const employee of employees) {
-        try {
-          const phone = employee.phone;
-          const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
-          
-          await whatsappService.sendMessage(branchId, formattedPhone, fullMessage);
-          logger.info(`📢 Alerta enviada a empleado ${phone} (${employee.name}) desde sucursal ${branchId}`);
-        } catch (error) {
-          logger.error(`❌ Error enviando alerta a ${employee.phone}:`, error);
+      // 2. Notificar al GRUPO de la sucursal (Si existe)
+      if (branch?.notificationGroupName) {
+        await whatsappService.notifyGroup(branchId, fullMessage);
+      }
+
+      // 3. Notificar a cada empleado INDIVIDUALMENTE
+      if (employees.length > 0) {
+        for (const employee of employees) {
+          try {
+            const phone = employee.phone;
+            const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
+            
+            await whatsappService.sendMessage(branchId, formattedPhone, fullMessage);
+            logger.info(`📢 Alerta enviada a empleado ${phone} (${employee.name})`);
+          } catch (error) {
+            logger.error(`❌ Error enviando alerta individual a ${employee.phone}:`, error);
+          }
         }
+      } else if (!branch?.notificationGroupName) {
+        logger.warn(`⚠️ Sin medios de notificación para sucursal ${branchId} (No hay empleados ni grupo)`);
       }
     } catch (dbError) {
       logger.error('❌ Error consultando empleados para notificaciones:', dbError);

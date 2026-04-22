@@ -213,6 +213,48 @@ class CRMService {
 
     return { totalContacts, activeContacts, todayConversations, totalOrders };
   }
+
+  /**
+   * Crea una orden en la DB
+   */
+  async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress }) {
+    try {
+      return await prisma.order.create({
+        data: {
+          contactId,
+          branchId,
+          amount,
+          status: 'PENDING',
+          shippingCity,
+          shippingAddress,
+          items: {
+            create: items.map(item => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              price: item.price
+            }))
+          }
+        }
+      });
+    } catch (error) {
+      logger.error('Error en crmService.createOrder:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Escala una conversación a humano
+   */
+  async escalateConversation(conversationId) {
+    try {
+      return await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: 'ESCALATED' }
+      });
+    } catch (error) {
+      logger.error('Error escalando conversación:', error);
+    }
+  }
 }
 
 module.exports = new CRMService();

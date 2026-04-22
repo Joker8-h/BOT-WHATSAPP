@@ -6,11 +6,15 @@ import {
   getMetrics, 
   getWompiConfig,
   updateWompiConfig,
+  getSyncSources,
+  createSyncSource,
+  deleteSyncSource,
+  triggerSync,
   formatCOP, 
   formatDate 
 } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { IconPhone, IconShield, IconAlertTriangle, IconActivity, IconLock, IconSave, IconClipboard } from '../components/Icons';
+import { IconPhone, IconShield, IconAlertTriangle, IconActivity, IconLock, IconSave, IconClipboard, IconPlus, IconTrash } from '../components/Icons';
 import Swal from 'sweetalert2';
 
 export default function Settings() {
@@ -27,6 +31,9 @@ export default function Settings() {
       notificationGroupName: ''
   });
   const [wompiStatus, setWompiStatus] = useState({ isConfigured: false, loading: true, saving: false });
+  const [syncSources, setSyncSources] = useState([]);
+  const [newSync, setNewSync] = useState({ name: '', url: '' });
+  const [syncing, setSyncing] = useState(false);
 
   const [formIsDirty, setFormIsDirty] = useState(false);
 
@@ -58,6 +65,9 @@ export default function Settings() {
           }));
           setFormIsDirty(false);
       }
+
+      const syncRes = await getSyncSources();
+      if (syncRes?.success) setSyncSources(syncRes.data);
     } catch (err) {
       console.error("Error loading settings:", err);
     }
@@ -99,6 +109,31 @@ export default function Settings() {
     
     await logoutWhatsApp();
     await loadData(false);
+  };
+
+  const handleAddSync = async (e) => {
+    e.preventDefault();
+    const res = await createSyncSource(newSync);
+    if (res?.success) {
+      setNewSync({ name: '', url: '' });
+      loadData(false);
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Fuente añadida', showConfirmButton: false, timer: 1500 });
+    }
+  };
+
+  const handleDeleteSync = async (id) => {
+    const res = await deleteSyncSource(id);
+    if (res?.success) loadData(false);
+  };
+
+  const handleTriggerSync = async (id) => {
+    setSyncing(true);
+    const res = await triggerSync(id);
+    if (res?.success) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Sincronización iniciada', showConfirmButton: false, timer: 2000 });
+      setTimeout(() => loadData(false), 5000);
+    }
+    setSyncing(false);
   };
 
   const handleWompiSave = async (e) => {
@@ -265,38 +300,41 @@ export default function Settings() {
                     </div>
                 </div>
 
+                <div style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem', color: 'var(--purple)' }}>
+                        <IconPhone />
+                        <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1px' }}>Grupo de Notificación WhatsApp</span>
+                    </div>
+                    <input 
+                        style={{ width: '100%', padding: '0.75rem', background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '0.9rem', color: 'var(--text-1)', outline: 'none' }}
+                        placeholder="Ej: Despachos Popayán"
+                        value={wompiForm.notificationGroupName}
+                        onChange={e => {
+                            setWompiForm({...wompiForm, notificationGroupName: e.target.value});
+                            setFormIsDirty(true);
+                        }}
+                    />
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', marginTop: '0.6rem', lineHeight: 1.4 }}>
+                        Ingresa el nombre del grupo de WhatsApp donde el bot enviará los reportes de ventas automáticos.
+                    </p>
+                </div>
+
                 <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '1rem' }}>
                     <button 
                         type="submit" 
                         className="btn-primary" 
                         disabled={wompiStatus.saving}
+                        style={{ width: '100%', padding: '1rem' }}
                     >
-                        <IconSave /> {wompiStatus.saving ? 'Sincronizando...' : 'Guardar Credenciales'}
+                        <IconSave /> {wompiStatus.saving ? 'Sincronizando...' : 'Guardar Configuración General'}
                     </button>
                 </div>
               </div>
             </form>
         </div>
 
-        {/* Notification Group + Audit */}
+        {/* Audit Card */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-          <div className="card" style={{ background: 'var(--purple)', color: 'white' }}>
-              <div className="card-body">
-                <label style={{ display: 'block', fontSize: '0.6rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1.5px', opacity: 0.7, marginBottom: '0.6rem' }}>Grupo de Notificación</label>
-                <input 
-                    style={{ width: '100%', padding: '0.6rem', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px', fontSize: '0.85rem', color: 'white', outline: 'none' }}
-                    placeholder="Ej: Despachos Popayán"
-                    value={wompiForm.notificationGroupName}
-                    onChange={e => {
-                        setWompiForm({...wompiForm, notificationGroupName: e.target.value});
-                        setFormIsDirty(true);
-                    }}
-                />
-                <p style={{ fontSize: '0.65rem', opacity: 0.5, marginTop: '0.5rem', lineHeight: 1.5 }}>
-                    El bot enviará los detalles de cada venta exitosa a este grupo de WhatsApp.
-                </p>
-              </div>
-          </div>
 
           {isAdmin && (
             <div className="card" style={{ borderLeft: '3px solid var(--purple)', flex: 1 }}>
@@ -330,7 +368,76 @@ export default function Settings() {
             </div>
           )}
         </div>
+
+        {/* ── SECCIÓN: GOOGLE DRIVE SYNC ── */}
+        <div className="card" style={{ gridColumn: '1 / -1', marginTop: '1.5rem', borderTop: '4px solid var(--purple)' }}>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <IconClipboard /> 
+            <div>
+              <div style={{ fontWeight: '900', fontSize: '1rem', color: 'var(--text-1)' }}>Sincronización Google Drive</div>
+              <div style={{ fontWeight: '400', fontSize: '0.7rem', color: 'var(--text-3)' }}>Conecta tus hojas de Excel para actualizar el inventario automáticamente</div>
+            </div>
+          </div>
+          
+          <div className="card-body">
+            <form onSubmit={handleAddSync} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr auto', gap: '1rem', alignItems: 'flex-end', marginBottom: '2rem', padding: '1.5rem', background: 'var(--bg-1)', borderRadius: '12px' }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label style={{ fontSize: '0.65rem', fontWeight: '800', marginBottom: '0.5rem', display: 'block' }}>Nombre de la Fuente</label>
+                <input required value={newSync.name} onChange={e => setNewSync({...newSync, name: e.target.value})} placeholder="Ej: Excel Bodega" 
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--bg-0)' }} />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label style={{ fontSize: '0.65rem', fontWeight: '800', marginBottom: '0.5rem', display: 'block' }}>URL de Google Drive</label>
+                <input required value={newSync.url} onChange={e => setNewSync({...newSync, url: e.target.value})} placeholder="https://docs.google.com/spreadsheets/d/..." 
+                  style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--bg-0)' }} />
+              </div>
+              <button type="submit" className="btn-secondary" style={{ height: '42px', padding: '0 1.5rem' }}>
+                 Añadir
+              </button>
+            </form>
+
+            <div className="sync-list">
+              {syncSources.map(s => (
+                <div key={s.id} className="sync-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.2rem', background: 'var(--bg-0)', borderRadius: '12px', marginBottom: '0.75rem', border: '1px solid var(--border)', boxShadow: '0 2px 4px rgba(0,0,0,0.02)' }}>
+                  <div>
+                    <div style={{ fontWeight: '800', fontSize: '0.9rem', color: 'var(--text-1)' }}>{s.name}</div>
+                    <div style={{ fontSize: '0.65rem', color: 'var(--purple)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '400px', marginTop: '0.2rem' }}>{s.url}</div>
+                    <div style={{ fontSize: '0.7rem', marginTop: '0.6rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                      <span style={{ 
+                        padding: '0.2rem 0.5rem', 
+                        borderRadius: '4px', 
+                        fontSize: '0.6rem', 
+                        fontWeight: '900',
+                        background: s.lastStatus === 'SUCCESS' ? 'rgba(45, 138, 92, 0.1)' : 'rgba(220, 53, 69, 0.1)',
+                        color: s.lastStatus === 'SUCCESS' ? 'var(--green)' : 'var(--red)'
+                      }}>
+                        {s.lastStatus || 'PENDIENTE'}
+                      </span>
+                      <span style={{ color: 'var(--text-3)' }}>
+                        {s.lastSyncAt ? `Última sincronización: ${formatDate(s.lastSyncAt)}` : 'Nunca sincronizado'}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button className="btn-secondary" style={{ fontSize: '0.75rem' }} onClick={() => handleTriggerSync(s.id)} disabled={syncing}>
+                      {syncing ? '...' : 'Sincronizar'}
+                    </button>
+                    <button className="btn-danger" style={{ padding: '0.6rem', borderRadius: '8px' }} onClick={() => handleDeleteSync(s.id)}>
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {syncSources.length === 0 && (
+                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-3)', border: '2px dashed var(--border)', borderRadius: '12px' }}>
+                  No hay fuentes de Drive configuradas.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
+
       <style>{`
         .dot-pulse {
           display: inline-block;

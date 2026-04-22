@@ -93,21 +93,28 @@ export default function Products() {
     load();
   };
 
-  const handleDelete = async (id, name) => {
+  const handleToggleAvailability = async (id, name, currentlyAvailable) => {
+    const action = currentlyAvailable ? 'desactivar' : 'activar';
     const result = await Swal.fire({
-      title: '¿Confirmar desactivación?',
-      text: `El producto "${name}" se marcará como no disponible.`,
+      title: `¿Confirmar ${action}?`,
+      text: currentlyAvailable 
+        ? `El producto "${name}" se marcará como no disponible y el bot no lo ofrecerá.` 
+        : `El producto "${name}" volverá a estar disponible para la venta.`,
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: 'var(--purple)',
+      confirmButtonColor: currentlyAvailable ? '#dc3545' : '#28a745',
       cancelButtonColor: 'var(--text-3)',
-      confirmButtonText: 'Sí, desactivar',
+      confirmButtonText: `Sí, ${action}`,
       cancelButtonText: 'Cancelar'
     });
 
     if (result.isConfirmed) {
-      await deleteProduct(id);
-      Swal.fire('Desactivado', 'El producto ya no aparecerá en el bot.', 'success');
+      if (currentlyAvailable) {
+        await deleteProduct(id); // Backend sets isAvailable: false
+      } else {
+        await updateProduct(id, { isAvailable: true });
+      }
+      Swal.fire(currentlyAvailable ? 'Desactivado' : 'Activado', `El producto ha sido ${currentlyAvailable ? 'desactivado' : 'activado'}.`, 'success');
       load();
     }
   };
@@ -221,7 +228,7 @@ export default function Products() {
 
       <div className="products-grid">
         {products.map(p => (
-          <div key={p.id} className={`product-card ${p.isFeatured ? 'featured' : ''} ${p.stock === 0 ? 'out-of-stock' : p.stock <= 5 ? 'low-stock' : ''}`}>
+          <div key={p.id} className={`product-card ${p.isFeatured ? 'featured' : ''} ${p.isAvailable === false ? 'deactivated' : ''} ${p.stock === 0 ? 'out-of-stock' : p.stock <= 5 ? 'low-stock' : ''}`}>
              <div className="product-image-container">
               {p.imageUrl ? (
                 <img src={p.imageUrl} alt={p.name} className="product-thumb" />
@@ -252,7 +259,11 @@ export default function Products() {
               <div className="prod-actions">
                 <button onClick={() => openStockModal(p)} title="Ajustar stock"><IconBarChart /></button>
                 <button onClick={() => openModal(p)} title="Editar"><IconEdit /></button>
-                <button className="btn-danger" onClick={() => handleDelete(p.id, p.name)} title="Desactivar"><IconTrash /></button>
+                {p.isAvailable !== false ? (
+                  <button className="btn-danger" onClick={() => handleToggleAvailability(p.id, p.name, true)} title="Desactivar"><IconTrash /></button>
+                ) : (
+                  <button className="btn-success" onClick={() => handleToggleAvailability(p.id, p.name, false)} title="Activar" style={{ background: '#28a745', color: 'white' }}><IconPlus /></button>
+                )}
               </div>
             </div>
           </div>

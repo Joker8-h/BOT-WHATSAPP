@@ -6,10 +6,10 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:4000',
-      '/health': 'http://localhost:4000',
-      '/stripe': 'http://localhost:4000',
-      '/payment': 'http://localhost:4000',
+      '/api': 'http://localhost:5000',
+      '/health': 'http://localhost:5000',
+      '/stripe': 'http://localhost:5000',
+      '/payment': 'http://localhost:5000',
     },
   },
   build: {

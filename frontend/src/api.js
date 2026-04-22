@@ -98,6 +98,12 @@ export async function uploadExcel(file) {
   return api('/api/products/upload-excel', { method: 'POST', body: formData });
 }
 
+// ── Sincronización Google Drive / Excel ──
+export const getSyncSources = () => api('/api/sync-sources');
+export const createSyncSource = (data) => api('/api/sync-sources', { method: 'POST', body: JSON.stringify(data) });
+export const deleteSyncSource = (id) => api(`/api/sync-sources/${id}`, { method: 'DELETE' });
+export const triggerSync = (id) => api(`/api/sync-sources/${id}/sync`, { method: 'POST' });
+
 // ── Contacts ──
 export const getContacts = (params = '') => api(`/api/contacts?${params}`);
 export const getContact = (id) => api(`/api/contacts/${id}`);

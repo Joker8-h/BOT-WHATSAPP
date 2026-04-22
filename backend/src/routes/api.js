@@ -131,10 +131,17 @@ api.get('/inventory/global-search', isAdmin, (req, res) => adminController.searc
 // Upload Excel (Carga a la sucursal del usuario)
 api.post('/products/upload-excel', upload.single('file'), (req, res) => adminController.uploadExcel(req, res));
 
+// ── Sincronización Google Drive / Excel ──
+api.get('/sync-sources', (req, res) => adminController.getSyncSources(req, res));
+api.post('/sync-sources', (req, res) => adminController.createSyncSource(req, res));
+api.delete('/sync-sources/:id', (req, res) => adminController.deleteSyncSource(req, res));
+api.post('/sync-sources/:id/sync', (req, res) => adminController.triggerSync(req, res));
+
 api.get('/orders', (req, res) => adminController.getOrders(req, res));
 api.put('/orders/:id/status', (req, res) => adminController.updateOrderStatus(req, res));
 api.get('/conversations', (req, res) => adminController.getConversations(req, res));
 api.get('/conversations/:id/messages', (req, res) => adminController.getConversationMessages(req, res));
+api.patch('/conversations/:id/status', (req, res) => adminController.toggleConversationStatus(req, res));
 
 // ── Campaigns ──
 api.get('/admin/campaigns', (req, res) => adminController.getCampaigns(req, res));

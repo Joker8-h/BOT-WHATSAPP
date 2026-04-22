@@ -16,7 +16,7 @@ function detectFlow(message, context) {
     shipping: ['envio', 'envío', 'llega', 'domicilio', 'despacho', 'entregan'],
     payment: ['pago', 'pagar', 'tarjeta', 'transferencia', 'nequi', 'daviplata'],
     catalog: ['catalogo', 'catálogo', 'productos', 'que tienen', 'qué tienen', 'que venden'],
-    help: ['ayuda', 'asesor', 'asesora', 'humano', 'persona', 'hablar con alguien'],
+    help: ['ayuda', 'asesor', 'asesora', 'humano', 'persona', 'hablar con alguien', 'administrador', 'reclamo', 'queja', 'jefe', 'gerente', 'quejarme'],
     thanks: ['gracias', 'gracia', 'thank', 'perfecto', 'listo', 'vale gracias'],
     gift: ['regalo', 'sorpresa', 'aniversario', 'cumpleaños', 'especial'],
     couple: ['pareja', 'novio', 'novia', 'esposo', 'esposa', 'relación'],
@@ -112,9 +112,9 @@ function getFlowInstructions(flow) {
 - NO presiones, pero facilita el camino`,
 
     ESCALATION: `FLUJO ACTUAL: ESCALAMIENTO A HUMANO
-- El cliente quiere hablar con una persona
-- Confirma amablemente: "Claro, con mucho gusto te comunico con uno de nuestros asesores"
-- Indica que alguien se comunicará pronto
+- El cliente quiere hablar con una persona o administrador, o está molesto.
+- Confirma cortamente: "Entiendo perfectamente. Ya mismo te comunico con uno de nuestros asesores para ayudarte."
+- NO des correos ni números. Solo di que ya los pasas.
 - Responde con [ESCALAR] al final de tu mensaje`,
 
     FAREWELL: `FLUJO ACTUAL: DESPEDIDA

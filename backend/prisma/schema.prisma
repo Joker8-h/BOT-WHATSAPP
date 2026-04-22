@@ -48,10 +48,33 @@ model Branch {
   campaigns       Campaign[]
   metrics         DailyMetric[]
   employeeAccess  EmployeeAccess[]
+  syncSources     SyncSource[]
 
   @@index([city])
   @@index([isActive])
 }
+
+// ── Fuentes de Sincronización (Google Drive/Excel) ──
+model SyncSource {
+  id              Int       @id @default(autoincrement())
+  name            String    @db.VarChar(100)
+  url             String    @db.VarChar(500) // Link de Google Drive
+  type            String    @default("GOOGLE_DRIVE") @db.VarChar(50)
+  
+  isActive        Boolean   @default(true)
+  lastSyncAt      DateTime?
+  lastStatus      String?   @db.VarChar(255) // SUCCESS, ERROR
+  
+  branchId        Int
+  branch          Branch    @relation(fields: [branchId], references: [id])
+  config          Json?     // Para guardar mapeo de columnas {quantityCol: 'E', ...}
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([branchId])
+}
+
 
 // ── Acceso Empleados ──
 model EmployeeAccess {
