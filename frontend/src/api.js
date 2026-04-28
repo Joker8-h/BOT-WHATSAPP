@@ -111,6 +111,10 @@ export const getContact = (id) => api(`/api/contacts/${id}`);
 // ── Conversations ──
 export const getConversations = () => api('/api/conversations');
 export const getConversationMessages = (id) => api(`/api/conversations/${id}/messages`);
+export const updateConversationStatus = (id, status) => api(`/api/conversations/${id}/status`, {
+  method: 'PATCH',
+  body: JSON.stringify({ status }),
+});
 
 // ── Orders ──
 export const getOrders = (params = '') => api(`/api/orders?${params}`);

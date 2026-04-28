@@ -9,6 +9,7 @@ const adminController = require('../controllers/adminController');
 const authController = require('../controllers/authController');
 const paymentController = require('../controllers/paymentController');
 const wompiController = require('../controllers/wompiController');
+const metricsController = require('../controllers/metricsController');
 const { authenticateToken, isAdmin, checkBranchAccess } = require('../middleware/auth');
 
 const router = express.Router();
@@ -160,6 +161,8 @@ api.use('/upload', require('./uploadRoutes'));
 // ── Métricas y Alertas ──
 api.get('/dashboard/stock-alerts', (req, res) => adminController.getStockAlerts(req, res));
 api.get('/metrics', (req, res) => adminController.getMetrics(req, res));
+api.get('/metrics/dashboard', (req, res) => metricsController.getDashboardStats(req, res));
+api.get('/metrics/sales-chart', (req, res) => metricsController.getSalesChart(req, res));
 
 // ── Stock Specific ──
 api.put('/products/:id/stock', (req, res) => adminController.updateStock(req, res));

@@ -59,9 +59,19 @@ class WhatsAppService {
    * Inicializa o recupera una sesión para una sucursal específica
    */
   async initializeBranch(branchId) {
+    // Si ya existe un cliente, verificamos si está sano
     if (this.clients.has(branchId)) {
-      logger.info(`Reutilizando sesión existente para sucursal: ${branchId}`);
-      return this.clients.get(branchId);
+      const currentStatus = this.sessions.get(branchId);
+      
+      // Si está listo o esperando QR con el QR ya generado, lo reutilizamos
+      if (currentStatus && (currentStatus.status === 'READY' || (currentStatus.status === 'WAITING_QR' && currentStatus.qr))) {
+        logger.info(`Reutilizando sesión existente (${currentStatus.status}) para sucursal: ${branchId}`);
+        return this.clients.get(branchId);
+      }
+      
+      // Si está en otro estado (ej: INITIALIZING por demasiado tiempo), lo limpiamos y reiniciamos
+      logger.info(`⚠️ La sesión de la sucursal ${branchId} parece atascada o en estado ${currentStatus?.status}. Reiniciando...`);
+      await this.destroyBranch(branchId);
     }
 
     logger.info(`🚀 [WA-INIT] Iniciando instancia para sucursal: ${branchId}`);
@@ -193,51 +203,57 @@ class WhatsAppService {
       if (!to.includes('@')) {
         const cleanPhone = to.replace(/\D/g, ''); 
         chatId = `${cleanPhone}@c.us`;
+      } else if (to.includes('@lid')) {
+        // IDs de tipo @lid.c.us son válidos y no deben ser modificados
+        chatId = to;
       }
 
-      const chat = await client.getChatById(chatId);
+      // Intentar obtener el chat (algunas versiones de wwebjs fallan aquí con @lid)
+      let chat;
+      try {
+        chat = await client.getChatById(chatId);
+      } catch (e) {
+        logger.warn(`⚠️ No se pudo obtener objeto chat para ${chatId}, intentando envío directo.`);
+      }
 
       // --- Lógica de División de Mensajes Largos ---
       const maxLength = 450;
       if (text.length > maxLength) {
-        logger.info(`✂️ Mensaje largo detectado (${text.length} chars). Dividiendo...`);
-        
-        // Intentar dividir por párrafos (\n\n) o puntos (.)
+        // ... (resto de la lógica igual, pero usando client.sendMessage si chat no existe)
         const parts = [];
         let remaining = text;
-
         while (remaining.length > maxLength) {
           let splitIndex = remaining.lastIndexOf('\n\n', maxLength);
           if (splitIndex === -1) splitIndex = remaining.lastIndexOf('\n', maxLength);
           if (splitIndex === -1) splitIndex = remaining.lastIndexOf('. ', maxLength);
           if (splitIndex === -1) splitIndex = maxLength;
-
           parts.push(remaining.substring(0, splitIndex).trim());
           remaining = remaining.substring(splitIndex).trim();
         }
         if (remaining) parts.push(remaining);
 
-        // Enviar cada parte con delay de escritura
         for (const part of parts) {
-          await chat.sendStateTyping();
+          if (chat) await chat.sendStateTyping();
           const typingTime = Math.min(part.length * 25, 3000);
           await new Promise(resolve => setTimeout(resolve, typingTime));
           await client.sendMessage(chatId, part);
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Delay entre burbujas
+          await new Promise(resolve => setTimeout(resolve, 1000));
         }
         return true;
       }
 
-      // --- Envío Normal (Mensaje Corto) ---
-      await chat.sendStateTyping();
-      const typingDelay = Math.min(text.length * 30, 3000);
-      await new Promise(resolve => setTimeout(resolve, typingDelay));
+      // --- Envío Normal ---
+      if (chat) {
+        await chat.sendStateTyping();
+        const typingDelay = Math.min(text.length * 30, 3000);
+        await new Promise(resolve => setTimeout(resolve, typingDelay));
+      }
 
       await client.sendMessage(chatId, text);
       logger.debug(`📤 Mensaje enviado desde sucursal ${branchId} a ${chatId}`);
       return true;
     } catch (error) {
-      logger.error(`❌ Error enviando mensaje desde sucursal ${branchId} a ${to}:`, error.message);
+      logger.error(`❌ Error enviando mensaje desde sucursal ${branchId} a ${to}:`, error);
       return false;
     }
   }
@@ -246,10 +262,10 @@ class WhatsAppService {
    * Envía una imagen/media desde una sucursal específica
    * @param {string} branchId - ID de la sucursal
    * @param {string} to - Destinatario
-   * @param {string} url - URL de la imagen
-   * @param {string} caption - Texto opcional
+   * @param {string} mediaSource - URL o Path local
+   * @param {object} options - { caption, isAudio }
    */
-  async sendMedia(branchId, to, url, caption = '') {
+  async sendMedia(branchId, to, mediaSource, options = {}) {
     const client = this.clients.get(branchId);
     const session = this.sessions.get(branchId);
 
@@ -269,13 +285,26 @@ class WhatsAppService {
 
       logger.info(`🖼️ Preparando envío de media para ${chatId} desde branch ${branchId}`);
       
-      const media = await MessageMedia.fromUrl(url);
-      await client.sendMessage(chatId, media, { caption });
+      let media;
+      if (mediaSource.startsWith('http')) {
+        media = await MessageMedia.fromUrl(mediaSource);
+      } else {
+        // Asumimos que es un path local (como el generado por TTS)
+        media = MessageMedia.fromFilePath(mediaSource);
+      }
+
+      const sendOptions = {};
+      if (options.caption) sendOptions.caption = options.caption;
+      if (options.isAudio) {
+        sendOptions.sendAudioAsVoice = true; // Esto lo envía como nota de voz azul
+      }
+
+      await client.sendMessage(chatId, media, sendOptions);
       
       logger.info(`📤 Media enviado exitosamente a ${chatId}`);
       return true;
     } catch (error) {
-      logger.error(`❌ Error enviando media (URL: ${url}) en sucursal ${branchId} a ${to}:`, error.message);
+      logger.error(`❌ Error enviando media (Source: ${mediaSource}) en sucursal ${branchId} a ${to}:`, error.message);
       return false;
     }
   }
@@ -370,18 +399,38 @@ class WhatsAppService {
   async destroyBranch(branchId) {
     const client = this.clients.get(branchId);
     if (client) {
+      logger.info(`🗑️ Destruyendo instancia de WhatsApp para sucursal ${branchId}...`);
+      
       // Marcar como cierre MANUAL para que el evento 'disconnected' NO reconecte
       this.manualLogout.add(branchId);
+
       try {
-        await client.logout(); // Cierra la sesión de WhatsApp (borra credenciales)
+        // Intentar logout con un timeout para que no se quede colgado si la sesión está rota
+        const logoutPromise = client.logout();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout en logout')), 10000)
+        );
+
+        await Promise.race([logoutPromise, timeoutPromise]);
+        logger.info(`✅ Logout exitoso para sucursal ${branchId}`);
       } catch (e) {
-        logger.warn(`⚠️ No se pudo hacer logout limpio de sucursal ${branchId}:`, e.message);
+        logger.warn(`⚠️ No se pudo hacer logout limpio (o timeout) de sucursal ${branchId}:`, e.message);
       }
-      await client.destroy();
+
+      try {
+        await client.destroy();
+        logger.info(`💨 Cliente de sucursal ${branchId} destruido correctamente.`);
+      } catch (e) {
+        logger.error(`❌ Error destruyendo cliente de sucursal ${branchId}:`, e.message);
+      }
+
       this.clients.delete(branchId);
       this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
       return true;
     }
+    
+    // Si no hay cliente en memoria, pero el usuario quiere "limpiar", aseguramos el estado
+    this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
     return false;
   }
 

@@ -25,7 +25,9 @@ services:
 
   # ── Chatbot Fantasías ──
   chatbot:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
     container_name: fantasias-chatbot
     restart: unless-stopped
     env_file:
@@ -33,7 +35,7 @@ services:
     environment:
       DATABASE_URL: mysql://fantasias:fantasias_2024@mysql:3306/fantasias_chatbot
     ports:
-      - "3000:3000"
+      - "5000:5000"
     volumes:
       - whatsapp_session:/app/.wwebjs_auth
       - ./backend/data:/app/data

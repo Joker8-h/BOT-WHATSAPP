@@ -28,17 +28,25 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 WORKDIR /app
 
-COPY package*.json ./
+# 1. Instalar dependencias del backend
+COPY backend/package*.json ./
 RUN npm ci --omit=dev
 
-COPY prisma ./prisma/
+# 2. Generar cliente Prisma
+COPY backend/prisma ./prisma/
 RUN npx prisma generate
 
-COPY . .
+# 3. Copiar código fuente del backend
+COPY backend/ .
 
-EXPOSE 3000
+# 4. Copiar build del frontend (para que el backend lo sirva)
+# Asegúrate de haber ejecutado 'npm run build' en la carpeta frontend localmente
+COPY frontend/dist ./frontend/dist
 
-# Crear directorio para sesión de WhatsApp
+# Puerto del backend
+EXPOSE 5000
+
+# Directorios persistentes
 RUN mkdir -p /app/.wwebjs_auth /app/logs /app/data
 
 CMD ["node", "server.js"]

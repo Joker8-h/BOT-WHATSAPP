@@ -922,12 +922,12 @@ class AdminController {
       res.json({
         success: true,
         data: {
-          wompiMerchantId: branch?.wompiMerchantId || '',
-          wompiPublicKey: branch?.wompiPublicKey || '',
+          wompiMerchantId: branch?.wompiMerchantId ? '••••••••••••••••' : '',
+          wompiPublicKey: branch?.wompiPublicKey ? '••••••••••••••••' : '',
           wompiPrivateKey: branch?.wompiPrivateKey ? '••••••••••••••••' : '',
           wompiIntegritySecret: branch?.wompiIntegritySecret ? '••••••••••••••••' : '',
           notificationGroupName: branch?.notificationGroupName || '',
-          isConfigured: !!branch?.wompiPrivateKey
+          isConfigured: !!(branch?.wompiPrivateKey && branch?.wompiPublicKey)
         }
       });
     } catch (error) {
@@ -943,10 +943,15 @@ class AdminController {
       if (!branchId) return res.status(400).json({ success: false, error: 'Usuario sin sucursal asignada' });
 
       const data = {};
-      if (wompiMerchantId !== undefined) data.wompiMerchantId = wompiMerchantId;
-      if (wompiPublicKey !== undefined) data.wompiPublicKey = wompiPublicKey;
       if (notificationGroupName !== undefined) data.notificationGroupName = notificationGroupName;
       
+      // Encriptar TODAS las llaves de Wompi con AES-256
+      if (wompiMerchantId && wompiMerchantId !== '••••••••••••••••') {
+          data.wompiMerchantId = encrypt(wompiMerchantId);
+      }
+      if (wompiPublicKey && wompiPublicKey !== '••••••••••••••••') {
+          data.wompiPublicKey = encrypt(wompiPublicKey);
+      }
       if (wompiPrivateKey && wompiPrivateKey !== '••••••••••••••••') {
           data.wompiPrivateKey = encrypt(wompiPrivateKey);
       }

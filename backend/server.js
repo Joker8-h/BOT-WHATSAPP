@@ -19,6 +19,9 @@ const { connectDatabase, disconnectDatabase } = require('./src/config/database')
 const whatsappService = require('./src/services/whatsappService');
 const messageController = require('./src/controllers/messageController');
 const campaignService = require('./src/services/campaignService');
+const followUpService = require('./src/services/followUpService');
+const aiService = require('./src/services/aiService');
+const visualService = require('./src/services/visualService');
 const apiRoutes = require('./src/routes/api');
 
 const app = express();
@@ -113,6 +116,10 @@ async function startServer() {
     logger.info('📦 Conectando a MySQL...');
     await connectDatabase();
 
+    // 1b. Inicializar base visual (Ticket)
+    const ticketBasePath = 'C:\\Users\\usuario\\.gemini\\antigravity\\brain\\be4919a2-a6af-464c-8e38-c9fd6780daca\\fantasias_ticket_base_1777342651502.png';
+    await visualService.uploadBaseImage(ticketBasePath);
+
     // 2. Inicializar WhatsApp
     logger.info('📱 Motor WhatsApp Multi-Branch listo (se inicia bajo demanda)');
     whatsappService.onMessage(async (msg) => {
@@ -123,16 +130,29 @@ async function startServer() {
     campaignService.setWhatsAppService(whatsappService);
     campaignService.startScheduler();
 
+    // 3b. Follow-Up Automático (Recuperación de ventas)
+    followUpService.setServices(whatsappService, aiService);
+
     // 4. Autostart de sesiones autorizadas (Fase 1 Estabilidad)
     whatsappService.initAllActiveSessions();
 
-    // 4. Schedulers
+    // 5. Schedulers
     // Sincronización automática de inventario (cada 15 minutos)
     cron.schedule('*/15 * * * *', () => {
       syncService.syncAll();
     });
     // Ejecutar una vez al inicio
     syncService.syncAll();
+
+    // Follow-up automático (cada hora, Lun-Sáb 9am-6pm Colombia)
+    cron.schedule('0 9-18 * * 1-6', () => {
+      followUpService.processFollowUps();
+    });
+
+    // Responder mensajes recibidos fuera de horario (9:01am, Lun-Sáb)
+    cron.schedule('1 9 * * 1-6', () => {
+      followUpService.processOfflineMessages();
+    });
 
     // 5. Servidor HTTP
     app.listen(PORT, () => {

@@ -132,7 +132,7 @@ async function parseExcel(filePath) {
     }
 
     logger.info(`📊 Excel parseado: ${rowsData.length} filas procesadas de "${absolutePath}"`);
-    return rowsData;
+    return { rows: rowsData, colMapping };
   } catch (error) {
     logger.error('Error parseando Excel asíncrono:', error);
     throw error;

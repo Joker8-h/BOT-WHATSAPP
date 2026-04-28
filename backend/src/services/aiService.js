@@ -5,12 +5,36 @@ const { classifyClient, getRecommendedCategories, getProductLimit } = require('.
 const { prisma } = require('../config/database');
 const catalogService = require('./catalogService');
 const logger = require('../utils/logger');
+const fs = require('fs');
+const path = require('path');
 
 class AIService {
   /**
+   * Genera un audio a partir de texto usando OpenAI TTS
+   * @param {string} text - El texto que Sofía dirá
+   * @returns {string|null} - Ruta al archivo de audio temporal
+   */
+  async generateAudio(text) {
+    try {
+      const speechFile = path.resolve(`./temp_audio_${Date.now()}.ogg`);
+      const mp3 = await openai.audio.speech.create({
+        model: "tts-1",
+        voice: "shimmer", // Voz cálida y profesional
+        input: text,
+        response_format: "opus" // Formato ideal para notas de voz de WhatsApp
+      });
+      const buffer = Buffer.from(await mp3.arrayBuffer());
+      await fs.promises.writeFile(speechFile, buffer);
+      return speechFile;
+    } catch (error) {
+      logger.error('Error generando audio TTS:', error);
+      return null;
+    }
+  }
+  /**
    * Genera una respuesta de la IA para un mensaje del cliente
    */
-  async generateResponse(userMessage, contact, messageHistory = [], branchId = null) {
+  async generateResponse(userMessage, contact, messageHistory = [], branchId = null, hasRecentHumanIntervention = false) {
     try {
       // 1. Detectar flujo conversacional
       const flow = detectFlow(userMessage, {
@@ -69,15 +93,27 @@ class AIService {
       // 7. Agregar instrucciones del flujo actual
       const flowInstructions = getFlowInstructions(flow);
 
+      // 7b. Instrucciones de CONTINUIDAD si un humano estuvo antes
+      let continuityContext = '';
+      if (hasRecentHumanIntervention || messageHistory.length > 3) {
+        continuityContext = `\n\n## ⚠️ CONTINUIDAD DE CONVERSACIÓN (CRÍTICO)
+- Ya hay una conversación en curso con este cliente. ANALIZA TODO el historial anterior antes de responder.
+- Si un compañero/asesor humano estuvo hablando con el cliente, CONTINÚA desde donde dejó la conversación. NO empieces con "Hola" ni te presentes de nuevo.
+- Si ya se discutieron productos, precios o envío, NO repitas esa información a menos que el cliente la pida.
+- Si el cliente ya dio su nombre, ciudad o dirección en mensajes previos, NO los vuelvas a preguntar.
+- Sé consistente con lo que ya se le prometió o informó al cliente en mensajes anteriores.
+- Tu rol es continuar la venta fluidamente como si fueras la misma persona que estuvo hablando.`;
+      }
+
       // 8. Construir mensajes para OpenAI
       const messages = [
         { 
           role: 'system', 
-          content: `${systemPrompt}\n\n${flowInstructions}`
+          content: `${systemPrompt}\n\n${flowInstructions}${continuityContext}`
         },
       ];
 
-      const recentHistory = messageHistory.slice(-15);
+      const recentHistory = messageHistory.slice(-20);
       recentHistory.forEach(msg => {
         messages.push({
           role: msg.role === 'USER' ? 'user' : 'assistant',

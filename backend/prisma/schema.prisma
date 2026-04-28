@@ -18,7 +18,7 @@ model Branch {
   name            String    @db.VarChar(100)
   city            String    @db.VarChar(80)
   address         String?   @db.VarChar(200)
-  phone           String?   @db.VarChar(20)
+  phone           String?   @db.VarChar(50)
   
   // Coordenadas para proximidad
   latitude        Float?
@@ -79,7 +79,7 @@ model SyncSource {
 // ── Acceso Empleados ──
 model EmployeeAccess {
   id              Int       @id @default(autoincrement())
-  phone           String    @db.VarChar(20)
+  phone           String    @db.VarChar(50)
   name            String?   @db.VarChar(100)
 
   // Link a la sucursal
@@ -116,7 +116,7 @@ model User {
 // ── Contacto / Cliente ──
 model Contact {
   id              Int       @id @default(autoincrement())
-  phone           String    @db.VarChar(20)
+  phone           String    @db.VarChar(50)
   name            String?   @db.VarChar(100)
   city            String?   @db.VarChar(80)
 

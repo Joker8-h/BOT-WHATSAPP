@@ -2,10 +2,12 @@ const aiService = require('../services/aiService');
 const crmService = require('../services/crmService');
 const catalogService = require('../services/catalogService');
 const whatsappService = require('../services/whatsappService');
+const visualService = require('../services/visualService');
 const notificationService = require('../services/notificationService'); // Nuevo servicio de alertas
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
 const { formatCOP } = require('../utils/helpers');
+const fs = require('fs');
 
 class MessageController {
   /**
@@ -20,9 +22,21 @@ class MessageController {
 
     if (!userMessage) return;
 
-    let phone = chatId.replace('@c.us', '');
-    // Truncar si es demasiado largo (máximo 20 caracteres en BD por defecto usualmente, o lo que diga el log)
-    if (phone.length > 20) phone = phone.substring(0, 20);
+    // ── HORARIO DE ATENCIÓN: Lunes a Sábado, 9am a 7pm (Colombia UTC-5) ──
+    const nowColombia = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+    const hour = nowColombia.getHours();
+    const day = nowColombia.getDay(); // 0=Domingo, 6=Sábado
+    
+    const isBusinessHours = day >= 1 && day <= 6 && hour >= 9 && hour < 19;
+
+    let phone = chatId.split('@')[0];
+    // Conservar el sufijo si es de tipo @lid para evitar colisiones y mantener el ID real
+    if (chatId.includes('@lid')) {
+      phone = chatId.replace('@c.us', '');
+    }
+    
+    // Truncar solo si no es un ID especial y excede el límite de la BD (asumiendo 20 por ahora, pero mejorado)
+    if (!chatId.includes('@lid') && phone.length > 20) phone = phone.substring(0, 20);
     
     const branchId = msg.branchId; 
     
@@ -67,22 +81,58 @@ class MessageController {
         return;
       }
 
-      // 3. Guardar mensaje del usuario
+      // 3. Guardar mensaje del usuario (SIEMPRE, incluso fuera de horario)
       await crmService.saveMessage(conversation.id, 'USER', userMessage, msg.id?._serialized);
 
-      // 4. Preparar historial para la IA
+      // 3b. Si estamos FUERA de horario, guardar pero NO responder con IA
+      if (!isBusinessHours) {
+        logger.info(`🕐 Mensaje de ${phone} guardado (fuera de horario). Se responderá a las 9am.`);
+        // Marcar la conversación para procesamiento pendiente
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { context: { ...(conversation.context || {}), pendingOfflineReply: true } }
+        });
+        return;
+      }
+
+      // 4. Preparar historial para la IA (más mensajes para dar contexto completo)
       const recentMessages = await prisma.message.findMany({
           where: { conversationId: conversation.id },
           orderBy: { createdAt: 'desc' },
-          take: 10
+          take: 20
       });
       const messageHistory = recentMessages.reverse().map(m => ({
         role: m.role,
         content: m.content,
       }));
 
+      // 4b. Detectar si un humano/empleado estuvo chateando antes
+      // (mensajes de ASSISTANT que NO fueron generados por IA, es decir, mensajes manuales)
+      const hasRecentHumanIntervention = conversation.status === 'ACTIVE' && 
+        conversation.messages && conversation.messages.length > 0 &&
+        conversation.messages.some(m => m.role === 'ASSISTANT' && !m.tokensUsed);
+
       // 5. Generar respuesta con IA (Personalidad de Ventas Fantasías)
-      const aiResult = await aiService.generateResponse(userMessage, contact, messageHistory, branchId);
+      const aiResult = await aiService.generateResponse(userMessage, contact, messageHistory, branchId, hasRecentHumanIntervention);
+
+      // 5b. Procesar AUDIO si existe la etiqueta [AUDIO:...]
+      let audioPath = null;
+      if (aiResult.response.includes('[AUDIO:')) {
+        const audioMatch = aiResult.response.match(/\[AUDIO:\s*(.+?)\]/i);
+        if (audioMatch && audioMatch[1]) {
+          const audioText = audioMatch[1];
+          logger.info(`🎙️ Generando audio para ${phone}: "${audioText.substring(0, 30)}..."`);
+          audioPath = await aiService.generateAudio(audioText);
+          
+          if (audioPath) {
+            await whatsappService.sendMedia(branchId, chatId, audioPath, { isAudio: true });
+            // Eliminar la etiqueta del texto final para no confundir al cliente
+            aiResult.response = aiResult.response.replace(audioMatch[0], '').trim();
+            // Borrar archivo temporal
+            setTimeout(() => { if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath); }, 10000);
+          }
+        }
+      }
 
       // 6. Procesar acciones especiales y NOTIFICACIONES
       
@@ -176,6 +226,20 @@ class MessageController {
             shippingCity: shippingCity,
             shippingAddress: shippingAddress
           });
+
+          // GENERAR Y ENVIAR TICKET VISUAL
+          try {
+            const ticketUrl = visualService.generateOrderTicket({
+              products: products,
+              total: totalAmount,
+              clientName: aiResult.actions?.capturedName || contact.name || 'Cliente',
+              city: shippingCity || 'Colombia'
+            });
+            await whatsappService.sendMedia(branchId, chatId, ticketUrl);
+            logger.info(`🎫 Ticket visual enviado a ${phone}`);
+          } catch (e) {
+            logger.error('Error enviando ticket visual:', e);
+          }
 
           let saleMessage = aiResult.response;
           try {
