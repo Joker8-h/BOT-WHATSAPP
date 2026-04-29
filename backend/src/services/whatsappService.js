@@ -184,10 +184,7 @@ class WhatsAppService {
 
     // Handler de mensajes entrantes
     client.on('message', async (msg) => {
-      if (msg.from === 'status@broadcast') return;
-      if (msg.fromMe) return;
-      if (msg.isGroupMsg) return;
-
+      logger.info(`📩 [WA-RAW-DEBUG] Mensaje recibido de ${msg.from}: ${msg.body?.substring(0, 20)}...`);
       if (this.messageHandler) {
         try {
           // Inyectamos el branchId en el mensaje para que el handler sepa de dónde viene
