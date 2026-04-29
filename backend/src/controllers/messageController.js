@@ -2,7 +2,6 @@ const logger = require('../utils/logger');
 const whatsappService = require('../services/whatsappService');
 const aiService = require('../services/aiService');
 const crmService = require('../services/crmService');
-const syncService = require('../services/syncService');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -29,12 +28,12 @@ class MessageController {
         return;
       }
 
-      // 2. Identificar cliente
-      let customer = await crmService.getOrCreateCustomer(chatId);
+      // 2. Identificar cliente (Usando el nombre correcto de la función)
+      let customer = await crmService.findOrCreateContact(chatId, branchId);
       logger.info(`👤 [WA-DEBUG] Cliente: ${customer.name || 'Sin nombre'} (${chatId})`);
 
-      // 3. Obtener o crear conversación
-      let conversation = await crmService.getOrCreateConversation(customer.id, branchId);
+      // 3. Obtener o crear conversación (Usando el nombre correcto de la función)
+      let conversation = await crmService.getActiveConversation(customer.id, branchId);
       logger.info(`💬 [WA-DEBUG] Conversación ID: ${conversation.id}`);
 
       // Si la conversación está en modo humano, solo guardamos el mensaje
@@ -59,7 +58,7 @@ class MessageController {
         logger.warn(`⚠️ [WA-DEBUG] IA no generó respuesta.`);
         return;
       }
-      logger.info(`✨ [WA-DEBUG] IA generó respuesta de ${aiResult.response.length} caracteres.`);
+      logger.info(`✨ [WA-DEBUG] IA generó respuesta.`);
 
       // 7. Enviar respuesta por WhatsApp
       await whatsappService.sendMessage(branchId, chatId, aiResult.response);
