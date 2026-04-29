@@ -117,8 +117,12 @@ async function startServer() {
     await connectDatabase();
 
     // 1b. Inicializar base visual (Ticket)
-    const ticketBasePath = 'C:\\Users\\usuario\\.gemini\\antigravity\\brain\\be4919a2-a6af-464c-8e38-c9fd6780daca\\fantasias_ticket_base_1777342651502.png';
-    await visualService.uploadBaseImage(ticketBasePath);
+    const ticketBasePath = path.join(__dirname, 'data', 'ticket_base.png');
+    if (fs.existsSync(ticketBasePath)) {
+      await visualService.uploadBaseImage(ticketBasePath);
+    } else {
+      logger.warn('⚠️ No se encontró la imagen base del ticket en ./data/ticket_base.png. Saltando subida.');
+    }
 
     // 2. Inicializar WhatsApp
     logger.info('📱 Motor WhatsApp Multi-Branch listo (se inicia bajo demanda)');
