@@ -114,9 +114,8 @@ class WhatsAppService {
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-features=IsolateOrigins,site-per-process',
-          '--disable-setuid-sandbox',
           '--ignore-certificate-errors',
-          '--no-sandbox',
+          '--user-data-dir=' + path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`),
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         // User Agent moderno

@@ -1,46 +1,36 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
 
 /**
- * Script para limpiar bloqueos de Chromium en Railway/Docker
- * Se ejecuta antes de iniciar el servidor.
+ * Script simplificado para limpiar bloqueos de Chromium
  */
 function clearLocks() {
-    console.log('🧹 [CLEANUP] Iniciando limpieza de bloqueos de sesión...');
+    console.log('🧹 [CLEANUP] Limpiando archivos de bloqueo...');
     const authDir = path.join(process.cwd(), '.wwebjs_auth');
     
-    if (!fs.existsSync(authDir)) {
-        console.log('ℹ️ No existe carpeta .wwebjs_auth, nada que limpiar.');
-        return;
-    }
+    if (!fs.existsSync(authDir)) return;
 
-    try {
-        // Usamos comandos de sistema (Linux/Unix) para una limpieza profunda y agresiva
-        // Borramos SingletonLock, SingletonCookie y SingletonSocket
-        const findCommand = `find .wwebjs_auth -name "Singleton*" -delete`;
-        execSync(findCommand, { stdio: 'inherit' });
-        console.log('✅ [CLEANUP] Archivos Singleton* eliminados exitosamente.');
-    } catch (error) {
-        console.warn('⚠️ [CLEANUP] Error usando find, intentando método manual...', error.message);
-        
-        // Fallback manual si el comando find falla
-        const deleteRecursive = (dir) => {
+    const walk = (dir) => {
+        try {
             const files = fs.readdirSync(dir);
             for (const file of files) {
                 const fullPath = path.join(dir, file);
                 if (fs.lstatSync(fullPath).isDirectory()) {
-                    deleteRecursive(fullPath);
-                } else if (file.startsWith('Singleton')) {
+                    walk(fullPath);
+                } else if (file.includes('SingletonLock') || file.includes('SingletonCookie') || file.includes('SingletonSocket')) {
                     try {
                         fs.unlinkSync(fullPath);
-                        console.log(`- Borrado: ${fullPath}`);
-                    } catch (e) {}
+                        console.log(`✅ Eliminado: ${file}`);
+                    } catch (e) {
+                        // Ignorar si no se puede (está en uso real)
+                    }
                 }
             }
-        };
-        try { deleteRecursive(authDir); } catch (e) {}
-    }
+        } catch (e) {}
+    };
+
+    walk(authDir);
+    console.log('✨ [CLEANUP] Proceso terminado.');
 }
 
 clearLocks();
