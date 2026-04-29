@@ -83,10 +83,14 @@ class WhatsAppService {
           '--no-first-run',
           '--no-zygote',
           '--disable-gpu',
-          '--disable-features=IsolateOrigins,site-per-process', // Mejora velocidad
+          '--disable-software-rasterizer',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-setuid-sandbox',
+          '--ignore-certificate-errors',
+          '--no-sandbox',
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        // User Agent moderno para evitar detección de "Navegador no compatible" en cuentas personales
+        // User Agent moderno
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
       },
       webVersionCache: {
