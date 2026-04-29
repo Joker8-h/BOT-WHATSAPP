@@ -26,9 +26,6 @@ try {
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
-const fs = require('fs');
-
 const logger = require('./src/utils/logger');
 const cron = require('node-cron');
 const syncService = require('./src/services/syncService');
