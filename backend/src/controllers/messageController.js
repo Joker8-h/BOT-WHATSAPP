@@ -319,7 +319,7 @@ class MessageController {
       }
 
     } catch (error) {
-      logger.error(`Error procesando mensaje de ${phone}:`, error);
+      logger.error(`Error procesando mensaje de ${chatId}:`, error);
       try {
         await whatsappService.sendMessage(branchId, chatId, 'Dame un momento y consulto con mi compañero... ¡Un placer saludarte! ✨');
       } catch (e) {}
