@@ -70,15 +70,19 @@ class WhatsAppService {
     logger.info(`🚀 [WA-INIT] Iniciando instancia para sucursal: ${branchId}`);
     
     // Limpieza de candados de sesión (Locks) — Crítico para Railway/Docker
-    try {
-      const lockPath = path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`, 'Default', 'SingletonLock');
-      if (fs.existsSync(lockPath)) {
-        fs.unlinkSync(lockPath);
-        logger.info(`🔓 Candado de sesión eliminado para sucursal ${branchId}`);
-      }
-    } catch (e) {
-      // Si no se puede borrar es que probablemente sí está en uso real o no existe
-    }
+    const possibleLockPaths = [
+      path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`, 'Default', 'SingletonLock'),
+      path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`, 'SingletonLock')
+    ];
+
+    possibleLockPaths.forEach(lockPath => {
+      try {
+        if (fs.existsSync(lockPath)) {
+          fs.unlinkSync(lockPath);
+          logger.info(`🔓 Candado eliminado: ${lockPath}`);
+        }
+      } catch (e) {}
+    });
 
     const startTime = Date.now();
 
@@ -172,17 +176,19 @@ class WhatsAppService {
       }
     });
 
-    try {
-      this.clients.set(branchId, client);
-      await client.initialize();
+    // ── Iniciar Cliente (Sin await para evitar timeout 500) ──
+    this.clients.set(branchId, client);
+    
+    client.initialize().then(() => {
       const endTime = Date.now();
       logger.info(`✅ [WA-READY] WhatsApp sucursal ${branchId} listo en ${(endTime - startTime)/1000}s`);
-      return client;
-    } catch (err) {
-      logger.error(`Error crítico iniciando sucursal ${branchId}:`, err);
+    }).catch(err => {
+      logger.error(`❌ Error crítico iniciando sucursal ${branchId}:`, err);
+      this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'ERROR' });
       this.clients.delete(branchId);
-      throw err;
-    }
+    });
+
+    return client;
   }
 
   /**
