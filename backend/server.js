@@ -152,8 +152,7 @@ async function startServer() {
 
     // 2. Inicializar WhatsApp
     logger.info('📱 Motor WhatsApp Multi-Branch listo (se inicia bajo demanda)');
-    whatsappService.onMessage(async (msg) => {
-      const branchId = msg.branchId || 1;
+    whatsappService.onMessage(async (msg, branchId) => {
       await messageController.handleIncomingMessage(msg, branchId);
     });
 

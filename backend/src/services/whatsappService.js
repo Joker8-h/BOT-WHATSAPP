@@ -185,12 +185,10 @@ class WhatsAppService {
 
     // Handler de mensajes entrantes
     client.on('message', async (msg) => {
-      logger.info(`📩 [WA-RAW-DEBUG] Mensaje recibido de ${msg.from}: ${msg.body?.substring(0, 20)}...`);
+      logger.info(`📩 [WA-RAW] Mensaje de ${msg.from}: ${msg.body?.substring(0, 20)}...`);
       if (this.messageHandler) {
         try {
-          // Inyectamos el branchId en el mensaje para que el handler sepa de dónde viene
-          msg.branchId = branchId;
-          await this.messageHandler(msg);
+          await this.messageHandler(msg, branchId);
         } catch (error) {
           logger.error(`Error procesando mensaje en sucursal ${branchId}:`, error);
         }
