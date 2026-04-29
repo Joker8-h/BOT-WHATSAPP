@@ -118,13 +118,15 @@ class WhatsAppService {
           '--user-data-dir=' + path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`),
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        // User Agent moderno
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        defaultViewport: { width: 1280, height: 800 }
       },
+      authTimeoutMs: 90000,
+      qrMaxRetries: 5,
       webVersionCache: {
         type: 'remote',
         remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51.html',
-      },
+      }
     });
 
     // Estado inicial
