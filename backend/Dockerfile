@@ -1,6 +1,16 @@
-FROM node:20-slim
+# ─── ETAPA 1: Construcción del Frontend ───
+FROM node:20-slim AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
 
-# Instalar Chromium para whatsapp-web.js (puppeteer)
+# ─── ETAPA 2: Configuración del Backend y Ejecución ───
+FROM node:20-slim
+WORKDIR /app
+
+# Instalar Chromium y dependencias para WhatsApp
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
@@ -26,27 +36,23 @@ RUN apt-get update && apt-get install -y \
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-WORKDIR /app
-
-# 1. Instalar dependencias del backend
+# Instalar dependencias del backend
 COPY backend/package*.json ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
-# 2. Generar cliente Prisma
+# Copiar archivos de Prisma y generar cliente
 COPY backend/prisma ./prisma/
 RUN npx prisma generate
 
-# 3. Copiar código fuente del backend
+# Copiar el código del backend
 COPY backend/ .
 
-# 4. Copiar build del frontend (para que el backend lo sirva)
-# Asegúrate de haber ejecutado 'npm run build' en la carpeta frontend localmente
-COPY frontend/dist ./frontend/dist
+# COPIAR EL FRONTEND YA CONSTRUIDO desde la Etapa 1
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
-# Puerto del backend
+# Asegurar permisos y directorios
+RUN mkdir -p /app/.wwebjs_auth /app/logs /app/data && \
+    chmod +x ./scripts/docker-start.sh
+
 EXPOSE 5000
-
-# Directorios persistentes
-RUN mkdir -p /app/.wwebjs_auth /app/logs /app/data
-
-CMD ["node", "server.js"]
+CMD ["./scripts/docker-start.sh"]

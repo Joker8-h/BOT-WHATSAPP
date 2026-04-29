@@ -80,6 +80,10 @@ class SyncService {
       let createdCount = 0;
       const syncedProductIds = [];
 
+      if (!Array.isArray(rawData)) {
+        throw new Error(`Los datos del Excel no son válidos (no iterable) para la fuente ${source.name}`);
+      }
+
       for (const row of rawData) {
         // VALIDACIÓN: ¿Falta información?
         const isComplete = row.name && row.features && row.price > 0 && row.stock >= 0;
