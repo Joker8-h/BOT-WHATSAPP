@@ -6,6 +6,23 @@
 require('dotenv').config();
 
 const express = require('express');
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// 🛡️ LIMPIEZA DE EMERGENCIA DE BLOQUEOS (CRÍTICO PARA RAILWAY)
+try {
+  const authDir = path.join(process.cwd(), '.wwebjs_auth');
+  if (fs.existsSync(authDir)) {
+    console.log('🧹 [INIT-CLEAN] Borrando candados de Chromium...');
+    execSync(`find ${authDir} -name "Singleton*" -exec rm -rf {} +`, { stdio: 'inherit' });
+    execSync(`find ${authDir} -name "*.lock" -exec rm -rf {} +`, { stdio: 'inherit' });
+    console.log('✅ [INIT-CLEAN] Entorno desbloqueado.');
+  }
+} catch (e) {
+  console.warn('⚠️ [INIT-CLEAN] No se pudo limpiar automáticamente, puede haber bloqueos.');
+}
+
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
