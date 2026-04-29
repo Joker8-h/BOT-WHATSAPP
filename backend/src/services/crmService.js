@@ -118,6 +118,22 @@ class CRMService {
   }
 
   /**
+   * Obtiene los últimos mensajes de una conversación para dar contexto a la IA
+   */
+  async getLastMessages(conversationId, limit = 10) {
+    try {
+      return await prisma.message.findMany({
+        where: { conversationId },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      });
+    } catch (error) {
+      logger.error('Error en getLastMessages:', error);
+      return [];
+    }
+  }
+
+  /**
    * Guarda un mensaje en la conversación
    */
   async saveMessage(conversationId, role, content, waMessageId = null, tokensUsed = null) {

@@ -153,7 +153,8 @@ async function startServer() {
     // 2. Inicializar WhatsApp
     logger.info('📱 Motor WhatsApp Multi-Branch listo (se inicia bajo demanda)');
     whatsappService.onMessage(async (msg) => {
-      await messageController.handleIncomingMessage(msg);
+      const branchId = msg.branchId || 1;
+      await messageController.handleIncomingMessage(msg, branchId);
     });
 
     // 3. Campañas
@@ -171,8 +172,11 @@ async function startServer() {
     cron.schedule('*/15 * * * *', () => {
       syncService.syncAll();
     });
-    // Ejecutar una vez al inicio
-    syncService.syncAll();
+    // 🚀 EJECUTAR SINCRONIZACIÓN PESADA 1 MINUTO DESPUÉS PARA DAR PRIORIDAD AL CHAT
+    setTimeout(() => {
+      logger.info('🔄 [DEFERRED-SYNC] Iniciando sincronización de inventario tras espera...');
+      syncService.syncAll();
+    }, 60000);
 
     // Follow-up automático (cada hora, Lun-Sáb 9am-6pm Colombia)
     cron.schedule('0 9-18 * * 1-6', () => {

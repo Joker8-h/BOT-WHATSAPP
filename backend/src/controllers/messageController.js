@@ -15,24 +15,23 @@ class MessageController {
     const body = msg.body || '';
 
     try {
-      logger.info(`🔍 [WA-DEBUG] Procesando mensaje de ${chatId} en sucursal ${branchId}: "${body.substring(0, 50)}..."`);
-
-      // 1. Ignorar grupos
-      if (chatId.includes('@g.us')) {
-        logger.info(`ℹ️ [WA-DEBUG] Ignorando mensaje de grupo.`);
-        return;
+      // 1. IGNORAR ESTADOS Y GRUPOS (CRÍTICO)
+      if (chatId === 'status@broadcast' || chatId.includes('@g.us')) {
+        return; 
       }
+
+      logger.info(`🔍 [WA-DEBUG] Procesando mensaje de ${chatId} en sucursal ${branchId}: "${body.substring(0, 50)}..."`);
 
       if (!body.trim()) {
         logger.info(`ℹ️ [WA-DEBUG] Mensaje vacío, ignorando.`);
         return;
       }
 
-      // 2. Identificar cliente (Usando el nombre correcto de la función)
+      // 2. Identificar cliente
       let customer = await crmService.findOrCreateContact(chatId, branchId);
       logger.info(`👤 [WA-DEBUG] Cliente: ${customer.name || 'Sin nombre'} (${chatId})`);
 
-      // 3. Obtener o crear conversación (Usando el nombre correcto de la función)
+      // 3. Obtener o crear conversación
       let conversation = await crmService.getActiveConversation(customer.id, branchId);
       logger.info(`💬 [WA-DEBUG] Conversación ID: ${conversation.id}`);
 
@@ -77,9 +76,12 @@ class MessageController {
 
     } catch (error) {
       logger.error(`❌ [WA-DEBUG] Error en handleIncomingMessage para ${chatId}:`, error);
-      try {
-        await whatsappService.sendMessage(branchId, chatId, 'Dame un momento y consulto con mi compañero... ¡Un placer saludarte! ✨');
-      } catch (e) {}
+      // Solo enviar mensaje de error si NO es un estado
+      if (chatId !== 'status@broadcast') {
+        try {
+          await whatsappService.sendMessage(branchId, chatId, 'Dame un momento y consulto con mi compañero... ¡Un placer saludarte! ✨');
+        } catch (e) {}
+      }
     }
   }
 }
