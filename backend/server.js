@@ -10,17 +10,27 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// 🛡️ LIMPIEZA DE EMERGENCIA DE BLOQUEOS (CRÍTICO PARA RAILWAY)
+// 🛡️ LIMPIEZA DE EMERGENCIA DE BLOQUEOS (NATIVO NODE)
 try {
   const authDir = path.join(process.cwd(), '.wwebjs_auth');
   if (fs.existsSync(authDir)) {
-    console.log('🧹 [INIT-CLEAN] Borrando candados de Chromium...');
-    execSync(`find ${authDir} -name "Singleton*" -exec rm -rf {} +`, { stdio: 'inherit' });
-    execSync(`find ${authDir} -name "*.lock" -exec rm -rf {} +`, { stdio: 'inherit' });
+    console.log('🧹 [INIT-CLEAN] Limpiando bloqueos de forma nativa...');
+    const cleanRecursively = (dir) => {
+      const files = fs.readdirSync(dir);
+      files.forEach(file => {
+        const p = path.join(dir, file);
+        if (fs.lstatSync(p).isDirectory()) {
+          cleanRecursively(p);
+        } else if (file.includes('Singleton') || file.includes('.lock')) {
+          try { fs.unlinkSync(p); } catch (e) {}
+        }
+      });
+    };
+    cleanRecursively(authDir);
     console.log('✅ [INIT-CLEAN] Entorno desbloqueado.');
   }
 } catch (e) {
-  console.warn('⚠️ [INIT-CLEAN] No se pudo limpiar automáticamente, puede haber bloqueos.');
+  console.warn('⚠️ [INIT-CLEAN] No se pudo limpiar, puede haber bloqueos.');
 }
 
 const cors = require('cors');
