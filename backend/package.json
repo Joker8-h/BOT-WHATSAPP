@@ -4,8 +4,8 @@
   "description": "Asistente IA WhatsApp Business - Marca Fantasías",
   "main": "server.js",
   "scripts": {
-    "start": "nodemon server.js",
-    "dev": "nodemon server.js",
+    "start": "node scripts/fix-railway-lock.js && node server.js",
+    "dev": "node scripts/fix-railway-lock.js && nodemon server.js",
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:migrate": "npx prisma migrate dev",
