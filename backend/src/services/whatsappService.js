@@ -115,14 +115,13 @@ class WhatsAppService {
           '--disable-software-rasterizer',
           '--disable-features=IsolateOrigins,site-per-process',
           '--ignore-certificate-errors',
-          '--user-data-dir=' + path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`),
           '--window-size=1280,800',
           '--disable-blink-features=AutomationControlled'
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       },
-      authTimeoutMs: 120000, // Aumentamos a 2 minutos
+      authTimeoutMs: 120000,
       takeoverOnConflict: true,
       takeoverTimeoutMs: 10000,
       webVersionCache: {
