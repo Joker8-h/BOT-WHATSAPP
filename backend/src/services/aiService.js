@@ -56,7 +56,26 @@ class AIService {
       
       // Filtramos productos por la sucursal actual
       const effectiveBranchId = branchId || messageHistory[0]?.branchId || contact?.branchId;
+      
+      // 3b. BÚSQUEDA INTELIGENTE: Si el cliente menciona palabras clave, buscamos productos específicos
+      let specificProducts = [];
+      const keywords = userMessage.split(' ').filter(word => word.length > 3);
+      if (keywords.length > 0) {
+        specificProducts = await prisma.product.findMany({
+          where: {
+            branchId: effectiveBranchId,
+            isAvailable: true,
+            OR: keywords.map(k => ({ name: { contains: k } }))
+          },
+          take: 5
+        });
+      }
+
       let products = await catalogService.getProductsByCategories(categories, productLimit, effectiveBranchId);
+      
+      // Unificamos productos (dando prioridad a los encontrados por búsqueda)
+      const seenIds = new Set(specificProducts.map(p => p.id));
+      products = [...specificProducts, ...products.filter(p => !seenIds.has(p.id))];
       products = products.sort((a, b) => Number(b.price) - Number(a.price));
 
       // 4. Obtener INFO de la sucursal actual
