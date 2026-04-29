@@ -1,36 +1,37 @@
-const fs = require('fs');
+const { execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 
 /**
- * Script simplificado para limpiar bloqueos de Chromium
+ * LIMPIEZA AGRESIVA DE NIVEL DE SISTEMA
+ * Borra los candados de Chromium usando comandos de Linux directamente.
  */
-function clearLocks() {
-    console.log('🧹 [CLEANUP] Limpiando archivos de bloqueo...');
-    const authDir = path.join(process.cwd(), '.wwebjs_auth');
-    
-    if (!fs.existsSync(authDir)) return;
+function hardClean() {
+    console.log('🛡️ [HARD-CLEAN] Iniciando limpieza profunda de candados...');
+    const authPath = path.join(process.cwd(), '.wwebjs_auth');
 
-    const walk = (dir) => {
+    if (!fs.existsSync(authPath)) {
+        console.log('ℹ️ No hay carpeta de sesión. Nada que limpiar.');
+        return;
+    }
+
+    try {
+        // Comando de Linux para borrar recursivamente todos los archivos de bloqueo
+        // SingletonLock, SingletonSocket, SingletonCookie y archivos .lock
+        const command = `find ${authPath} -name "Singleton*" -exec rm -f {} + && find ${authPath} -name "*.lock" -exec rm -f {} +`;
+        
+        console.log(`🚀 Ejecutando: ${command}`);
+        execSync(command, { stdio: 'inherit' });
+        
+        console.log('✅ [HARD-CLEAN] ¡Candados eliminados por la fuerza!');
+    } catch (error) {
+        console.error('❌ [HARD-CLEAN] Error en limpieza profunda:', error.message);
+        
+        // Intento manual desesperado si lo anterior falla
         try {
-            const files = fs.readdirSync(dir);
-            for (const file of files) {
-                const fullPath = path.join(dir, file);
-                if (fs.lstatSync(fullPath).isDirectory()) {
-                    walk(fullPath);
-                } else if (file.includes('SingletonLock') || file.includes('SingletonCookie') || file.includes('SingletonSocket')) {
-                    try {
-                        fs.unlinkSync(fullPath);
-                        console.log(`✅ Eliminado: ${file}`);
-                    } catch (e) {
-                        // Ignorar si no se puede (está en uso real)
-                    }
-                }
-            }
+            execSync(`rm -rf .wwebjs_auth/**/Default/Singleton*`, { stdio: 'inherit' });
         } catch (e) {}
-    };
-
-    walk(authDir);
-    console.log('✨ [CLEANUP] Proceso terminado.');
+    }
 }
 
-clearLocks();
+hardClean();

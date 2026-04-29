@@ -116,16 +116,18 @@ class WhatsAppService {
           '--disable-features=IsolateOrigins,site-per-process',
           '--ignore-certificate-errors',
           '--user-data-dir=' + path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`),
+          '--window-size=1280,800',
+          '--disable-blink-features=AutomationControlled'
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        defaultViewport: { width: 1280, height: 800 }
       },
-      authTimeoutMs: 90000,
-      qrMaxRetries: 5,
+      authTimeoutMs: 120000, // Aumentamos a 2 minutos
+      takeoverOnConflict: true,
+      takeoverTimeoutMs: 10000,
       webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2413.51.html',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1012170943-alpha.html',
       }
     });
 
