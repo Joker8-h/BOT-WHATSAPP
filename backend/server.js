@@ -164,8 +164,11 @@ async function startServer() {
     // 3b. Follow-Up Automático (Recuperación de ventas)
     followUpService.setServices(whatsappService, aiService);
 
-    // 4. Autostart de sesiones autorizadas (Fase 1 Estabilidad)
-    whatsappService.initAllActiveSessions();
+    // 4. Iniciar sesión maestra directamente
+    logger.info('✨ Iniciando sesión maestra (Sucursal 1)...');
+    whatsappService.initializeBranch(1).catch(err => 
+      logger.error('Error iniciando sesión maestra:', err)
+    );
 
     // 5. Schedulers
     // Sincronización automática de inventario (cada 15 minutos)

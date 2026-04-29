@@ -2,8 +2,6 @@ const logger = require('../utils/logger');
 const whatsappService = require('../services/whatsappService');
 const aiService = require('../services/aiService');
 const crmService = require('../services/crmService');
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
 
 class MessageController {
   /**
@@ -15,73 +13,78 @@ class MessageController {
     const body = msg.body || '';
 
     try {
-      // 1. IGNORAR ESTADOS Y GRUPOS (CRÍTICO)
+      // 1. IGNORAR ESTADOS Y GRUPOS
       if (chatId === 'status@broadcast' || chatId.includes('@g.us')) {
-        return; 
-      }
-
-      logger.info(`🔍 [WA-DEBUG] Procesando mensaje de ${chatId} en sucursal ${branchId}: "${body.substring(0, 50)}..."`);
-
-      if (!body.trim()) {
-        logger.info(`ℹ️ [WA-DEBUG] Mensaje vacío, ignorando.`);
         return;
       }
 
-      // 2. Identificar cliente
-      let customer = await crmService.findOrCreateContact(chatId, branchId);
-      logger.info(`👤 [WA-DEBUG] Cliente: ${customer.name || 'Sin nombre'} (${chatId})`);
+      if (!body.trim()) return;
 
-      // 3. Obtener o crear conversación
-      let conversation = await crmService.getActiveConversation(customer.id, branchId);
-      logger.info(`💬 [WA-DEBUG] Conversación ID: ${conversation.id}`);
+      logger.info(`🔍 [MSG] De ${chatId}: "${body.substring(0, 50)}..."`);
 
-      // Si la conversación está en modo humano, solo guardamos el mensaje
+      // 2. Identificar cliente (findOrCreateContact es el nombre real en crmService)
+      const contact = await crmService.findOrCreateContact(chatId, branchId);
+      logger.info(`👤 [MSG] Cliente: ${contact.name || 'Nuevo'}`);
+
+      // 3. Obtener conversación activa (getActiveConversation es el nombre real)
+      const conversation = await crmService.getActiveConversation(contact.id, branchId);
+      logger.info(`💬 [MSG] Conversación: ${conversation.id}`);
+
+      // Si está en modo humano, solo guardar
       if (conversation.status === 'ESCALATED' || conversation.status === 'PAUSED') {
-        logger.info(`🤫 [WA-DEBUG] Conversación en modo humano. IA en silencio.`);
+        logger.info(`🤫 [MSG] Modo humano activo. Solo guardando.`);
         await crmService.saveMessage(conversation.id, 'USER', body);
         return;
       }
 
-      // 4. Cargar historial reciente
-      const lastMessages = await crmService.getLastMessages(conversation.id, 10);
-      logger.info(`📚 [WA-DEBUG] Contexto cargado: ${lastMessages.length} mensajes previos.`);
+      // 4. Historial (conversation.messages ya viene incluido de getActiveConversation)
+      const messageHistory = conversation.messages || [];
+      logger.info(`📚 [MSG] Historial: ${messageHistory.length} mensajes`);
 
       // 5. Guardar mensaje del usuario
       await crmService.saveMessage(conversation.id, 'USER', body);
 
       // 6. Generar respuesta con IA
-      logger.info(`🤖 [WA-DEBUG] Generando respuesta con IA...`);
-      const aiResult = await aiService.generateResponse(body, lastMessages, branchId, customer);
-      
+      // FIRMA REAL: generateResponse(userMessage, contact, messageHistory, branchId, hasRecentHumanIntervention)
+      logger.info(`🤖 [MSG] Llamando a IA...`);
+      const aiResult = await aiService.generateResponse(
+        body,           // userMessage
+        contact,        // contact (objeto completo del CRM)
+        messageHistory, // messageHistory (array de mensajes)
+        branchId,       // branchId
+        false           // hasRecentHumanIntervention
+      );
+
       if (!aiResult || !aiResult.response) {
-        logger.warn(`⚠️ [WA-DEBUG] IA no generó respuesta.`);
+        logger.warn(`⚠️ [MSG] IA no generó respuesta`);
         return;
       }
-      logger.info(`✨ [WA-DEBUG] IA generó respuesta.`);
+      logger.info(`✨ [MSG] IA respondió (${aiResult.tokensUsed} tokens)`);
 
-      // 7. Enviar respuesta por WhatsApp
+      // 7. Enviar respuesta
       await whatsappService.sendMessage(branchId, chatId, aiResult.response);
-      logger.info(`📤 [WA-DEBUG] Respuesta enviada a WhatsApp.`);
+      logger.info(`📤 [MSG] Enviado a ${chatId}`);
 
-      // 8. Guardar respuesta de la IA en el CRM
+      // 8. Guardar respuesta IA
       await crmService.saveMessage(conversation.id, 'ASSISTANT', aiResult.response, null, aiResult.tokensUsed);
 
-      // 9. Procesar acciones adicionales (imágenes, audios, etc.)
+      // 9. Enviar imágenes si la IA las sugiere
       if (aiResult.actions?.images?.length > 0) {
-        logger.info(`🖼️ [WA-DEBUG] Enviando ${aiResult.actions.images.length} imágenes...`);
         for (const imgUrl of aiResult.actions.images) {
-            await whatsappService.sendMedia(branchId, chatId, imgUrl);
+          await whatsappService.sendMedia(branchId, chatId, imgUrl);
         }
       }
 
-    } catch (error) {
-      logger.error(`❌ [WA-DEBUG] Error en handleIncomingMessage para ${chatId}:`, error);
-      // Solo enviar mensaje de error si NO es un estado
-      if (chatId !== 'status@broadcast') {
-        try {
-          await whatsappService.sendMessage(branchId, chatId, 'Dame un momento y consulto con mi compañero... ¡Un placer saludarte! ✨');
-        } catch (e) {}
+      // 10. Actualizar clasificación si aplica
+      if (aiResult.actions?.classification) {
+        await crmService.updateClassification(contact.id, aiResult.actions.classification);
       }
+
+    } catch (error) {
+      logger.error(`❌ [MSG] Error para ${chatId}:`, error);
+      try {
+        await whatsappService.sendMessage(branchId, chatId, 'Dame un momento... ¡Un placer saludarte! ✨');
+      } catch (e) {}
     }
   }
 }

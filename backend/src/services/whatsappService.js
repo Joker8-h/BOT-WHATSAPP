@@ -130,6 +130,7 @@ class WhatsAppService {
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        protocolTimeout: 300000,
       },
       authTimeoutMs: 300000, // 5 minutos de margen para sincronizar
       takeoverOnConflict: true,
