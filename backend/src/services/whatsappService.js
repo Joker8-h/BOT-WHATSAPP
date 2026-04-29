@@ -75,14 +75,25 @@ class WhatsAppService {
       path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`, 'SingletonLock')
     ];
 
-    possibleLockPaths.forEach(lockPath => {
-      try {
-        if (fs.existsSync(lockPath)) {
-          fs.unlinkSync(lockPath);
-          logger.info(`🔓 Candado eliminado: ${lockPath}`);
+    // Intentar borrar el candado con reintentos (Railway/Docker fix)
+    let lockCleared = false;
+    for (let i = 0; i < 15; i++) {
+      for (const lockPath of possibleLockPaths) {
+        try {
+          if (fs.existsSync(lockPath)) {
+            fs.unlinkSync(lockPath);
+            logger.info(`🔓 Candado eliminado con éxito en intento ${i+1}: ${lockPath}`);
+            lockCleared = true;
+          } else {
+            lockCleared = true; // No existe, así que estamos bien
+          }
+        } catch (e) {
+          logger.warn(`⏳ Intento ${i+1}: El candado de la sucursal ${branchId} sigue retenido. Esperando 1s...`);
         }
-      } catch (e) {}
-    });
+      }
+      if (lockCleared) break;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
 
     const startTime = Date.now();
 
