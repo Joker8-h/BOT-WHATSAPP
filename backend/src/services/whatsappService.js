@@ -14,6 +14,7 @@ class WhatsAppService {
     this.clients = new Map();
     // Mapa de estados: branchId -> { isReady: boolean, qr: string, status: string }
     this.sessions = new Map();
+    this.pendingInits = new Set(); // 🚩 Nuevo: Control de procesos en curso
     
     this.messageHandler = null;
 
@@ -52,20 +53,18 @@ class WhatsAppService {
    * Inicializa o recupera una sesión para una sucursal específica
    */
   async initializeBranch(branchId) {
-    // Si ya existe un cliente, verificamos si está sano
+    // ── Evitar duplicidad de inicialización (CRÍTICO) ──
     if (this.clients.has(branchId)) {
-      const currentStatus = this.sessions.get(branchId);
-      
-      // Si está listo o esperando QR con el QR ya generado, lo reutilizamos
-      if (currentStatus && (currentStatus.status === 'READY' || (currentStatus.status === 'WAITING_QR' && currentStatus.qr))) {
-        logger.info(`Reutilizando sesión existente (${currentStatus.status}) para sucursal: ${branchId}`);
-        return this.clients.get(branchId);
-      }
-      
-      // Si está en otro estado (ej: INITIALIZING por demasiado tiempo), lo limpiamos y reiniciamos
-      logger.info(`⚠️ La sesión de la sucursal ${branchId} parece atascada o en estado ${currentStatus?.status}. Reiniciando...`);
-      await this.destroyBranch(branchId);
+      logger.info(`ℹ️ Sucursal ${branchId} ya tiene un cliente activo.`);
+      return this.clients.get(branchId);
     }
+
+    if (this.pendingInits.has(branchId)) {
+      logger.info(`⏳ Sucursal ${branchId} ya se está inicializando. Ignorando petición duplicada.`);
+      return null;
+    }
+
+    this.pendingInits.add(branchId);
 
     logger.info(`🚀 [WA-INIT] Iniciando instancia para sucursal: ${branchId}`);
     
@@ -195,10 +194,12 @@ class WhatsAppService {
     client.initialize().then(() => {
       const endTime = Date.now();
       logger.info(`✅ [WA-READY] WhatsApp sucursal ${branchId} listo en ${(endTime - startTime)/1000}s`);
+      this.pendingInits.delete(branchId);
     }).catch(err => {
       logger.error(`❌ Error crítico iniciando sucursal ${branchId}:`, err);
-      this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'ERROR' });
+      this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'ERROR', isInitializing: false });
       this.clients.delete(branchId);
+      this.pendingInits.delete(branchId);
     });
 
     return client;
