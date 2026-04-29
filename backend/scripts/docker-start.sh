@@ -8,6 +8,10 @@ sleep 5
 echo "🔄 Sincronizando esquema de base de datos..."
 npx prisma db push --accept-data-loss
 
+# 2b. Ejecutar semillas (Seed) para crear admin y sucursal base
+echo "🌱 Ejecutando semillas (Seed)..."
+node seed.js
+
 # 3. Iniciar la aplicación
 echo "🚀 Iniciando servidor..."
 node server.js
