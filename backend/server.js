@@ -28,6 +28,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── Middleware Global ───
+app.set('trust proxy', 1); // Confiar en el proxy de Railway para el rate limit
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
@@ -46,6 +47,7 @@ app.use(express.urlencoded({ extended: true }));
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 6000,
+  keyGenerator: (req) => req.headers['x-forwarded-for'] || req.ip,
   message: { success: false, error: 'Demasiadas solicitudes, intenta más tarde' },
 });
 app.use('/api', apiLimiter);

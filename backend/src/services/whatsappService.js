@@ -5,6 +5,8 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const logger = require('../utils/logger');
 const { antiBanDelay } = require('../utils/helpers');
 const { prisma } = require('../config/database');
+const path = require('path');
+const fs = require('fs');
 
 class WhatsAppService {
   constructor() {
@@ -66,6 +68,18 @@ class WhatsAppService {
     }
 
     logger.info(`🚀 [WA-INIT] Iniciando instancia para sucursal: ${branchId}`);
+    
+    // Limpieza de candados de sesión (Locks) — Crítico para Railway/Docker
+    try {
+      const lockPath = path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`, 'Default', 'SingletonLock');
+      if (fs.existsSync(lockPath)) {
+        fs.unlinkSync(lockPath);
+        logger.info(`🔓 Candado de sesión eliminado para sucursal ${branchId}`);
+      }
+    } catch (e) {
+      // Si no se puede borrar es que probablemente sí está en uso real o no existe
+    }
+
     const startTime = Date.now();
 
     const client = new Client({
