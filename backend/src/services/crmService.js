@@ -10,9 +10,9 @@ class CRMService {
    */
   async findOrCreateContact(phone, branchId, name = null) {
     try {
-      // El teléfono es único por sucursal según el nuevo esquema
-      let contact = await prisma.contact.findFirst({
-        where: { phone, branchId },
+      // El teléfono es ahora único globalmente en el CRM
+      let contact = await prisma.contact.findUnique({
+        where: { phone },
       });
 
       if (!contact) {

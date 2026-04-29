@@ -16,14 +16,15 @@ class WompiService {
    */
   async generatePaymentLink({ branchId, amount, name, description, reference }) {
     try {
-      // 1. Obtener credenciales de la sucursal
+      // 1. Obtener credenciales de la sucursal MAESTRA (Sucursal 1)
+      const masterBranchId = 1;
       const branch = await prisma.branch.findUnique({
-        where: { id: branchId },
+        where: { id: masterBranchId },
         select: { wompiPrivateKey: true, wompiPublicKey: true, wompiIntegritySecret: true }
       });
 
       if (!branch || !branch.wompiPrivateKey) {
-        throw new Error(`Sucursal ${branchId} no tiene configurado Wompi`);
+        throw new Error(`La sucursal maestra (${masterBranchId}) no tiene configurado Wompi`);
       }
 
       // Desencriptar llave privada

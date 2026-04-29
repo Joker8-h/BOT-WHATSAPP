@@ -33,8 +33,10 @@ class WompiController {
         return res.status(404).json({ error: 'Orden no encontrada' });
       }
 
-      // 3. Validar Checksum de seguridad
-      const integritySecret = decrypt(order.branch.wompiIntegritySecret);
+      // 3. Validar Checksum de seguridad (Siempre contra la sucursal 1)
+      const masterBranch = await prisma.branch.findUnique({ where: { id: 1 } });
+      const integritySecret = decrypt(masterBranch.wompiIntegritySecret);
+      
       if (!wompiService.isValidWebhookChecksum(data, integritySecret)) {
         logger.error(`❌ Wompi: Checksum inválido para orden ${orderId}`);
         return res.status(403).json({ error: 'Firma inválida' });

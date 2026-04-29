@@ -35,6 +35,7 @@ model Branch {
   
   // Notificaciones WhatsApp
   notificationGroupName String? @db.VarChar(200)
+  supportedCities       String? @db.Text // Ciudades que atiende (ej: "Bogota, Chia")
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -118,7 +119,10 @@ model Contact {
   id              Int       @id @default(autoincrement())
   phone           String    @db.VarChar(50)
   name            String?   @db.VarChar(100)
+  fullName        String?   @db.VarChar(200)
+  address         String?   @db.Text
   city            String?   @db.VarChar(80)
+  interests       String?   @db.Text // Gustos y preferencias
 
   // Multi-tenant
   branchId        Int?
@@ -150,7 +154,7 @@ model Contact {
   conversations   Conversation[]
   orders          Order[]
 
-  @@unique([phone, branchId]) // Un teléfono es único dentro de una sucursal
+  @@unique([phone]) // El teléfono es único globalmente
   @@index([city])
   @@index([clientType])
   @@index([isActive])

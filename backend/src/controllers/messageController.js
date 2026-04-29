@@ -29,18 +29,13 @@ class MessageController {
     
     const isBusinessHours = day >= 1 && day <= 6 && hour >= 9 && hour < 19;
 
-    let phone = chatId.split('@')[0];
-    // Conservar el sufijo si es de tipo @lid para evitar colisiones y mantener el ID real
-    if (chatId.includes('@lid')) {
-      phone = chatId.replace('@c.us', '');
-    }
+    // 1. Sanitizar el teléfono (Solo números para CRM limpio)
+    const cleanPhone = chatId.split('@')[0].replace(/\D/g, '');
     
-    // Truncar solo si no es un ID especial y excede el límite de la BD (asumiendo 20 por ahora, pero mejorado)
-    if (!chatId.includes('@lid') && phone.length > 20) phone = phone.substring(0, 20);
+    // La sucursal que recibe el mensaje siempre será la 1 (Master) si usamos línea única
+    const masterBranchId = 1; 
     
-    const branchId = msg.branchId; 
-    
-    logger.info(`📩 [Branch ${branchId}] Mensaje de ${phone}`);
+    logger.info(`📩 [WhatsApp Central] Mensaje de ${cleanPhone} (${chatId})`);
 
     try {
       // 0. DETECCIÓN DE EMPLEADO (MODO CONSULTA INTERNA)
@@ -56,8 +51,8 @@ class MessageController {
       
       if (isEmployee) {
         logger.info(`🛠️ [MODO EMPLEADO] Consulta de ${phone}`);
-        const employeeResult = await aiService.generateEmployeeResponse(userMessage, branchId);
-        await whatsappService.sendMessage(branchId, chatId, employeeResult.response);
+        const employeeResult = await aiService.generateEmployeeResponse(userMessage, masterBranchId);
+        await whatsappService.sendMessage(masterBranchId, chatId, employeeResult.response);
         
         // Imágenes para empleados
         if (employeeResult.actions?.images?.length > 0) {
@@ -68,11 +63,20 @@ class MessageController {
         return;
       }
 
-      // 1. Obtener o crear contacto en el CRM
-      const contact = await crmService.findOrCreateContact(phone, branchId, null);
+      // 1. Obtener o crear contacto en el CRM (Búsqueda global por teléfono)
+      let contact = await prisma.contact.findFirst({
+        where: { phone: cleanPhone }
+      });
+
+      if (!contact) {
+        contact = await crmService.findOrCreateContact(cleanPhone, masterBranchId, null);
+      }
+
+      // Determinar qué sucursal atiende a este cliente (Prioridad: la asignada, o Master si no hay)
+      let activeBranchId = contact.branchId || masterBranchId;
 
       // 2. Obtener o crear conversación activa
-      const conversation = await crmService.getActiveConversation(contact.id, branchId);
+      const conversation = await crmService.getActiveConversation(contact.id, activeBranchId);
 
       // Si la conversación ya fue escalada a humano o pausada, no respondemos con IA
       if (conversation.status === 'ESCALATED' || conversation.status === 'PAUSED') {
@@ -113,7 +117,7 @@ class MessageController {
         conversation.messages.some(m => m.role === 'ASSISTANT' && !m.tokensUsed);
 
       // 5. Generar respuesta con IA (Personalidad de Ventas Fantasías)
-      const aiResult = await aiService.generateResponse(userMessage, contact, messageHistory, branchId, hasRecentHumanIntervention);
+      const aiResult = await aiService.generateResponse(userMessage, contact, messageHistory, activeBranchId, hasRecentHumanIntervention);
 
       // 5b. Procesar AUDIO si existe la etiqueta [AUDIO:...]
       let audioPath = null;
@@ -125,7 +129,7 @@ class MessageController {
           audioPath = await aiService.generateAudio(audioText);
           
           if (audioPath) {
-            await whatsappService.sendMedia(branchId, chatId, audioPath, { isAudio: true });
+            await whatsappService.sendMedia(masterBranchId, chatId, audioPath, { isAudio: true });
             // Eliminar la etiqueta del texto final para no confundir al cliente
             aiResult.response = aiResult.response.replace(audioMatch[0], '').trim();
             // Borrar archivo temporal
@@ -145,20 +149,47 @@ class MessageController {
         logger.info(`👤 Nombre capturado para ${phone}: ${aiResult.actions.capturedName}`);
       }
 
-      // ── ACCIÓN: Capturar Ciudad ──
+      // ── ACCIÓN: Capturar Ciudad y Enrutar ──
       if (aiResult.actions?.capturedCity) {
+        const city = aiResult.actions.capturedCity;
+        
+        // Buscar la sucursal que atienda esta ciudad
+        const branches = await prisma.branch.findMany({ where: { isActive: true } });
+        const targetBranch = branches.find(b => 
+          b.supportedCities && b.supportedCities.toLowerCase().includes(city.toLowerCase())
+        );
+
+        const updateData = { city };
+        if (targetBranch) {
+          updateData.branchId = targetBranch.id;
+          activeBranchId = targetBranch.id;
+          logger.info(`🗺️ Enrutando cliente ${cleanPhone} a sucursal ${targetBranch.name} (${city})`);
+        }
+
         await prisma.contact.update({
           where: { id: contact.id },
-          data: { city: aiResult.actions.capturedCity }
+          data: updateData
         });
-        logger.info(`📍 Ciudad capturada para ${phone}: ${aiResult.actions.capturedCity}`);
+        logger.info(`📍 Ciudad capturada para ${cleanPhone}: ${city}`);
+      }
+
+      // ── ACCIÓN: Capturar Otros Datos CRM ──
+      if (aiResult.actions?.capturedFullName || aiResult.actions?.capturedAddress || aiResult.actions?.capturedInterests) {
+        await prisma.contact.update({
+          where: { id: contact.id },
+          data: {
+            fullName: aiResult.actions.capturedFullName || undefined,
+            address: aiResult.actions.capturedAddress || undefined,
+            interests: aiResult.actions.capturedInterests || undefined
+          }
+        });
       }
 
       // ── ACCIÓN: Enviar Imágenes (Máximo 4) ──
       if (aiResult.actions?.images?.length > 0) {
         for (const imageUrl of aiResult.actions.images.slice(0, 4)) {
           if (imageUrl && imageUrl.startsWith('http')) {
-            await whatsappService.sendMedia(branchId, chatId, imageUrl);
+            await whatsappService.sendMedia(masterBranchId, chatId, imageUrl);
           }
         }
       }
@@ -166,13 +197,13 @@ class MessageController {
       // ── ALERTA: Escalamiento a humano ──
       if (aiResult.actions?.shouldEscalate) {
         await crmService.escalateConversation(conversation.id);
-        await whatsappService.sendMessage(branchId, chatId, aiResult.response);
+        await whatsappService.sendMessage(masterBranchId, chatId, aiResult.response);
         
-        // Notificar a MULTIPLES empleados configurados
+        // Notificar a MULTIPLES empleados configurados de la sucursal ACTIVA
         await notificationService.notifyEmployees(
             whatsappService, 
-            branchId, 
-            `🙋‍♂️ *AYUDA HUMANA REQUERIDA*\nCliente: ${aiResult.actions?.capturedName || contact.name || phone}\nSede: ${branchId}\nMensaje: "${userMessage}"`
+            activeBranchId, 
+            `🙋‍♂️ *AYUDA HUMANA REQUERIDA*\nCliente: ${aiResult.actions?.capturedFullName || contact.name || cleanPhone}\nCiudad: ${contact.city || 'Desconocida'}\nMensaje: "${userMessage}"`
         );
         
         await crmService.saveMessage(conversation.id, 'ASSISTANT', aiResult.response, null, aiResult.tokensUsed);
@@ -220,7 +251,7 @@ class MessageController {
 
           const order = await crmService.createOrder({
             contactId: contact.id,
-            branchId: branchId,
+            branchId: activeBranchId,
             items: items,
             amount: totalAmount,
             shippingCity: shippingCity,
@@ -232,11 +263,11 @@ class MessageController {
             const ticketUrl = visualService.generateOrderTicket({
               products: products,
               total: totalAmount,
-              clientName: aiResult.actions?.capturedName || contact.name || 'Cliente',
+              clientName: aiResult.actions?.capturedFullName || contact.name || 'Cliente',
               city: shippingCity || 'Colombia'
             });
-            await whatsappService.sendMedia(branchId, chatId, ticketUrl);
-            logger.info(`🎫 Ticket visual enviado a ${phone}`);
+            await whatsappService.sendMedia(masterBranchId, chatId, ticketUrl);
+            logger.info(`🎫 Ticket visual enviado a ${cleanPhone}`);
           } catch (e) {
             logger.error('Error enviando ticket visual:', e);
           }
@@ -283,7 +314,7 @@ class MessageController {
 
       // 8. Enviar respuesta normal (Solo si no se envió ya arriba)
       if (!responseSent && aiResult.response) {
-        await whatsappService.sendMessage(branchId, chatId, aiResult.response);
+        await whatsappService.sendMessage(masterBranchId, chatId, aiResult.response);
         await crmService.saveMessage(conversation.id, 'ASSISTANT', aiResult.response, null, aiResult.tokensUsed);
       }
 

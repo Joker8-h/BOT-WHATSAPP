@@ -230,6 +230,16 @@ class AIService {
       actions.capturedAddress = addressMatch[1].trim();
     }
 
+    const fullNameMatch = response.match(/\[CAPTURAR_NOMBRE_COMPLETO:(.+?)\]/);
+    if (fullNameMatch) {
+      actions.capturedFullName = fullNameMatch[1].trim();
+    }
+
+    const interestsMatch = response.match(/\[CAPTURAR_GUSTOS:(.+?)\]/);
+    if (interestsMatch) {
+      actions.capturedInterests = interestsMatch[1].trim();
+    }
+
     const neighborhoodMatch = response.match(/\[CAPTURAR_BARRIO:(.+?)\]/);
     if (neighborhoodMatch) {
       actions.capturedNeighborhood = neighborhoodMatch[1].trim();
@@ -260,6 +270,8 @@ class AIService {
       .replace(/\[CAPTURAR_CIUDAD:.+?\]/g, '')
       .replace(/\[CAPTURAR_DIRECCION:.+?\]/g, '')
       .replace(/\[CAPTURAR_BARRIO:.+?\]/g, '')
+      .replace(/\[CAPTURAR_NOMBRE_COMPLETO:.+?\]/g, '')
+      .replace(/\[CAPTURAR_GUSTOS:.+?\]/g, '')
       .trim();
   }
 }

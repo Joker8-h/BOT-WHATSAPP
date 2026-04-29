@@ -18,7 +18,8 @@ import { IconPhone, IconShield, IconAlertTriangle, IconActivity, IconLock, IconS
 import Swal from 'sweetalert2';
 
 export default function Settings() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
+  const isMasterBranch = user?.branchId === 1 || isAdmin;
   const [waStatus, setWaStatus] = useState(null);
   const [audit, setAudit] = useState([]);
   const [loadingWA, setLoadingWA] = useState(false);
@@ -166,8 +167,9 @@ export default function Settings() {
       </header>
 
       <div className="settings-grid" style={{ marginBottom: '2rem' }}>
-        {/* WhatsApp Connection Card */}
-        <div className="card" style={{ gridColumn: '1 / -1' }}>
+        {/* WhatsApp Connection Card - SOLO MASTER */}
+        {isMasterBranch && (
+          <div className="card" style={{ gridColumn: '1 / -1' }}>
           <div className="card-title" style={{ justifyContent: 'space-between' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <IconPhone /> Canal de Ventas WhatsApp
@@ -237,6 +239,7 @@ export default function Settings() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.2rem', marginBottom: '2rem' }}>
@@ -253,52 +256,54 @@ export default function Settings() {
             
             <form onSubmit={handleWompiSave}>
               <div className="card-body">
-                <div className="form-grid">
-                    <div className="form-group">
-                        <label>Merchant ID</label>
-                        <input 
-                            value={wompiForm.wompiMerchantId}
-                            onChange={e => {
-                                setWompiForm({...wompiForm, wompiMerchantId: e.target.value});
-                                setFormIsDirty(true);
-                            }}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Public Key</label>
-                        <input 
-                            value={wompiForm.wompiPublicKey}
-                            onChange={e => {
-                                setWompiForm({...wompiForm, wompiPublicKey: e.target.value});
-                                setFormIsDirty(true);
-                            }}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Private Key (Secret)</label>
-                        <input 
-                            type="password"
-                            placeholder="••••••••••••••••"
-                            value={wompiForm.wompiPrivateKey}
-                            onChange={e => {
-                                setWompiForm({...wompiForm, wompiPrivateKey: e.target.value});
-                                setFormIsDirty(true);
-                            }}
-                        />
-                    </div>
-                    <div className="form-group">
-                        <label>Integrity Secret (Firma)</label>
-                        <input 
-                            type="password"
-                            placeholder="••••••••••••••••"
-                            value={wompiForm.wompiIntegritySecret}
-                            onChange={e => {
-                                setWompiForm({...wompiForm, wompiIntegritySecret: e.target.value});
-                                setFormIsDirty(true);
-                            }}
-                        />
-                    </div>
-                </div>
+                {isMasterBranch && (
+                  <div className="form-grid">
+                      <div className="form-group">
+                          <label>Merchant ID</label>
+                          <input 
+                              value={wompiForm.wompiMerchantId}
+                              onChange={e => {
+                                  setWompiForm({...wompiForm, wompiMerchantId: e.target.value});
+                                  setFormIsDirty(true);
+                              }}
+                          />
+                      </div>
+                      <div className="form-group">
+                          <label>Public Key</label>
+                          <input 
+                              value={wompiForm.wompiPublicKey}
+                              onChange={e => {
+                                  setWompiForm({...wompiForm, wompiPublicKey: e.target.value});
+                                  setFormIsDirty(true);
+                              }}
+                          />
+                      </div>
+                      <div className="form-group">
+                          <label>Private Key (Secret)</label>
+                          <input 
+                              type="password"
+                              placeholder="••••••••••••••••"
+                              value={wompiForm.wompiPrivateKey}
+                              onChange={e => {
+                                  setWompiForm({...wompiForm, wompiPrivateKey: e.target.value});
+                                  setFormIsDirty(true);
+                              }}
+                          />
+                      </div>
+                      <div className="form-group">
+                          <label>Integrity Secret (Firma)</label>
+                          <input 
+                              type="password"
+                              placeholder="••••••••••••••••"
+                              value={wompiForm.wompiIntegritySecret}
+                              onChange={e => {
+                                  setWompiForm({...wompiForm, wompiIntegritySecret: e.target.value});
+                                  setFormIsDirty(true);
+                              }}
+                          />
+                      </div>
+                  </div>
+                )}
 
                 <div style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem', color: 'var(--purple)' }}>

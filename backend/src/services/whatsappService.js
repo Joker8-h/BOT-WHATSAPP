@@ -39,17 +39,8 @@ class WhatsAppService {
         return;
       }
 
-      logger.info(`✨ Iniciando secuencialmente ${authorizedBranches.length} sucursales...`);
-
-      for (const branch of authorizedBranches) {
-        try {
-          // Iniciamos una por una con un delay de 10 segundos entre ellas para no saturar la RAM
-          await this.initializeBranch(branch.id);
-          await new Promise(resolve => setTimeout(resolve, 10000));
-        } catch (error) {
-          logger.error(`❌ Falló autostart para sucursal ${branch.id}:`, error.message);
-        }
-      }
+      logger.info(`✨ Iniciando sesión maestra (Sucursal 1)...`);
+      await this.initializeBranch(1);
     } catch (error) {
       logger.error('❌ Error en el proceso de autostart:', error);
     }
@@ -187,11 +178,12 @@ class WhatsAppService {
    * Envía un mensaje desde una sucursal específica
    */
   async sendMessage(branchId, to, text) {
-    const client = this.clients.get(branchId);
-    const session = this.sessions.get(branchId);
+    const masterBranchId = 1;
+    const client = this.clients.get(masterBranchId);
+    const session = this.sessions.get(masterBranchId);
 
     if (!client || !session?.isReady) {
-      logger.warn(`WhatsApp sucursal ${branchId} no está listo para enviar`);
+      logger.warn(`WhatsApp Central (Branch ${masterBranchId}) no está listo para enviar`);
       return false;
     }
 
@@ -266,11 +258,12 @@ class WhatsAppService {
    * @param {object} options - { caption, isAudio }
    */
   async sendMedia(branchId, to, mediaSource, options = {}) {
-    const client = this.clients.get(branchId);
-    const session = this.sessions.get(branchId);
+    const masterBranchId = 1;
+    const client = this.clients.get(masterBranchId);
+    const session = this.sessions.get(masterBranchId);
 
     if (!client || !session?.isReady) {
-      logger.warn(`WhatsApp sucursal ${branchId} no está listo para enviar media`);
+      logger.warn(`WhatsApp Central (Branch ${masterBranchId}) no está listo para enviar media`);
       return false;
     }
 
@@ -327,7 +320,8 @@ class WhatsAppService {
    * Envía un mensaje a un grupo específico de la sucursal (por ejemplo, para despacho)
    */
   async notifyGroup(branchId, message) {
-    const client = this.clients.get(branchId);
+    const masterBranchId = 1;
+    const client = this.clients.get(masterBranchId);
     if (!client) return false;
 
     try {
@@ -378,7 +372,7 @@ class WhatsAppService {
         const jitter = Math.floor(Math.random() * 2000);
         await new Promise(resolve => setTimeout(resolve, delayMs + jitter));
 
-        const sent = await this.sendMessage(branchId, chatId, message);
+        const sent = await this.sendMessage(1, chatId, message); // Siempre por el 1
         results.push({ phone: contact.phone, sent });
 
         if ((i + 1) % 5 === 0) {
