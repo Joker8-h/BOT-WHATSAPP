@@ -57,6 +57,29 @@ function truncate(text, maxLength = 200) {
 }
 
 /**
+ * Verifica si estamos dentro del horario laboral (Colombia: UTC-5)
+ * Lunes a Sábado, 9:00 AM - 6:00 PM
+ */
+function isWorkingHours() {
+  const now = new Date();
+  
+  // Convertir a hora de Colombia (UTC-5)
+  // Obtenemos el offset en minutos y lo ajustamos a -300 (UTC-5)
+  const offset = now.getTimezoneOffset(); // en minutos
+  const colombiaTime = new Date(now.getTime() + (offset - 300) * 60 * 1000);
+  
+  const day = colombiaTime.getDay(); // 0: Dom, 1: Lun, ..., 6: Sab
+  const hour = colombiaTime.getHours();
+  
+  // Lunes (1) a Sábado (6)
+  const isBusinessDay = day >= 1 && day <= 6;
+  // 9:00 AM a 6:00 PM (18:00)
+  const isBusinessHour = hour >= 9 && hour < 18;
+  
+  return isBusinessDay && isBusinessHour;
+}
+
+/**
  * Extraer solo los últimos N mensajes para contexto IA
  */
 function getRecentMessages(messages, limit = 20) {
@@ -71,4 +94,5 @@ module.exports = {
   getGreeting,
   truncate,
   getRecentMessages,
+  isWorkingHours,
 };

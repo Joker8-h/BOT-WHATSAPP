@@ -8,6 +8,7 @@ const crmService = require('../services/crmService');
 const wompiService = require('../services/wompiService');
 const catalogService = require('../services/catalogService');
 const { prisma } = require('../config/database');
+const { isWorkingHours } = require('../utils/helpers');
 
 class MessageController {
   constructor() {
@@ -29,8 +30,49 @@ class MessageController {
 
       logger.info(`📨 [MSG-IN] ${chatId}: "${body.substring(0, 30)}..."`);
 
+      // ── 1. ¿ES EMPLEADO? ────────────────────────────────────
+      const cleanPhone = chatId.split('@')[0];
+      const employee = await prisma.employeeAccess.findFirst({
+        where: { phone: cleanPhone }
+      });
+
+      if (employee) {
+        logger.info(`👷 [EMPLOYEE] Mensaje de ${employee.name} (${chatId})`);
+        const allProducts = await catalogService.getAllProducts(branchId);
+        const employeeResponse = await aiService.generateEmployeeResponse(body, allProducts);
+        await whatsappService.sendMessage(branchId, chatId, employeeResponse);
+        return;
+      }
+
+      // ── 2. CRM Y CONVERSACIÓN ────────────────────────────────
       const contact = await crmService.findOrCreateContact(chatId, branchId);
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
+
+      // ── 3. VERIFICAR HORARIO LABORAL ────────────────────────
+      if (!isWorkingHours()) {
+        logger.info(`🌙 [OFF-HOURS] Mensaje recibido fuera de horario de ${chatId}`);
+        
+        // Marcar conversación como pendiente de respuesta offline
+        const currentContext = conversation.context || {};
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { context: { ...currentContext, pendingOfflineReply: true } }
+        });
+
+        // Solo enviar el mensaje de fuera de horario una vez cada 24h por cliente
+        // para no ser molestos si siguen escribiendo
+        const lastMsg = conversation.messages[conversation.messages.length - 1];
+        const isRecentOutOffice = lastMsg?.role === 'ASSISTANT' && lastMsg?.content.includes('nuestro equipo está descansando');
+
+        if (!isRecentOutOffice) {
+          const offHoursMsg = "¡Hola! Qué rico saludarte. 🌹 Te cuento que en este momento nuestro equipo está descansando para recargar energías. \n\nNuestro horario de atención es de *Lunes a Sábado de 9:00 AM a 6:00 PM*. \n\n¡Mañana mismo a primera hora te responderé personalmente con todo el amor! ✨ Mientras tanto, puedes contarnos qué te interesa y te dejaré agendado.";
+          await whatsappService.sendMessage(branchId, chatId, offHoursMsg);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', offHoursMsg);
+        } else {
+          // Solo guardar el mensaje del usuario sin responder (ya lo guardamos arriba antes del if, pero por seguridad lo dejamos claro)
+        }
+        return;
+      }
 
       if (conversation.status === 'ESCALATED' || conversation.status === 'PAUSED') {
         logger.info(`🤫 [MSG] Chat pausado/escalado para ${chatId}`);
