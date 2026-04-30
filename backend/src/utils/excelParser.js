@@ -48,26 +48,23 @@ async function parseExcel(filePath) {
     let colMapping = {
       name: 2,      // Default Col B
       features: 3,  // Default Col C
-      quantity: 4,  // Default Col D (Formato 2)
+      quantity: 4,  // Default Col D
       price: 5,     // Default Col E
-      image: 1,     // Default Col A
-      category: null // Opcional
+      image: 1,     // Default Col A (JUGUETE)
+      category: null 
     };
 
-    // Intentar encontrar la fila de encabezados para ajustar el mapeo
+    // Intentar encontrar la fila de encabezados
     sheet.eachRow((row, rowNumber) => {
-      if (rowNumber > 10) return; // Solo revisar las primeras filas
-      const values = row.values;
-      if (!values) return;
-
-      values.forEach((val, index) => {
-        const text = String(val || '').toUpperCase();
-        if (text.includes('CANTIDAD')) { colMapping.quantity = index; }
-        if (text.includes('NOMBRE')) { colMapping.name = index; }
-        if (text.includes('CARACTERISTICAS') || text.includes('PRODCUTO')) { colMapping.features = index; }
-        if (text.includes('PRECIO')) { colMapping.price = index; }
-        if (text.includes('JUGUETE') || text.includes('IMAGEN')) { colMapping.image = index; }
-        if (text.includes('CATEGORIA')) { colMapping.category = index; }
+      if (rowNumber > 5) return; // Solo revisar las primeras filas
+      row.eachCell((cell, colNumber) => {
+        const text = String(cell.value || '').toUpperCase().trim();
+        if (text === 'CANTIDAD' || text === 'STOCK') { colMapping.quantity = colNumber; }
+        if (text === 'NOMBRE' || text === 'PRODUCTO') { colMapping.name = colNumber; }
+        if (text === 'CARACTERISTICAS' || text === 'DESCRIPCION') { colMapping.features = colNumber; }
+        if (text === 'PRECIO' || text === 'VALOR') { colMapping.price = colNumber; }
+        if (text === 'JUGUETE' || text === 'IMAGEN' || text === 'FOTO') { colMapping.image = colNumber; }
+        if (text === 'CATEGORIA') { colMapping.category = colNumber; }
       });
     });
 
@@ -75,39 +72,40 @@ async function parseExcel(filePath) {
     const rowsData = [];
     sheet.eachRow((row, rowNumber) => {
       const values = row.values;
-      if (!values || values.length < 3) return;
+      // ExcelJS values es 1-indexed. Saltamos si no hay datos básicos
+      if (!values || rowNumber < 2) return; 
 
-      const name = values[colMapping.name] ? String(values[colMapping.name]).trim() : '';
+      let name = values[colMapping.name];
+      if (name && typeof name === 'object') name = name.richText ? name.richText.map(t => t.text).join('') : name.text;
+      name = String(name || '').trim();
       
-      // Saltar encabezados y filas vacías
-      if (!name || name.length < 3 || name === 'NOMBRE' || name === 'PRODUCTO') return;
-      if (name.toUpperCase() === name && name.length > 30) return; // Secciones
+      // Saltar encabezados y secciones vacías
+      if (!name || name.length < 3 || name === 'NOMBRE' || name === 'PRODUCTO' || name === 'JUGUETE') return;
+      if (name.toUpperCase() === name && name.length > 40) return; // Secciones informativas
 
-      // Extraer datos usando el mapeo detectado
-      const rawPrice = values[colMapping.price];
+      // Extraer Precio (Limpiar $, puntos y comas)
+      let rawPrice = values[colMapping.price];
+      if (rawPrice && typeof rawPrice === 'object') rawPrice = rawPrice.result || rawPrice.text || 0;
       const priceStr = String(rawPrice || '0').replace(/[^0-9]/g, '');
       const price = parseFloat(priceStr) || 0;
 
-      const rawStock = values[colMapping.quantity];
-      const stock = parseInt(String(rawStock || '0').replace(/[^0-9]/g, '')) || 0;
+      // Extraer Stock
+      let rawStock = values[colMapping.quantity];
+      if (rawStock && typeof rawStock === 'object') rawStock = rawStock.result || rawStock.text || 0;
+      const stockStr = String(rawStock || '0').replace(/[^0-9]/g, '');
+      const stock = parseInt(stockStr) || 0;
 
-      const category = colMapping.category ? values[colMapping.category] : '';
-
-      // Intentar detectar si el valor de la celda es una URL (IMAGE() de Google Sheets)
-      let imageUrl = null;
-      const imgCellVal = values[colMapping.image];
-      if (imgCellVal && typeof imgCellVal === 'string' && (imgCellVal.startsWith('http') || imgCellVal.includes('cloudinary'))) {
-        imageUrl = imgCellVal;
-      }
+      const features = values[colMapping.features] ? String(values[colMapping.features]).trim() : '';
+      const category = colMapping.category ? String(values[colMapping.category] || '').trim() : '';
 
       rowsData.push({
         rowNumber,
-        name: name,
-        features: values[colMapping.features] ? String(values[colMapping.features]).trim() : '', 
-        stock: stock,
-        price: price,
-        category: category,
-        imageUrl: imageUrl 
+        name,
+        features, 
+        stock,
+        price,
+        category,
+        imageUrl: null 
       });
     });
 
@@ -116,28 +114,43 @@ async function parseExcel(filePath) {
     logger.info(`🔍 Se encontraron ${images.length} imágenes flotantes en el Excel.`);
     
     for (const image of images) {
+      // Las imágenes en ExcelJS pueden estar ligeramente movidas de la fila exacta
       const imgRowNumber = image.range.tl.nativeRow + 1; 
-      const imgColNumber = image.range.tl.nativeCol;
-
       const media = workbook.model.media.find(m => m.index === image.imageId);
-      if (media && media.buffer) {
-        const targetRow = rowsData.find(r => r.rowNumber === imgRowNumber);
-        if (targetRow && !targetRow.imageUrl) {
-          // Verificar si el producto ya tiene imagen en la BD antes de subir
-          const { prisma } = require('../config/database');
-          const existingProduct = await prisma.product.findFirst({
-            where: { name: targetRow.name },
-            select: { imageUrl: true }
-          }).catch(() => null);
 
-          if (existingProduct && existingProduct.imageUrl) {
-            // Ya tiene imagen en la BD, reutilizar
-            targetRow.imageUrl = existingProduct.imageUrl;
-          } else {
-            logger.info(`☁️ Subiendo imagen flotante de fila ${imgRowNumber}...`);
-            const url = await uploadBufferToCloudinary(media.buffer);
-            if (url) targetRow.imageUrl = url;
-          }
+      if (media && media.buffer) {
+        // Buscar producto en la misma fila, o en la fila inmediatamente anterior/posterior (margen de error)
+        const targetRow = rowsData.find(r => 
+          r.rowNumber === imgRowNumber || 
+          r.rowNumber === imgRowNumber + 1 || 
+          r.rowNumber === imgRowNumber - 1
+        );
+
+        if (targetRow && !targetRow.imageUrl) {
+          logger.info(`☁️ Subiendo imagen de alta calidad para "${targetRow.name}" (fila ${imgRowNumber})...`);
+          
+          // Subida optimizada para CALIDAD
+          const url = await new Promise((resolve) => {
+            const stream = cloudinary.uploader.upload_stream(
+              { 
+                folder: 'fantasias_products',
+                quality: 'auto:best', // Máxima calidad automática
+                fetch_format: 'auto',
+                resource_type: 'image'
+              },
+              (error, result) => {
+                if (error) {
+                  logger.error('Error subiendo a Cloudinary:', error);
+                  resolve(null);
+                } else {
+                  resolve(result.secure_url);
+                }
+              }
+            );
+            stream.end(media.buffer);
+          });
+
+          if (url) targetRow.imageUrl = url;
         }
       }
     }
