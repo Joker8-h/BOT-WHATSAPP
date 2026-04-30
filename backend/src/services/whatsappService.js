@@ -108,6 +108,7 @@ class WhatsAppService {
         clientId: `branch_${branchId}`,
         dataPath: './.wwebjs_auth',
       }),
+      restartOnAuthFail: true,
       puppeteer: {
         headless: true,
         args: [
@@ -119,22 +120,21 @@ class WhatsAppService {
           '--no-zygote',
           '--disable-gpu',
           '--disable-software-rasterizer',
-          '--disable-features=IsolateOrigins,site-per-process',
           '--ignore-certificate-errors',
-          '--window-size=1280,800',
-          '--disable-blink-features=AutomationControlled',
           '--disable-extensions',
+          '--disable-blink-features=AutomationControlled',
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        protocolTimeout: 300000,
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
       },
-      authTimeoutMs: 300000,
+      authTimeoutMs: 0, // Desactivar timeout de auth para que el QR sea persistente hasta que se escanee
+      qrMaxRetries: 0,  // Dejar que WhatsApp decida cuándo rotar el QR, no la librería
       takeoverOnConflict: true,
-      takeoverTimeoutMs: 15000,
       webVersionCache: {
         type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1012170943-alpha.html',
+        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html',
       }
     });
 
