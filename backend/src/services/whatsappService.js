@@ -247,23 +247,16 @@ class WhatsAppService {
       if (!to.includes('@')) {
         const cleanPhone = to.replace(/\D/g, ''); 
         chatId = `${cleanPhone}@c.us`;
-      } else if (to.includes('@lid')) {
-        // IDs de tipo @lid.c.us son válidos y no deben ser modificados
-        chatId = to;
       }
+      // Los @lid se usan tal cual — no intentar obtener chat object para evitar timeouts
 
-      // Intentar obtener el chat (algunas versiones de wwebjs fallan aquí con @lid)
-      let chat;
-      try {
-        chat = await client.getChatById(chatId);
-      } catch (e) {
-        logger.warn(`⚠️ No se pudo obtener objeto chat para ${chatId}, intentando envío directo.`);
-      }
+      // --- Delay natural (simula tipeo sin bloquear Puppeteer) ---
+      const typingDelay = Math.min(text.length * 20, 2000);
+      await new Promise(resolve => setTimeout(resolve, typingDelay));
 
       // --- Lógica de División de Mensajes Largos ---
       const maxLength = 450;
       if (text.length > maxLength) {
-        // ... (resto de la lógica igual, pero usando client.sendMessage si chat no existe)
         const parts = [];
         let remaining = text;
         while (remaining.length > maxLength) {
@@ -277,22 +270,13 @@ class WhatsAppService {
         if (remaining) parts.push(remaining);
 
         for (const part of parts) {
-          if (chat) await chat.sendStateTyping();
-          const typingTime = Math.min(part.length * 25, 3000);
-          await new Promise(resolve => setTimeout(resolve, typingTime));
           await client.sendMessage(chatId, part);
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 1200));
         }
         return true;
       }
 
       // --- Envío Normal ---
-      if (chat) {
-        await chat.sendStateTyping();
-        const typingDelay = Math.min(text.length * 30, 3000);
-        await new Promise(resolve => setTimeout(resolve, typingDelay));
-      }
-
       await client.sendMessage(chatId, text);
       logger.debug(`📤 Mensaje enviado desde sucursal ${branchId} a ${chatId}`);
       return true;

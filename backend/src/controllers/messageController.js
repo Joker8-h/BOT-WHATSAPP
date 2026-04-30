@@ -67,15 +67,12 @@ class MessageController {
       }
       logger.info(`✨ [MSG] IA respondió (${aiResult.tokensUsed} tokens)`);
 
-      // 7. ENVIAR RESPUESTA — Usar reply directo al mensaje original para evitar problemas con @lid
-      try {
-        const chat = await msg.getChat();
-        await chat.sendMessage(aiResult.response);
-        logger.info(`📤 [MSG] Enviado vía chat directo a ${chatId}`);
-      } catch (replyErr) {
-        logger.warn(`⚠️ [MSG] Reply directo falló, intentando sendMessage...`);
-        await whatsappService.sendMessage(branchId, chatId, aiResult.response);
-        logger.info(`📤 [MSG] Enviado vía sendMessage a ${chatId}`);
+      // 7. ENVIAR RESPUESTA — Directo por whatsappService (evita timeouts de Puppeteer con @lid)
+      const sent = await whatsappService.sendMessage(branchId, chatId, aiResult.response);
+      if (sent) {
+        logger.info(`📤 [MSG] Enviado a ${chatId}`);
+      } else {
+        logger.warn(`⚠️ [MSG] No se pudo enviar a ${chatId}`);
       }
 
       // 8. Guardar respuesta IA
