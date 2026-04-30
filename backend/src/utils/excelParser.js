@@ -116,34 +116,56 @@ async function parseExcel(filePath) {
       });
     });
 
-    // 3. Extraer imágenes incrustadas (Flotantes)
+    // 3. Extraer imágenes incrustadas (Lógica de Precisión Espacial)
     const images = sheet.getImages();
-    logger.info(`🔍 [IMG] Se encontraron ${images.length} imágenes flotantes.`);
+    logger.info(`🔍 [IMG] Procesando ${images.length} imágenes encontradas en el libro.`);
     
     for (const image of images) {
-      const imgRowNumber = image.range.tl.nativeRow + 1; 
-      const media = workbook.model.media.find(m => m.index === image.imageId);
+      try {
+        const media = workbook.model.media.find(m => m.index === image.imageId);
+        if (!media || !media.buffer) continue;
 
-      if (media && media.buffer) {
-        // Tolerancia de +/- 2 filas por si las imágenes están muy desplazadas
-        const targetRow = rowsData.find(r => 
-          Math.abs(r.rowNumber - imgRowNumber) <= 2
-        );
+        // Calculamos la fila "centro" de la imagen para mayor precisión
+        // nativeRow es 0-indexed, sumamos 1 para comparar con rowNumber
+        const startRow = image.range.tl.nativeRow + 1;
+        const endRow = image.range.br ? image.range.br.nativeRow + 1 : startRow;
+        const centerRow = (startRow + endRow) / 2;
 
-        if (targetRow && !targetRow.imageUrl) {
-          logger.info(`☁️ [CLOUDINARY] Subiendo foto para "${targetRow.name}"...`);
+        // También verificamos la columna (Col A es 0)
+        const imgCol = image.range.tl.nativeCol + 1;
+
+        // Buscamos la fila de datos que esté más cerca del centro de esta imagen
+        // Solo buscamos en filas que estén en un rango razonable (+/- 1.5 filas)
+        let bestMatch = null;
+        let minDistance = 1.5;
+
+        for (const row of rowsData) {
+          const distance = Math.abs(row.rowNumber - centerRow);
+          if (distance < minDistance) {
+            // Verificamos que la imagen esté en la columna de imágenes (o cerca)
+            const colDistance = Math.abs(imgCol - colMapping.image);
+            if (colDistance <= 1) { // Tolerancia de 1 columna
+              minDistance = distance;
+              bestMatch = row;
+            }
+          }
+        }
+
+        if (bestMatch && !bestMatch.imageUrl) {
+          logger.info(`☁️ [UPLOAD] Subiendo imagen para "${bestMatch.name}" (Fila Excel: ${Math.round(centerRow)})...`);
           
           const url = await new Promise((resolve) => {
             const stream = cloudinary.uploader.upload_stream(
               { 
                 folder: 'fantasias_products',
+                use_filename: true,
+                unique_filename: true,
                 quality: 'auto:best',
-                fetch_format: 'auto',
                 resource_type: 'image'
               },
               (error, result) => {
                 if (error) {
-                  logger.error('Error en Cloudinary:', error);
+                  logger.error('❌ Error Cloudinary:', error);
                   resolve(null);
                 } else {
                   resolve(result.secure_url);
@@ -153,8 +175,13 @@ async function parseExcel(filePath) {
             stream.end(media.buffer);
           });
 
-          if (url) targetRow.imageUrl = url;
+          if (url) {
+            bestMatch.imageUrl = url;
+            logger.info(`✅ [OK] Imagen vinculada a "${bestMatch.name}"`);
+          }
         }
+      } catch (err) {
+        logger.error('❌ Error procesando imagen individual:', err);
       }
     }
 
