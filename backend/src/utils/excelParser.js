@@ -81,6 +81,7 @@ async function parseExcel(filePath) {
         if (!val) return '';
         if (typeof val === 'object') {
           if (val.richText) return val.richText.map(t => t.text).join(' ');
+          if (val.error) return ''; // Ignorar errores de fórmula como #VALUE!
           return val.result || val.text || '';
         }
         return String(val).trim();
