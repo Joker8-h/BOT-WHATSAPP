@@ -377,8 +377,12 @@ class WhatsAppService {
    * Envía un mensaje a un grupo específico de la sucursal (por ejemplo, para despacho)
    */
   async notifyGroup(branchId, message) {
-    const masterBranchId = 1;
-    const client = this.clients.get(masterBranchId);
+    // Intentar usar el cliente de la sucursal específica, o el maestro (1) como fallback
+    let client = this.clients.get(branchId);
+    if (!client || !this.getBranchStatus(branchId).isReady) {
+      client = this.clients.get(1);
+    }
+    
     if (!client) return false;
 
     try {
@@ -393,7 +397,8 @@ class WhatsAppService {
       }
 
       const chats = await client.getChats();
-      const group = chats.find(c => c.isGroup && c.name === branch.notificationGroupName);
+      const targetName = branch.notificationGroupName.trim().toLowerCase();
+      const group = chats.find(c => c.isGroup && c.name.trim().toLowerCase() === targetName);
 
       if (group) {
         await client.sendMessage(group.id._serialized, message);

@@ -137,7 +137,7 @@ class WompiController {
                                 `👤 *Cliente:* ${order.contact.name || order.contact.phone}\n` +
                                 `📦 *Productos:*\n${itemsList}\n\n` +
                                 `🏠 *DIRECCIÓN DE ENVÍO:* \n${order.shippingAddress || 'No especificada'}\n` +
-                                `City: ${order.shippingCity || 'No especificada'}\n\n` +
+                                `🏙️ *Ciudad:* ${order.shippingCity || 'No especificada'}\n\n` +
                                 `💳 *Ref Wompi:* ${transaction.id}\n\n` +
                                 `🚀 ¡A preparar para despacho!`;
         

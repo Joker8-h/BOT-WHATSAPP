@@ -38,9 +38,8 @@ class MessageController {
 
       if (employee) {
         logger.info(`👷 [EMPLOYEE] Mensaje de ${employee.name} (${chatId})`);
-        const allProducts = await catalogService.getAllProducts(branchId);
-        const employeeResponse = await aiService.generateEmployeeResponse(body, allProducts);
-        await whatsappService.sendMessage(branchId, chatId, employeeResponse);
+        const employeeResponse = await aiService.generateEmployeeResponse(body, branchId);
+        await whatsappService.sendMessage(branchId, chatId, employeeResponse.response);
         return;
       }
 
