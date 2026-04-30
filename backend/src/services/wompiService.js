@@ -49,7 +49,8 @@ class WompiService {
         headers: {
           'Authorization': `Bearer ${privateKey.trim()}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 10000 // 10 segundos de timeout
       });
 
       const paymentLinkData = response.data.data;
