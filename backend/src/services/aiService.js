@@ -156,10 +156,9 @@ class AIService {
       const actions = this.parseActions(aiResponse);
       const cleanResponse = this.cleanResponse(aiResponse);
 
-      // SEGURIDAD: Si no hay productos en la sede, forzamos escalado humano siempre
+      // INFO: Si no hay productos en la sede, la IA puede seguir conversando normalmente
       if (products.length === 0) {
-        logger.warn(`⚠️ Catálogo vacío para branch ${effectiveBranchId}. Forzando escalado.`);
-        actions.shouldEscalate = true;
+        logger.warn(`⚠️ Catálogo vacío para branch ${effectiveBranchId}. La IA responderá sin catálogo.`);
       }
 
       logger.info(`IA respondió [${flow}] a ${contact?.phone} (${tokensUsed} tokens)`);
@@ -174,9 +173,9 @@ class AIService {
     } catch (error) {
       logger.error('Error generando respuesta IA:', error);
       return {
-        response: '¡Hola! Disculpa, estamos teniendo un problema técnico momentáneo. Un asesor humano te contactará de inmediato 😊',
+        response: '¡Hola! Disculpa, tuve un pequeño inconveniente técnico. 😅 ¿Podrías repetirme tu mensaje? Ya estoy lista para atenderte.',
         flow: 'ERROR',
-        actions: { shouldEscalate: true },
+        actions: {},
         tokensUsed: 0,
       };
     }

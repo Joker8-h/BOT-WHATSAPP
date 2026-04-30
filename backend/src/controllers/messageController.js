@@ -74,9 +74,24 @@ class MessageController {
       }
 
       if (conversation.status === 'ESCALATED' || conversation.status === 'PAUSED') {
-        logger.info(`🤫 [MSG] Chat pausado/escalado para ${chatId}`);
-        await crmService.saveMessage(conversation.id, 'USER', body);
-        return;
+        // Si lleva más de 10 minutos escalado sin respuesta humana, reactivar automáticamente
+        const lastAssistantMsg = [...(conversation.messages || [])].reverse().find(m => m.role === 'ASSISTANT');
+        const minutesSinceLastResponse = lastAssistantMsg 
+          ? (Date.now() - new Date(lastAssistantMsg.createdAt).getTime()) / (1000 * 60)
+          : 999;
+
+        if (minutesSinceLastResponse > 10) {
+          logger.info(`🔄 [AUTO-REACTIVATE] Chat ${chatId} escalado hace ${Math.round(minutesSinceLastResponse)}min sin respuesta humana. Reactivando bot.`);
+          await prisma.conversation.update({
+            where: { id: conversation.id },
+            data: { status: 'ACTIVE' }
+          });
+          // Continuar el flujo normal en vez de hacer return
+        } else {
+          logger.info(`🤫 [MSG] Chat pausado/escalado para ${chatId} (${Math.round(minutesSinceLastResponse)}min). Esperando humano.`);
+          await crmService.saveMessage(conversation.id, 'USER', body);
+          return;
+        }
       }
 
       await crmService.saveMessage(conversation.id, 'USER', body);
