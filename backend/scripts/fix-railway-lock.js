@@ -1,49 +1,38 @@
-const { execSync } = require('child_process');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 
 /**
- * LIMPIEZA TOTAL DE BLOQUEOS
+ * Este script elimina los archivos SingletonLock que genera Chrome/Puppeteer.
+ * En entornos como Railway, estos archivos pueden quedar bloqueados tras un reinicio
+ * forzado, impidiendo que la nueva instancia de WhatsApp se inicie correctamente.
  */
-function totalClean() {
-    console.log('🌪️ [TOTAL-CLEAN] Iniciando limpieza absoluta...');
-    
-    // Rutas posibles
+async function fixLocks() {
     const authDir = path.join(process.cwd(), '.wwebjs_auth');
     
     if (!fs.existsSync(authDir)) {
-        console.log('ℹ️ No hay sesión para limpiar.');
+        console.log('ℹ️ No existe directorio de autenticación, nada que limpiar.');
         return;
     }
 
-    try {
-        // Borramos TODOS los archivos que empiecen por Singleton en cualquier subcarpeta
-        // de forma recursiva y forzada
-        execSync(`find ${authDir} -name "Singleton*" -exec rm -rf {} +`, { stdio: 'inherit' });
-        console.log('✅ Archivos Singleton eliminados.');
-        
-        // También borramos los .lock que a veces deja Puppeteer
-        execSync(`find ${authDir} -name "*.lock" -exec rm -rf {} +`, { stdio: 'inherit' });
-        console.log('✅ Archivos .lock eliminados.');
-        
-    } catch (error) {
-        console.warn('⚠️ Error en limpieza de comandos, intentando manual...');
-        // Fallback manual muy agresivo
-        const clearDir = (dir) => {
-            const list = fs.readdirSync(dir);
-            list.forEach(file => {
-                const p = path.join(dir, file);
-                const stat = fs.lstatSync(p);
-                if (stat.isDirectory()) {
-                    clearDir(p);
-                } else if (file.includes('Singleton') || file.includes('.lock')) {
-                    try { fs.unlinkSync(p); } catch (e) {}
+    const sessions = fs.readdirSync(authDir);
+    
+    for (const session of sessions) {
+        if (session.startsWith('session-')) {
+            const lockPath = path.join(authDir, session, 'Default', 'SingletonLock');
+            const rootLockPath = path.join(authDir, session, 'SingletonLock');
+            
+            [lockPath, rootLockPath].forEach(lp => {
+                if (fs.existsSync(lp)) {
+                    try {
+                        fs.unlinkSync(lp);
+                        console.log(`✅ Candado eliminado: ${lp}`);
+                    } catch (err) {
+                        console.error(`❌ No se pudo eliminar ${lp}: ${err.message}`);
+                    }
                 }
             });
-        };
-        try { clearDir(authDir); } catch (e) {}
+        }
     }
-    console.log('✨ [TOTAL-CLEAN] Entorno listo.');
 }
 
-totalClean();
+fixLocks().then(() => console.log('🚀 Limpieza de candados completada.'));

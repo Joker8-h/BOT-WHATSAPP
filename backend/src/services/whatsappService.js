@@ -124,22 +124,12 @@ class WhatsAppService {
           '--window-size=1280,800',
           '--disable-blink-features=AutomationControlled',
           '--disable-extensions',
-          '--disable-component-update',
-          '--disable-background-networking',
-          '--disable-sync',
-          '--disable-default-apps',
-          '--mute-audio',
-          '--no-default-browser-check',
-          '--disable-client-side-phishing-detection',
-          '--disable-popup-blocking',
-          '--password-store=basic',
-          '--use-mock-keychain',
         ],
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         protocolTimeout: 300000,
       },
-      authTimeoutMs: 300000, // 5 minutos de margen para sincronizar
+      authTimeoutMs: 300000,
       takeoverOnConflict: true,
       takeoverTimeoutMs: 15000,
       webVersionCache: {
@@ -171,7 +161,7 @@ class WhatsAppService {
           logger.info(`✅ WhatsApp sucursal ${branchId} listo (vía fallback authenticated)`);
           this.sessions.set(branchId, { ...s, isReady: true, status: 'READY' });
         }
-      }, 8000); // Esperar 8s por si llega el 'ready' real
+      }, 15000); 
     });
 
     client.on('auth_failure', (msg) => {
