@@ -91,6 +91,15 @@ class SyncService {
         // DETECCIÓN AUTOMÁTICA DE CATEGORÍA
         const category = mapCategory(row.category || '', row.name, row.features); 
 
+        // Verificar si el producto ya existe y ya tiene imagen
+        const existing = await prisma.product.findFirst({
+          where: { 
+            name: row.name || 'Producto Sin Nombre',
+            branchId: source.branchId
+          }
+        });
+
+        // Si el producto ya tiene imagen en la BD, usar esa en vez de re-subir
         const productData = {
           name: row.name || 'Producto Sin Nombre',
           description: row.features || '',
@@ -102,16 +111,13 @@ class SyncService {
           excelRef: `DRIVE-${source.id}-${row.rowNumber}`
         };
 
-        if (row.imageUrl) {
+        if (existing && existing.imageUrl) {
+          // Ya tiene imagen, no re-subir
+          productData.imageUrl = existing.imageUrl;
+        } else if (row.imageUrl) {
+          // Imagen nueva del Excel
           productData.imageUrl = row.imageUrl;
         }
-
-        const existing = await prisma.product.findFirst({
-          where: { 
-            name: productData.name,
-            branchId: source.branchId
-          }
-        });
 
         let savedProduct;
         if (existing) {

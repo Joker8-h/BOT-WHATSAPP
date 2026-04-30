@@ -119,14 +119,25 @@ async function parseExcel(filePath) {
       const imgRowNumber = image.range.tl.nativeRow + 1; 
       const imgColNumber = image.range.tl.nativeCol;
 
-      // Buscamos si la imagen está en la columna configurada O en cualquier columna (fallback)
       const media = workbook.model.media.find(m => m.index === image.imageId);
       if (media && media.buffer) {
         const targetRow = rowsData.find(r => r.rowNumber === imgRowNumber);
-        if (targetRow && !targetRow.imageUrl) { // No sobreescribir si ya detectamos URL
-          logger.info(`☁️ Subiendo imagen flotante de fila ${imgRowNumber}...`);
-          const url = await uploadBufferToCloudinary(media.buffer);
-          if (url) targetRow.imageUrl = url;
+        if (targetRow && !targetRow.imageUrl) {
+          // Verificar si el producto ya tiene imagen en la BD antes de subir
+          const { prisma } = require('../config/database');
+          const existingProduct = await prisma.product.findFirst({
+            where: { name: targetRow.name },
+            select: { imageUrl: true }
+          }).catch(() => null);
+
+          if (existingProduct && existingProduct.imageUrl) {
+            // Ya tiene imagen en la BD, reutilizar
+            targetRow.imageUrl = existingProduct.imageUrl;
+          } else {
+            logger.info(`☁️ Subiendo imagen flotante de fila ${imgRowNumber}...`);
+            const url = await uploadBufferToCloudinary(media.buffer);
+            if (url) targetRow.imageUrl = url;
+          }
         }
       }
     }

@@ -4,19 +4,30 @@ const aiService = require('../services/aiService');
 const crmService = require('../services/crmService');
 
 class MessageController {
+  constructor() {
+    // Deduplicación: evitar procesar el mismo mensaje 2 veces
+    this.processedMessages = new Set();
+  }
+
   /**
    * Procesa un mensaje entrante de WhatsApp
-   * @param {object} msg - Objeto mensaje original de whatsapp-web.js
-   * @param {number} branchIdStr - ID de la sucursal
    */
   async handleIncomingMessage(msg, branchIdStr) {
     const branchId = branchIdStr ? parseInt(branchIdStr) : 1;
     const chatId = msg.from;
     const body = msg.body || '';
+    const msgId = msg.id?._serialized || msg.id?.id || `${chatId}-${Date.now()}`;
 
     try {
-      // 1. IGNORAR ESTADOS Y GRUPOS
+      // 0. DEDUPLICACIÓN
+      if (this.processedMessages.has(msgId)) return;
+      this.processedMessages.add(msgId);
+      // Limpiar después de 30 segundos para no acumular memoria
+      setTimeout(() => this.processedMessages.delete(msgId), 30000);
+
+      // 1. IGNORAR ESTADOS, GRUPOS Y MENSAJES PROPIOS
       if (chatId === 'status@broadcast' || chatId.includes('@g.us')) return;
+      if (msg.fromMe) return;
       if (!body.trim()) return;
 
       logger.info(`🔍 [MSG] De ${chatId}: "${body.substring(0, 50)}"`);
