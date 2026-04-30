@@ -154,6 +154,10 @@ async function parseExcel(filePath) {
  * Mapea datos del Excel al formato de producto de la BD
  */
 function mapExcelToProducts(excelData) {
+  if (!Array.isArray(excelData)) {
+    logger.error('❌ Error: mapExcelToProducts recibió datos que no son una lista:', excelData);
+    return [];
+  }
   return excelData.map((row, index) => {
     const category = mapCategory(''); // Por defecto
 

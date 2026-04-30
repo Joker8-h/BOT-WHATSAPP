@@ -417,9 +417,11 @@ class AdminController {
       logger.info(`📥 Archivo Excel recibido: ${req.file.originalname} (${(req.file.size / 1024).toFixed(1)} KB)`);
 
       // 1. Parsear Excel (Ahora extrae imágenes asíncronamente)
-      const rawData = await parseExcel(req.file.path);
+      const excelResult = await parseExcel(req.file.path);
+      const rawData = excelResult.rows || [];
+      
       if (rawData.length === 0) {
-        return res.status(400).json({ success: false, error: 'El archivo está vacío' });
+        return res.status(400).json({ success: false, error: 'El archivo está vacío o no se pudieron leer las filas' });
       }
 
       // 2. Mapear a productos
