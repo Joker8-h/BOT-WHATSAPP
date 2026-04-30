@@ -135,13 +135,24 @@ class MessageController {
         }
 
         if (orderItems.length > 0) {
-          const order = await crmService.createOrder({
+          const reference = `PAY-${conversation.id}-${Date.now()}`;
+          const cartData = {
             contactId: contact.id,
             branchId,
             items: orderItems,
             amount: totalAmount,
             shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
             shippingAddress: contactUpdates.address || contact.address || 'Por confirmar'
+          };
+
+          // Guardar carrito pendiente en el contexto de la conversación
+          const currentContext = conversation.context || {};
+          const pendingCarts = currentContext.pendingCarts || {};
+          pendingCarts[reference] = cartData;
+
+          await prisma.conversation.update({
+            where: { id: conversation.id },
+            data: { context: { ...currentContext, pendingCarts } }
           });
 
           try {
@@ -150,17 +161,13 @@ class MessageController {
               amount: totalAmount,
               name: `Pedido - ${contact.name || 'Cliente'}`,
               description: `Compra: ${productNames.join(', ')}`,
-              reference: `ORDER-${order.id}`
+              reference
             });
 
             if (wompiLink?.url) {
               const paymentMsg = `✨ *¡Todo listo!* Aquí tienes tu link de pago seguro por *$${totalAmount.toLocaleString('es-CO')} COP*:\n\n🔗 ${wompiLink.url}\n\nConfírmame cuando lo realices para despachar tu pedido discreto. 🌹`;
               await whatsappService.sendMessage(branchId, chatId, paymentMsg);
               await crmService.saveMessage(conversation.id, 'ASSISTANT', paymentMsg);
-              await prisma.order.update({
-                where: { id: order.id },
-                data: { wompiPaymentLink: wompiLink.url, wompiTransactionId: wompiLink.id }
-              });
             }
           } catch (err) {
             logger.error(`❌ [SALE-ERR] Wompi falló: ${err.message}`);

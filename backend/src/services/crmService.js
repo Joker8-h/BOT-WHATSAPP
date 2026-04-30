@@ -257,14 +257,14 @@ class CRMService {
   /**
    * Crea una orden en la DB
    */
-  async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress }) {
+  async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress, status = 'PENDING' }) {
     try {
       return await prisma.order.create({
         data: {
           contactId,
           branchId,
           amount,
-          status: 'PENDING',
+          status,
           shippingCity,
           shippingAddress,
           items: {
