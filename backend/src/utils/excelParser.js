@@ -44,59 +44,66 @@ async function parseExcel(filePath) {
       throw new Error(`Hoja no encontrada`);
     }
 
-    // 1. Detectar mapeo de columnas dinámicamente
+    // 1. Detectar mapeo de columnas dinámicamente (Detección Agresiva)
     let colMapping = {
-      name: 2,      // Default Col B
-      features: 3,  // Default Col C
-      quantity: 4,  // Default Col D
-      price: 5,     // Default Col E
-      image: 1,     // Default Col A (JUGUETE)
+      name: 2,      
+      features: 3,  
+      quantity: 4,  
+      price: 5,     
+      image: 1,     
       category: null 
     };
 
-    // Intentar encontrar la fila de encabezados
+    // Intentar encontrar la fila de encabezados con búsqueda difusa
     sheet.eachRow((row, rowNumber) => {
-      if (rowNumber > 5) return; // Solo revisar las primeras filas
+      if (rowNumber > 10) return; 
       row.eachCell((cell, colNumber) => {
         const text = String(cell.value || '').toUpperCase().trim();
-        if (text === 'CANTIDAD' || text === 'STOCK') { colMapping.quantity = colNumber; }
-        if (text === 'NOMBRE' || text === 'PRODUCTO') { colMapping.name = colNumber; }
-        if (text === 'CARACTERISTICAS' || text === 'DESCRIPCION') { colMapping.features = colNumber; }
-        if (text === 'PRECIO' || text === 'VALOR') { colMapping.price = colNumber; }
-        if (text === 'JUGUETE' || text === 'IMAGEN' || text === 'FOTO') { colMapping.image = colNumber; }
-        if (text === 'CATEGORIA') { colMapping.category = colNumber; }
+        // Usamos includes para ignorar filtros, espacios o caracteres raros
+        if (text.includes('CANT') || text.includes('STOCK')) { colMapping.quantity = colNumber; }
+        if (text.includes('NOMBR') || text.includes('PROD')) { colMapping.name = colNumber; }
+        if (text.includes('CARACT') || text.includes('DESCRI') || text.includes('DETALLE')) { colMapping.features = colNumber; }
+        if (text.includes('PRECIO') || text.includes('VALOR') || text.includes('COSTO')) { colMapping.price = colNumber; }
+        if (text.includes('JUGUETE') || text.includes('IMAGEN') || text.includes('FOTO')) { colMapping.image = colNumber; }
+        if (text.includes('CATEG')) { colMapping.category = colNumber; }
       });
     });
+
+    logger.info(`🔍 [MAPEO] Columnas detectadas: ${JSON.stringify(colMapping)}`);
 
     // 2. Obtener todas las filas
     const rowsData = [];
     sheet.eachRow((row, rowNumber) => {
       const values = row.values;
-      // ExcelJS values es 1-indexed. Saltamos si no hay datos básicos
       if (!values || rowNumber < 2) return; 
 
-      let name = values[colMapping.name];
-      if (name && typeof name === 'object') name = name.richText ? name.richText.map(t => t.text).join('') : name.text;
-      name = String(name || '').trim();
+      const getCleanText = (val) => {
+        if (!val) return '';
+        if (typeof val === 'object') {
+          if (val.richText) return val.richText.map(t => t.text).join(' ');
+          return val.result || val.text || '';
+        }
+        return String(val).trim();
+      };
+
+      let name = getCleanText(values[colMapping.name]);
       
       // Saltar encabezados y secciones vacías
-      if (!name || name.length < 3 || name === 'NOMBRE' || name === 'PRODUCTO' || name === 'JUGUETE') return;
-      if (name.toUpperCase() === name && name.length > 40) return; // Secciones informativas
+      if (!name || name.length < 3 || name.toUpperCase() === 'NOMBRE' || name.toUpperCase() === 'PRODUCTO') return;
+      if (name.toUpperCase() === name && name.length > 50) return; 
 
-      // Extraer Precio (Limpiar $, puntos y comas)
-      let rawPrice = values[colMapping.price];
-      if (rawPrice && typeof rawPrice === 'object') rawPrice = rawPrice.result || rawPrice.text || 0;
-      const priceStr = String(rawPrice || '0').replace(/[^0-9]/g, '');
+      // Extraer Precio
+      const rawPrice = values[colMapping.price];
+      const priceStr = getCleanText(rawPrice).replace(/[^0-9]/g, '');
       const price = parseFloat(priceStr) || 0;
 
       // Extraer Stock
-      let rawStock = values[colMapping.quantity];
-      if (rawStock && typeof rawStock === 'object') rawStock = rawStock.result || rawStock.text || 0;
-      const stockStr = String(rawStock || '0').replace(/[^0-9]/g, '');
+      const rawStock = values[colMapping.quantity];
+      const stockStr = getCleanText(rawStock).replace(/[^0-9]/g, '');
       const stock = parseInt(stockStr) || 0;
 
-      const features = values[colMapping.features] ? String(values[colMapping.features]).trim() : '';
-      const category = colMapping.category ? String(values[colMapping.category] || '').trim() : '';
+      const features = getCleanText(values[colMapping.features]);
+      const category = colMapping.category ? getCleanText(values[colMapping.category]) : '';
 
       rowsData.push({
         rowNumber,
@@ -111,36 +118,32 @@ async function parseExcel(filePath) {
 
     // 3. Extraer imágenes incrustadas (Flotantes)
     const images = sheet.getImages();
-    logger.info(`🔍 Se encontraron ${images.length} imágenes flotantes en el Excel.`);
+    logger.info(`🔍 [IMG] Se encontraron ${images.length} imágenes flotantes.`);
     
     for (const image of images) {
-      // Las imágenes en ExcelJS pueden estar ligeramente movidas de la fila exacta
       const imgRowNumber = image.range.tl.nativeRow + 1; 
       const media = workbook.model.media.find(m => m.index === image.imageId);
 
       if (media && media.buffer) {
-        // Buscar producto en la misma fila, o en la fila inmediatamente anterior/posterior (margen de error)
+        // Tolerancia de +/- 2 filas por si las imágenes están muy desplazadas
         const targetRow = rowsData.find(r => 
-          r.rowNumber === imgRowNumber || 
-          r.rowNumber === imgRowNumber + 1 || 
-          r.rowNumber === imgRowNumber - 1
+          Math.abs(r.rowNumber - imgRowNumber) <= 2
         );
 
         if (targetRow && !targetRow.imageUrl) {
-          logger.info(`☁️ Subiendo imagen de alta calidad para "${targetRow.name}" (fila ${imgRowNumber})...`);
+          logger.info(`☁️ [CLOUDINARY] Subiendo foto para "${targetRow.name}"...`);
           
-          // Subida optimizada para CALIDAD
           const url = await new Promise((resolve) => {
             const stream = cloudinary.uploader.upload_stream(
               { 
                 folder: 'fantasias_products',
-                quality: 'auto:best', // Máxima calidad automática
+                quality: 'auto:best',
                 fetch_format: 'auto',
                 resource_type: 'image'
               },
               (error, result) => {
                 if (error) {
-                  logger.error('Error subiendo a Cloudinary:', error);
+                  logger.error('Error en Cloudinary:', error);
                   resolve(null);
                 } else {
                   resolve(result.secure_url);
