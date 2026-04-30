@@ -6,9 +6,9 @@ const { decrypt } = require('../utils/encryption');
 
 class WompiService {
   constructor() {
-    this.baseUrl = process.env.NODE_ENV === 'production' 
-      ? 'https://api.wompi.co/v1' 
-      : 'https://sandbox.wompi.co/v1';
+    // La URL base se determinará dinámicamente según la llave detectada
+    this.sandboxUrl = 'https://sandbox.wompi.co/v1';
+    this.productionUrl = 'https://api.wompi.co/v1';
   }
 
   /**
@@ -27,8 +27,12 @@ class WompiService {
         throw new Error(`La sucursal maestra (${masterBranchId}) no tiene configurado Wompi`);
       }
 
-      // Desencriptar llave privada
-      const privateKey = decrypt(branch.wompiPrivateKey);
+      // Desencriptar llave privada y determinar URL
+      const privateKey = decrypt(branch.wompiPrivateKey).trim();
+      const isProd = privateKey.startsWith('prv_prod_');
+      const activeUrl = isProd ? this.productionUrl : this.sandboxUrl;
+
+      logger.info(`💳 Generando link en ambiente: ${isProd ? 'PRODUCCIÓN' : 'SANDBOX'}`);
 
       // 2. Crear el link de pago en Wompi
       // Nota: El monto en Wompi se envía en centavos
@@ -45,9 +49,9 @@ class WompiService {
         redirect_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/payment-status` : undefined
       };
 
-      const response = await axios.post(`${this.baseUrl}/payment_links`, payload, {
+      const response = await axios.post(`${activeUrl}/payment_links`, payload, {
         headers: {
-          'Authorization': `Bearer ${privateKey.trim()}`,
+          'Authorization': `Bearer ${privateKey}`,
           'Content-Type': 'application/json'
         },
         timeout: 10000 // 10 segundos de timeout

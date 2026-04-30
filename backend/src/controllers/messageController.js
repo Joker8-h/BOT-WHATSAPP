@@ -122,6 +122,9 @@ class MessageController {
             }
           } catch (err) {
             logger.error(`❌ [SALE-ERR] Wompi falló: ${err.message}`);
+            const errorMsg = "Lo siento, tuve un pequeño problema técnico generando tu link de pago seguro. 😅 Dame un momento y ya te conecto con un compañero para que te ayude de inmediato.";
+            await whatsappService.sendMessage(branchId, chatId, errorMsg);
+            await crmService.saveMessage(conversation.id, 'ASSISTANT', errorMsg);
           }
         }
       }
@@ -130,7 +133,7 @@ class MessageController {
 
     } catch (error) {
       logger.error(`❌ [CRITICAL-ERR] ${chatId}: ${error.stack}`);
-      whatsappService.sendMessage(branchId, chatId, 'Dame un momento... ¡Enseguida te atiendo! 😊').catch(() => {});
+      whatsappService.sendMessage(branchId, chatId, 'Dame un momento... ¡Ya te conecto con un compañero! 😊').catch(() => {});
     }
   }
 }
