@@ -142,13 +142,17 @@ class AIService {
 
       messages.push({ role: 'user', content: userMessage });
 
-      // 9. Llamar a OpenAI
-      const completion = await openai.chat.completions.create({
+      // 9. Llamar a OpenAI (con timeout de 30s para evitar que se cuelgue en Railway)
+      const completionPromise = openai.chat.completions.create({
         model: MODEL,
         messages,
         temperature: 0.7,
         max_tokens: 450,
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI timeout: la respuesta tardó más de 30 segundos')), 30000)
+      );
+      const completion = await Promise.race([completionPromise, timeoutPromise]);
 
       const aiResponse = completion.choices[0].message.content.trim();
       const tokensUsed = completion.usage?.total_tokens || 0;

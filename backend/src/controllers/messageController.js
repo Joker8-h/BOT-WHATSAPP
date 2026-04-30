@@ -13,6 +13,10 @@ const { isWorkingHours } = require('../utils/helpers');
 class MessageController {
   constructor() {
     this.processedMessages = new Set();
+    // Mutex por chat: evita que dos mensajes del mismo chat se procesen simultáneamente
+    this.processingChats = new Set();
+    // Marca de tiempo de arranque: ignorar mensajes viejos que llegan en ráfaga al reconectar
+    this.bootTime = Date.now();
   }
 
   async handleIncomingMessage(msg, branchIdStr) {
@@ -24,9 +28,23 @@ class MessageController {
     try {
       if (!chatId || chatId === 'status@broadcast' || chatId.includes('@g.us') || msg.fromMe || !body) return;
 
+      // Ignorar mensajes viejos que llegan en ráfaga al reconectar (más de 60s de antigüedad)
+      const msgTimestamp = msg.timestamp ? msg.timestamp * 1000 : Date.now();
+      if (msgTimestamp < this.bootTime - 10000) {
+        logger.info(`⏭️ [SKIP-OLD] Mensaje viejo ignorado de ${chatId} (anterior al arranque)`);
+        return;
+      }
+
       if (this.processedMessages.has(msgId)) return;
       this.processedMessages.add(msgId);
       setTimeout(() => this.processedMessages.delete(msgId), 60000);
+
+      // Mutex por chat: si ya estamos procesando un mensaje de este chat, ignorar el duplicado
+      if (this.processingChats.has(chatId)) {
+        logger.info(`🔒 [SKIP-DUP] Ya se está procesando un mensaje de ${chatId}, ignorando duplicado.`);
+        return;
+      }
+      this.processingChats.add(chatId);
 
       logger.info(`📨 [MSG-IN] ${chatId}: "${body.substring(0, 30)}..."`);
 
@@ -197,6 +215,9 @@ class MessageController {
     } catch (error) {
       logger.error(`❌ [CRITICAL-ERR] ${chatId}: ${error.stack}`);
       whatsappService.sendMessage(branchId, chatId, 'Dame un momento... ¡Ya te conecto con un compañero! 😊').catch(() => {});
+    } finally {
+      // Siempre liberar el mutex del chat para permitir el siguiente mensaje
+      this.processingChats.delete(chatId);
     }
   }
 }
