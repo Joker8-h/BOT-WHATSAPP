@@ -45,7 +45,8 @@ class CampaignService {
    */
   async executeCampaign(campaignId) {
     if (!this.whatsappService || !this.whatsappService.isReady) {
-      throw new Error('WhatsApp no está conectado');
+      logger.warn('⚠️ Campaña abortada: WhatsApp no está conectado o listo.');
+      throw new Error('WhatsApp no está conectado o listo para enviar campañas.');
     }
 
     const campaign = await prisma.campaign.findUnique({ where: { id: campaignId } });

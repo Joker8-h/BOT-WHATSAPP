@@ -163,22 +163,27 @@ async function startServer() {
     // 3b. Follow-Up Automático (Recuperación de ventas)
     followUpService.setServices(whatsappService, aiService);
 
-    // 4. Iniciar sesión maestra directamente
+    // 4. Iniciar sesión maestra directamente (Sucursal 1)
+    // El método initializeBranch tiene guardas contra inicialización duplicada
     logger.info('✨ Iniciando sesión maestra (Sucursal 1)...');
     whatsappService.initializeBranch(1).catch(err => 
       logger.error('Error iniciando sesión maestra:', err)
     );
 
     // 5. Schedulers
-    // Sincronización automática de inventario (cada 15 minutos)
-    cron.schedule('*/15 * * * *', () => {
+    // Sincronización automática de inventario (cada 20 minutos)
+    cron.schedule('*/20 * * * *', () => {
+      logger.info('⏰ [CRON] Iniciando sincronización programada...');
       syncService.syncAll();
     });
-    // 🚀 EJECUTAR SINCRONIZACIÓN PESADA 1 MINUTO DESPUÉS PARA DAR PRIORIDAD AL CHAT
+
+    // 🚀 EJECUTAR SINCRONIZACIÓN PESADA 2 MINUTOS DESPUÉS DEL ARRANQUE
+    // Esto da prioridad total a la conexión de WhatsApp y atención de mensajes iniciales
     setTimeout(() => {
-      logger.info('🔄 [DEFERRED-SYNC] Iniciando sincronización de inventario tras espera...');
-      syncService.syncAll();
-    }, 60000);
+      logger.info('🔄 [DEFERRED-SYNC] Iniciando primera sincronización tras estabilización...');
+      syncService.syncAll().catch(e => logger.error('Error en sync diferido:', e));
+    }, 120000); // 2 minutos de espera
+
 
     // Follow-up automático (cada hora, Lun-Sáb 9am-6pm Colombia)
     cron.schedule('0 9-18 * * 1-6', () => {

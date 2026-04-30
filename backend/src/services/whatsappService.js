@@ -28,6 +28,13 @@ class WhatsAppService {
   }
 
   /**
+   * Getter para verificar si la sucursal maestra (1) está lista
+   */
+  get isReady() {
+    return this.sessions.get(1)?.isReady || false;
+  }
+
+  /**
    * Inicializa todas las sucursales autorizadas al arrancar el servidor
    */
   async initAllActiveSessions() {
@@ -157,6 +164,14 @@ class WhatsAppService {
 
     client.on('authenticated', () => {
       logger.info(`🔐 WhatsApp sucursal ${branchId} autenticado`);
+      // Fallback: si 'ready' no llega (script injection timeout), marcar como listo igual
+      setTimeout(() => {
+        const s = this.sessions.get(branchId);
+        if (s && !s.isReady) {
+          logger.info(`✅ WhatsApp sucursal ${branchId} listo (vía fallback authenticated)`);
+          this.sessions.set(branchId, { ...s, isReady: true, status: 'READY' });
+        }
+      }, 8000); // Esperar 8s por si llega el 'ready' real
     });
 
     client.on('auth_failure', (msg) => {
@@ -234,9 +249,12 @@ class WhatsAppService {
     const client = this.clients.get(masterBranchId);
     const session = this.sessions.get(masterBranchId);
 
-    if (!client || !session?.isReady) {
-      logger.warn(`WhatsApp Central (Branch ${masterBranchId}) no está listo para enviar`);
+    if (!client) {
+      logger.warn(`WhatsApp Central (Branch ${masterBranchId}): cliente no existe`);
       return false;
+    }
+    if (!session?.isReady) {
+      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está listo (isReady=false). Intentando enviar de todas formas...`);
     }
 
     try {
@@ -298,9 +316,12 @@ class WhatsAppService {
     const client = this.clients.get(masterBranchId);
     const session = this.sessions.get(masterBranchId);
 
-    if (!client || !session?.isReady) {
-      logger.warn(`WhatsApp Central (Branch ${masterBranchId}) no está listo para enviar media`);
+    if (!client) {
+      logger.warn(`WhatsApp Central (Branch ${masterBranchId}): cliente no existe para enviar media`);
       return false;
+    }
+    if (!session?.isReady) {
+      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está listo para media (isReady=false). Intentando enviar...`);
     }
 
     try {

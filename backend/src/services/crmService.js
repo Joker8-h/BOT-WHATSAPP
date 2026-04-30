@@ -45,10 +45,34 @@ class CRMService {
   }
 
   /**
+   * Actualiza información específica del contacto capturada por la IA
+   */
+  async updateContactInfo(contactId, data) {
+    try {
+      return await prisma.contact.update({
+        where: { id: contactId },
+        data: {
+          name: data.name || undefined,
+          city: data.city || undefined,
+          address: data.address || undefined,
+          neighborhood: data.neighborhood || undefined,
+          interests: data.interests || undefined,
+          lastOrderCity: data.city || undefined,
+          lastOrderAddress: data.address || undefined,
+          lastOrderNeighborhood: data.neighborhood || undefined,
+        },
+      });
+    } catch (error) {
+      logger.error('Error actualizando información de contacto:', error);
+    }
+  }
+
+  /**
    * Actualiza la clasificación del contacto
    */
   async updateClassification(contactId, classification) {
     try {
+      if (!classification) return;
       return await prisma.contact.update({
         where: { id: contactId },
         data: {
