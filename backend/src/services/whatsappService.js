@@ -204,9 +204,16 @@ class WhatsAppService {
       this.pendingInits.delete(branchId);
     }).catch(err => {
       logger.error(`❌ Error crítico iniciando sucursal ${branchId}:`, err);
-      this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'ERROR', isInitializing: false });
+      this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'ERROR' });
       this.clients.delete(branchId);
       this.pendingInits.delete(branchId);
+      // Auto-recovery: reintentar en 10 segundos
+      logger.info(`🔄 Auto-recovery: reintentando sucursal ${branchId} en 10s...`);
+      setTimeout(() => {
+        this.initializeBranch(branchId).catch(e => 
+          logger.error(`❌ Auto-recovery falló para sucursal ${branchId}:`, e)
+        );
+      }, 10000);
     });
 
     return client;
