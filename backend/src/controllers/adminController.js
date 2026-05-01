@@ -459,12 +459,24 @@ class AdminController {
           totalRows: rawData.length,
           imported,
           errors: errors.slice(0, 10), // Máximo 10 errores en respuesta
-          columns: Object.keys(rawData[0] || {}),
         },
       });
     } catch (error) {
       logger.error('Error importando Excel:', error);
       res.status(500).json({ success: false, error: `Error procesando archivo: ${error.message}` });
+    } finally {
+      // 🛡️ LIMPIEZA: Borrar archivo temporal para no llenar el disco
+      if (req.file && req.file.path) {
+        try {
+          const fs = require('fs');
+          if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+            logger.info(`🧹 [CLEANUP] Archivo temporal borrado: ${req.file.path}`);
+          }
+        } catch (e) {
+          logger.warn(`⚠️ [CLEANUP] No se pudo borrar el archivo temporal: ${e.message}`);
+        }
+      }
     }
   }
 
