@@ -57,26 +57,64 @@ function truncate(text, maxLength = 200) {
 }
 
 /**
+ * Lista de festivos de Colombia 2026 (Formato MM-DD)
+ */
+const COLOMBIAN_HOLIDAYS_2026 = [
+  '01-01', // Año Nuevo
+  '01-06', // Reyes Magos
+  '03-23', // San José
+  '04-02', // Jueves Santo
+  '04-03', // Viernes Santo
+  '05-01', // Día del Trabajo
+  '05-18', // Ascensión del Señor
+  '06-08', // Corpus Christi
+  '06-15', // Sagrado Corazón
+  '06-29', // San Pedro y San Pablo
+  '07-20', // Independencia de Colombia
+  '08-07', // Batalla de Boyacá
+  '08-17', // Asunción de la Virgen
+  '10-12', // Día de la Raza
+  '11-02', // Todos los Santos
+  '11-16', // Independencia de Cartagena
+  '12-08', // Inmaculada Concepción
+  '12-25'  // Navidad
+];
+
+/**
  * Verifica si estamos dentro del horario laboral (Colombia: UTC-5)
- * Lunes a Sábado, 9:00 AM - 6:00 PM
+ * Lunes a Sábado, 9:00 AM - 6:00 PM + Festivos
  */
 function isWorkingHours() {
   const now = new Date();
   
   // Convertir a hora de Colombia (UTC-5)
-  // Obtenemos el offset en minutos y lo ajustamos a -300 (UTC-5)
   const offset = now.getTimezoneOffset(); // en minutos
   const colombiaTime = new Date(now.getTime() + (offset - 300) * 60 * 1000);
   
+  const month = String(colombiaTime.getMonth() + 1).padStart(2, '0');
+  const date = String(colombiaTime.getDate()).padStart(2, '0');
+  const todayMMDD = `${month}-${date}`;
+
+  // 1. Verificar si es festivo
+  if (COLOMBIAN_HOLIDAYS_2026.includes(todayMMDD)) {
+    return { isWorking: false, reason: 'holiday' };
+  }
+
   const day = colombiaTime.getDay(); // 0: Dom, 1: Lun, ..., 6: Sab
   const hour = colombiaTime.getHours();
   
-  // Lunes (1) a Sábado (6)
-  const isBusinessDay = day >= 1 && day <= 6;
-  // 9:00 AM a 6:00 PM (18:00)
+  // 2. Verificar si es Domingo (0)
+  if (day === 0) {
+    return { isWorking: false, reason: 'sunday' };
+  }
+
+  // 3. Verificar Horario (9:00 AM a 6:00 PM)
   const isBusinessHour = hour >= 9 && hour < 18;
+  if (!isBusinessHour) {
+    return { isWorking: false, reason: 'off-hours' };
+  }
   
-  return isBusinessDay && isBusinessHour;
+  return { isWorking: true, reason: null };
 }
 
 /**
