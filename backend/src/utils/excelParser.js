@@ -55,27 +55,40 @@ async function parseExcel(filePath) {
     };
 
     // Intentar encontrar la fila de encabezados con búsqueda difusa
+    let headerRowIndex = -1;
+    
     sheet.eachRow((row, rowNumber) => {
-      if (rowNumber > 10) return; 
+      // Detener si ya pasamos la fila 15 o si ya encontramos los encabezados seguros
+      if (rowNumber > 15 || headerRowIndex !== -1) return; 
+      
+      let tempMapping = { ...colMapping };
+      let matchCount = 0;
+
       row.eachCell((cell, colNumber) => {
         const text = String(cell.value || '').toUpperCase().trim();
         
         // Usamos else if y prioridades para que una columna no se asigne a dos propiedades
-        // Ej: "DESCRIPCION DEL PRODUCTO" debe ser 'features', no 'name'
         if (text.includes('CARACT') || text.includes('DESCRI') || text.includes('DETALLE')) { 
-          colMapping.features = colNumber; 
+          tempMapping.features = colNumber; matchCount++;
         } else if (text.includes('NOMBR') || text.includes('PROD') || text.includes('ARTICULO')) { 
-          colMapping.name = colNumber; 
+          tempMapping.name = colNumber; matchCount++;
         } else if (text.includes('PRECIO') || text.includes('VALOR') || text.includes('COSTO')) { 
-          colMapping.price = colNumber; 
+          tempMapping.price = colNumber; matchCount++;
         } else if (text.includes('CANT') || text.includes('STOCK')) { 
-          colMapping.quantity = colNumber; 
+          tempMapping.quantity = colNumber; matchCount++;
         } else if (text.includes('CATEG')) { 
-          colMapping.category = colNumber; 
+          tempMapping.category = colNumber; matchCount++;
         } else if (text.includes('JUGUETE') || text.includes('IMAGEN') || text.includes('FOTO')) { 
-          colMapping.image = colNumber; 
+          tempMapping.image = colNumber; matchCount++;
         }
       });
+
+      // Si encontramos al menos 3 columnas clave en esta fila, es el encabezado real
+      if (matchCount >= 3) {
+        colMapping = tempMapping;
+        headerRowIndex = rowNumber;
+        logger.info(`✅ Encabezados encontrados en la fila ${rowNumber}`);
+      }
     });
 
     logger.info(`🔍 [MAPEO] Columnas detectadas: ${JSON.stringify(colMapping)}`);
