@@ -32,19 +32,6 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max
 });
 
-// 🔴 RUTA TEMPORAL DE AUTODESTRUCCIÓN (Borrar después de usar)
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
-router.get('/clean-inventory', async (req, res) => {
-  try {
-    const items = await prisma.orderItem.deleteMany({});
-    const products = await prisma.product.deleteMany({});
-    res.send(`<h1 style="color:green;font-family:sans-serif">✅ ¡Inventario Limpiado con Éxito!</h1><p style="font-family:sans-serif">Se eliminaron ${products.count} productos y ${items.count} items relacionados de la base de datos de Railway.</p><p style="font-family:sans-serif">Ya puedes cerrar esta pestaña y volver a subir tu Excel limpio desde el panel.</p>`);
-  } catch (error) {
-    res.status(500).send(`<h1 style="color:red;font-family:sans-serif">❌ Error</h1><p>${error.message}</p>`);
-  }
-});
-
 // ── Rutas Públicas (Auth y Pagos) ──
 // router.post('/auth/register', authController.register); // Desactivado
 router.post('/auth/login', authController.login);
