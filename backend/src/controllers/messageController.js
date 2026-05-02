@@ -28,10 +28,10 @@ class MessageController {
     try {
       if (!chatId || chatId === 'status@broadcast' || chatId.includes('@g.us') || msg.fromMe || !body) return;
 
-      // Ignorar mensajes viejos que llegan en ráfaga al reconectar (más de 60s de antigüedad)
+      // Ignorar mensajes muy viejos (más de 5 minutos antes del arranque) para evitar ráfagas
       const msgTimestamp = msg.timestamp ? msg.timestamp * 1000 : Date.now();
-      if (msgTimestamp < this.bootTime - 10000) {
-        logger.info(`⏭️ [SKIP-OLD] Mensaje viejo ignorado de ${chatId} (anterior al arranque)`);
+      if (msgTimestamp < this.bootTime - 300000) {
+        logger.info(`⏭️ [SKIP-OLD] Mensaje demasiado viejo ignorado de ${chatId}`);
         return;
       }
 

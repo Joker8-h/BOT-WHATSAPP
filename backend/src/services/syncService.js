@@ -101,7 +101,7 @@ class SyncService {
 
         // Si el producto ya tiene imagen en la BD, usar esa en vez de re-subir
         const productData = {
-          name: row.name || 'Producto Sin Nombre',
+          name: row.name ? String(row.name).substring(0, 190) : 'Producto Sin Nombre',
           description: row.features || '',
           price: row.price,
           category: category,
