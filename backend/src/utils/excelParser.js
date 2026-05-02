@@ -59,13 +59,22 @@ async function parseExcel(filePath) {
       if (rowNumber > 10) return; 
       row.eachCell((cell, colNumber) => {
         const text = String(cell.value || '').toUpperCase().trim();
-        // Usamos includes para ignorar filtros, espacios o caracteres raros
-        if (text.includes('CANT') || text.includes('STOCK')) { colMapping.quantity = colNumber; }
-        if (text.includes('NOMBR') || text.includes('PROD')) { colMapping.name = colNumber; }
-        if (text.includes('CARACT') || text.includes('DESCRI') || text.includes('DETALLE')) { colMapping.features = colNumber; }
-        if (text.includes('PRECIO') || text.includes('VALOR') || text.includes('COSTO')) { colMapping.price = colNumber; }
-        if (text.includes('JUGUETE') || text.includes('IMAGEN') || text.includes('FOTO')) { colMapping.image = colNumber; }
-        if (text.includes('CATEG')) { colMapping.category = colNumber; }
+        
+        // Usamos else if y prioridades para que una columna no se asigne a dos propiedades
+        // Ej: "DESCRIPCION DEL PRODUCTO" debe ser 'features', no 'name'
+        if (text.includes('CARACT') || text.includes('DESCRI') || text.includes('DETALLE')) { 
+          colMapping.features = colNumber; 
+        } else if (text.includes('NOMBR') || text.includes('PROD') || text.includes('ARTICULO')) { 
+          colMapping.name = colNumber; 
+        } else if (text.includes('PRECIO') || text.includes('VALOR') || text.includes('COSTO')) { 
+          colMapping.price = colNumber; 
+        } else if (text.includes('CANT') || text.includes('STOCK')) { 
+          colMapping.quantity = colNumber; 
+        } else if (text.includes('CATEG')) { 
+          colMapping.category = colNumber; 
+        } else if (text.includes('JUGUETE') || text.includes('IMAGEN') || text.includes('FOTO')) { 
+          colMapping.image = colNumber; 
+        }
       });
     });
 
