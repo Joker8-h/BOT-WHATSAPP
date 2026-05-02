@@ -28,12 +28,10 @@ class MessageController {
     try {
       if (!chatId || chatId === 'status@broadcast' || chatId.includes('@g.us') || msg.fromMe || !body) return;
 
-      // Ignorar mensajes muy viejos (más de 5 minutos antes del arranque) para evitar ráfagas
+      // Procesar todos los mensajes sin importar la antigüedad para asegurar 100% de atención
+      // El antiBanDelay se encarga de que las respuestas salgan a un ritmo seguro
       const msgTimestamp = msg.timestamp ? msg.timestamp * 1000 : Date.now();
-      if (msgTimestamp < this.bootTime - 300000) {
-        logger.info(`⏭️ [SKIP-OLD] Mensaje demasiado viejo ignorado de ${chatId}`);
-        return;
-      }
+      logger.info(`📩 [MSG-IN] Procesando mensaje de ${chatId} (Timestamp: ${new Date(msgTimestamp).toLocaleString()})`);
 
       if (this.processedMessages.has(msgId)) return;
       this.processedMessages.add(msgId);
