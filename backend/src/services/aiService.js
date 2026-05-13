@@ -59,15 +59,30 @@ class AIService {
       
       // 3b. BÚSQUEDA INTELIGENTE: Si el cliente menciona palabras clave, buscamos productos específicos
       let specificProducts = [];
+      
+      // Extraemos keywords del mensaje actual y los últimos 3 para no perder el hilo
+      const recentMessages = messageHistory.slice(-3).map(m => m.content).join(' ');
+      const searchContext = `${userMessage} ${recentMessages}`.toLowerCase();
+      
+      // Lista de palabras clave que disparan búsqueda profunda
+      const targetKeywords = ['retardante', 'lubricante', 'feromona', 'vibrador', 'lenceria', 'potencializador', 'crema', 'spray'];
+      const foundTargetKeywords = targetKeywords.filter(k => searchContext.includes(k));
+      
       const keywords = userMessage.split(' ').filter(word => word.length > 3);
-      if (keywords.length > 0) {
+      const allKeywords = [...new Set([...keywords, ...foundTargetKeywords])];
+
+      if (allKeywords.length > 0) {
         specificProducts = await prisma.product.findMany({
           where: {
             branchId: effectiveBranchId,
             isAvailable: true,
-            OR: keywords.map(k => ({ name: { contains: k } }))
+            OR: [
+              ...allKeywords.map(k => ({ name: { contains: k } })),
+              ...allKeywords.map(k => ({ description: { contains: k } })),
+              ...allKeywords.map(k => ({ emotionalDesc: { contains: k } }))
+            ]
           },
-          take: 5
+          take: 8 // Aumentamos un poco el límite para darle opciones a la IA
         });
       }
 
@@ -77,6 +92,22 @@ class AIService {
       const seenIds = new Set(specificProducts.map(p => p.id));
       products = [...specificProducts, ...products.filter(p => !seenIds.has(p.id))];
       products = products.sort((a, b) => Number(b.price) - Number(a.price));
+      
+      // Si el cliente mencionó retardante y no encontramos nada por nombre/desc, intentamos búsqueda difusa manual
+      if (searchContext.includes('retardante') && !products.some(p => (p.name + p.description).toLowerCase().includes('retardante'))) {
+          const fallbackProducts = await prisma.product.findMany({
+              where: { 
+                  branchId: effectiveBranchId,
+                  isAvailable: true,
+                  OR: [
+                      { description: { contains: 'retard' } },
+                      { name: { contains: 'retard' } }
+                  ]
+              },
+              take: 3
+          });
+          products = [...fallbackProducts, ...products];
+      }
 
       // 4. Obtener INFO de la sucursal actual
       const currentBranch = branchId ? await prisma.branch.findUnique({ where: { id: branchId } }) : null;

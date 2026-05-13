@@ -79,8 +79,8 @@ function getRecommendedCategories(clientType) {
  * Determina cuántos productos mostrar según confianza
  */
 function getProductLimit(confidenceLevel) {
-  const map = { BAJO: 1, MEDIO: 2, ALTO: 3 };
-  return map[confidenceLevel] || 1;
+  const map = { BAJO: 2, MEDIO: 4, ALTO: 6 };
+  return map[confidenceLevel] || 2;
 }
 
 module.exports = { classifyClient, getRecommendedCategories, getProductLimit };
