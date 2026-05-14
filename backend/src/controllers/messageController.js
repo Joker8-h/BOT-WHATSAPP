@@ -127,8 +127,16 @@ class MessageController {
         return;
       }
 
-      // Enviar respuesta principal
-      await whatsappService.sendMessage(branchId, chatId, aiResult.response);
+      // Separar mensaje largo en 2 envíos naturales (por párrafo, sin cortar palabras)
+      const responseParts = this.splitMessageNaturally(aiResult.response);
+      
+      for (let i = 0; i < responseParts.length; i++) {
+        await whatsappService.sendMessage(branchId, chatId, responseParts[i]);
+        // Pequeña pausa entre mensajes para simular escritura humana
+        if (i < responseParts.length - 1) {
+          await new Promise(r => setTimeout(r, 1200));
+        }
+      }
       await crmService.saveMessage(conversation.id, 'ASSISTANT', aiResult.response, null, aiResult.tokensUsed);
 
       const actions = aiResult.actions || {};
@@ -224,6 +232,55 @@ class MessageController {
       // Siempre liberar el mutex del chat para permitir el siguiente mensaje
       this.processingChats.delete(chatId);
     }
+  }
+  /**
+   * Divide un mensaje largo en 2 partes naturales, cortando por párrafo (\n\n)
+   * sin cortar palabras ni frases. Mensajes cortos se dejan como están.
+   */
+  splitMessageNaturally(text) {
+    // Si el mensaje es corto, no dividir
+    if (!text || text.length < 150) return [text];
+    
+    // Buscar todos los saltos de párrafo (\n\n)
+    const breakPoints = [];
+    let idx = 0;
+    while ((idx = text.indexOf('\n\n', idx)) !== -1) {
+      breakPoints.push(idx);
+      idx += 2;
+    }
+    
+    // Si no hay saltos de párrafo, intentar con saltos de línea simples
+    if (breakPoints.length === 0) {
+      idx = 0;
+      while ((idx = text.indexOf('\n', idx)) !== -1) {
+        breakPoints.push(idx);
+        idx += 1;
+      }
+    }
+    
+    // Si definitivamente no hay dónde cortar, devolver como un solo mensaje
+    if (breakPoints.length === 0) return [text];
+    
+    // Encontrar el salto más cercano al centro del texto
+    const mid = text.length / 2;
+    let bestBreak = breakPoints[0];
+    let bestDist = Math.abs(breakPoints[0] - mid);
+    
+    for (const bp of breakPoints) {
+      const dist = Math.abs(bp - mid);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestBreak = bp;
+      }
+    }
+    
+    const part1 = text.substring(0, bestBreak).trim();
+    const part2 = text.substring(bestBreak).trim();
+    
+    // Si alguna parte quedó vacía, devolver como un solo mensaje
+    if (!part1 || !part2) return [text];
+    
+    return [part1, part2];
   }
 }
 

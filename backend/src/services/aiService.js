@@ -316,15 +316,13 @@ class AIService {
 
   cleanResponse(response) {
     return response
-      .replace(/\[ESCALAR\]/g, '')
-      .replace(/\[CERRAR_VENTA:.+?\]/g, '')
-      .replace(/\[IMAGEN:.+?\]/g, '')
-      .replace(/\[CAPTURAR_NOMBRE:.+?\]/g, '')
-      .replace(/\[CAPTURAR_CIUDAD:.+?\]/g, '')
-      .replace(/\[CAPTURAR_DIRECCION:.+?\]/g, '')
-      .replace(/\[CAPTURAR_BARRIO:.+?\]/g, '')
-      .replace(/\[CAPTURAR_NOMBRE_COMPLETO:.+?\]/g, '')
-      .replace(/\[CAPTURAR_GUSTOS:.+?\]/g, '')
+      // Limpieza genérica: elimina CUALQUIER etiqueta con corchetes [TAG] o [TAG:valor]
+      // Esto cubre: [ESCALAR], [CAPTURAR_NOMBRE], [CAPTURAR_NOMBRE: Sofia], [IMAGEN:url], etc.
+      .replace(/\[([A-ZÁÉÍÓÚÑ_]+)(:[^\]]*?)?\]/gi, '')
+      // Limpiar espacios múltiples que quedan tras eliminar etiquetas
+      .replace(/  +/g, ' ')
+      // Limpiar líneas vacías que quedan
+      .replace(/\n\s*\n\s*\n/g, '\n\n')
       .trim();
   }
 }
