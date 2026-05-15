@@ -929,7 +929,8 @@ class AdminController {
           wompiPublicKey: true, 
           wompiPrivateKey: true, 
           wompiIntegritySecret: true,
-          notificationGroupName: true
+          notificationGroupName: true,
+          notificationPhone: true
         }
       });
 
@@ -940,6 +941,7 @@ class AdminController {
           wompiPublicKey: branch?.wompiPublicKey ? '••••••••••••••••' : '',
           wompiPrivateKey: branch?.wompiPrivateKey ? '••••••••••••••••' : '',
           wompiIntegritySecret: branch?.wompiIntegritySecret ? '••••••••••••••••' : '',
+          notificationPhone: branch?.notificationPhone || '',
           notificationGroupName: branch?.notificationGroupName || '',
           isConfigured: !!(branch?.wompiPrivateKey && branch?.wompiPublicKey)
         }
@@ -952,11 +954,12 @@ class AdminController {
   async updateWompiConfig(req, res) {
     try {
       const { branchId } = req.user;
-      const { wompiMerchantId, wompiPublicKey, wompiPrivateKey, wompiIntegritySecret, notificationGroupName } = req.body;
+      const { wompiMerchantId, wompiPublicKey, wompiPrivateKey, wompiIntegritySecret, notificationGroupName, notificationPhone } = req.body;
 
       if (!branchId) return res.status(400).json({ success: false, error: 'Usuario sin sucursal asignada' });
 
       const data = {};
+      if (notificationPhone !== undefined) data.notificationPhone = notificationPhone;
       if (notificationGroupName !== undefined) data.notificationGroupName = notificationGroupName;
       
       // Encriptar TODAS las llaves de Wompi con AES-256

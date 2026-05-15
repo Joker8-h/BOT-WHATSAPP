@@ -129,7 +129,7 @@ class WompiController {
         const customerMsg = `✅ *¡Pago confirmado!* \n\nHola ${order.contact.name || ''}, hemos recibido tu pago por valor de ${formatCOP(order.amount)}. \n\nEstamos preparando tu pedido. Pronto te notificaremos cuando sea despachado. ¡Gracias por confiar en Fantasías! 🌹`;
         await whatsappService.sendMessage(order.branchId, chatId, customerMsg);
 
-        // NOTIFICAR AL GRUPO DE DESPACHOS
+        // NOTIFICAR: PRIMERO al teléfono directo, LUEGO al grupo como respaldo
         const itemsList = order.items.map(i => `- ${i.product.name} (x${i.quantity})`).join('\n');
         const notificationMsg = `🔔 *¡NUEVA VENTA PAGADA!* 🔔\n\n` +
                                 `💰 *Total:* ${formatCOP(order.amount)}\n` +
@@ -141,7 +141,7 @@ class WompiController {
                                 `💳 *Ref Wompi:* ${transaction.id}\n\n` +
                                 `🚀 ¡A preparar para despacho!`;
         
-        await whatsappService.notifyGroup(order.branchId, notificationMsg);
+        await whatsappService.notifyPhone(order.branchId, notificationMsg);
       } else if (status === 'DECLINED' && !reference.startsWith('PAY-')) {
         const chatId = `${order.contact.phone}@c.us`;
         const declineMsg = `❌ *Pago Rechazado* \n\nHola, tu pago por ${formatCOP(order.amount)} no ha podido ser procesado.`;

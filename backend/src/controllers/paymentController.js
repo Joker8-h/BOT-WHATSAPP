@@ -77,7 +77,7 @@ class PaymentController {
       const confirmMsg = `✅ *¡Pago Recibido Exitosamente!*\n\nGracias por tu compra en *Fantasías*.\n\n📦 *Pedido:*\n${productsList}\n\n💰 Total: ${formatCOP(order.amount)}\n🚚 Prepararemos tu envío discreto de inmediato.\n\n¡Gracias por confiar en nosotros! 🔥`;
       await whatsappService.sendMessage(order.branchId, order.contact.phone + '@c.us', confirmMsg);
 
-      // B. AL GRUPO DE LA SUCURSAL (DESPACHO)
+      // B. NOTIFICAR: PRIMERO al teléfono directo, LUEGO al grupo como respaldo
       const groupMsg = `🚨 *¡NUEVA VENTA REALIZADA!* 🚨\n\n` +
         `Sede: *${order.branch.name}*\n` +
         `Cliente: ${order.contact.name} (${order.contact.phone})\n` +
@@ -87,7 +87,7 @@ class PaymentController {
         `${order.contact.city || ''}\n\n` +
         `⚠️ *Acción:* Preparar despacho de inmediato.`;
       
-      await whatsappService.notifyGroup(order.branchId, groupMsg);
+      await whatsappService.notifyPhone(order.branchId, groupMsg);
 
       res.json({ success: true });
     } catch (error) {

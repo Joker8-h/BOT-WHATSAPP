@@ -365,6 +365,7 @@ class WhatsAppService {
 
   /**
    * Envía un mensaje a un grupo específico de la sucursal (por ejemplo, para despacho)
+   * NOTA: Este es ahora el método SECUNDARIO. Usar notifyPhone como principal.
    */
   async notifyGroup(branchId, message) {
     // Intentar usar el cliente de la sucursal específica, o el maestro (1) como fallback
@@ -401,6 +402,51 @@ class WhatsAppService {
     } catch (error) {
       logger.error(`Error notificando al grupo para sucursal ${branchId}:`, error);
       return false;
+    }
+  }
+
+  /**
+   * PRINCIPAL: Envía notificación directa a un número de teléfono configurado en la sucursal.
+   * Si no hay teléfono configurado, cae al grupo como fallback.
+   */
+  async notifyPhone(branchId, message) {
+    try {
+      const branch = await prisma.branch.findUnique({
+        where: { id: branchId },
+        select: { notificationPhone: true, notificationGroupName: true }
+      });
+
+      // PRIORIDAD 1: Enviar al teléfono directo
+      if (branch?.notificationPhone) {
+        const phone = branch.notificationPhone.replace(/[^0-9]/g, '');
+        const chatId = `${phone}@c.us`;
+        await this.sendMessage(branchId, chatId, message);
+        logger.info(`📱 Notificación de venta enviada al teléfono ${phone} para sucursal ${branchId}`);
+        
+        // PRIORIDAD 2 (adicional): También enviar al grupo si existe
+        if (branch.notificationGroupName) {
+          await this.notifyGroup(branchId, message);
+        }
+        return true;
+      }
+
+      // FALLBACK: Si no hay teléfono, intentar con el grupo
+      if (branch?.notificationGroupName) {
+        logger.info(`📢 Sin teléfono de notificación, usando grupo como fallback para sucursal ${branchId}`);
+        return await this.notifyGroup(branchId, message);
+      }
+
+      logger.warn(`⚠️ Sucursal ${branchId} no tiene ni teléfono ni grupo de notificación configurado`);
+      return false;
+    } catch (error) {
+      logger.error(`Error en notifyPhone para sucursal ${branchId}:`, error);
+      // Intentar fallback al grupo si el envío al teléfono falló
+      try {
+        return await this.notifyGroup(branchId, message);
+      } catch (groupError) {
+        logger.error(`Error también en fallback de grupo:`, groupError);
+        return false;
+      }
     }
   }
 
