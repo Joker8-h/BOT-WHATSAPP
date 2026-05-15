@@ -26,7 +26,7 @@ class MessageController {
     const msgId = msg.id?._serialized || msg.id?.id || `${chatId}-${Date.now()}`;
 
     try {
-      if (!chatId || chatId === 'status@broadcast' || chatId.includes('@g.us') || msg.fromMe || !body) return;
+      if (!chatId || chatId === 'status@broadcast' || chatId.includes('@g.us') || msg.fromMe || (!body && !msg.hasMedia)) return;
 
       // Procesar todos los mensajes sin importar la antigüedad para asegurar 100% de atención
       // El antiBanDelay se encarga de que las respuestas salgan a un ritmo seguro
