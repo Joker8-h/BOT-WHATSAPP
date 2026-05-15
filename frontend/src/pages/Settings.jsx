@@ -29,6 +29,7 @@ export default function Settings() {
       wompiPublicKey: '',
       wompiPrivateKey: '',
       wompiIntegritySecret: '',
+      notificationPhone: '',
       notificationGroupName: ''
   });
   const [wompiStatus, setWompiStatus] = useState({ isConfigured: false, loading: true, saving: false });
@@ -305,10 +306,29 @@ export default function Settings() {
                   </div>
                 )}
 
-                <div style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+                <div style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '2px solid var(--purple)', marginBottom: '1.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem', color: 'var(--purple)' }}>
                         <IconPhone />
-                        <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1px' }}>Grupo de Notificación WhatsApp</span>
+                        <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1px' }}>📱 Teléfono de Notificación (Principal)</span>
+                    </div>
+                    <input 
+                        style={{ width: '100%', padding: '0.75rem', background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '0.9rem', color: 'var(--text-1)', outline: 'none' }}
+                        placeholder="Ej: 573001234567"
+                        value={wompiForm.notificationPhone}
+                        onChange={e => {
+                            setWompiForm({...wompiForm, notificationPhone: e.target.value});
+                            setFormIsDirty(true);
+                        }}
+                    />
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', marginTop: '0.6rem', lineHeight: 1.4 }}>
+                        Número con código de país (sin +). Aquí llegarán <b>primero</b> las alertas de venta.
+                    </p>
+                </div>
+
+                <div style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem', color: 'var(--text-2)' }}>
+                        <IconPhone />
+                        <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1px' }}>Grupo de Notificación WhatsApp (Respaldo)</span>
                     </div>
                     <input 
                         style={{ width: '100%', padding: '0.75rem', background: 'var(--bg-0)', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '0.9rem', color: 'var(--text-1)', outline: 'none' }}
@@ -320,7 +340,7 @@ export default function Settings() {
                         }}
                     />
                     <p style={{ fontSize: '0.7rem', color: 'var(--text-3)', marginTop: '0.6rem', lineHeight: 1.4 }}>
-                        Ingresa el nombre del grupo de WhatsApp donde el bot enviará los reportes de ventas automáticos.
+                        Nombre del grupo de WhatsApp como respaldo. Las alertas también llegarán aquí si está configurado.
                     </p>
                 </div>
 
