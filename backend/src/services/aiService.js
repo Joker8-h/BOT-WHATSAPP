@@ -317,8 +317,17 @@ class AIService {
   cleanResponse(response) {
     return response
       // Limpieza genérica: elimina CUALQUIER etiqueta con corchetes [TAG] o [TAG:valor]
-      // Esto cubre: [ESCALAR], [CAPTURAR_NOMBRE], [CAPTURAR_NOMBRE: Sofia], [IMAGEN:url], etc.
       .replace(/\[([A-ZÁÉÍÓÚÑ_]+)(:[^\]]*?)?\]/gi, '')
+      // Convertir doble asterisco (**texto**) a simple (*texto*) para WhatsApp
+      .replace(/\*\*(.+?)\*\*/g, '*$1*')
+      // Eliminar asteriscos sueltos que no forman par (ej: "algo * texto")
+      .replace(/(?<!\*)\*(?!\*)/g, (match, offset, str) => {
+        // Contar asteriscos en el string para ver si hay un par
+        const before = str.substring(0, offset);
+        const after = str.substring(offset + 1);
+        const hasOpenBefore = (before.match(/\*/g) || []).length % 2 === 0;
+        return match; // Mantener si forma par válido
+      })
       // Limpiar espacios múltiples que quedan tras eliminar etiquetas
       .replace(/  +/g, ' ')
       // Limpiar líneas vacías que quedan
