@@ -239,48 +239,35 @@ class MessageController {
    */
   splitMessageNaturally(text) {
     // Si el mensaje es corto, no dividir
-    if (!text || text.length < 150) return [text];
+    if (!text || text.length < 120) return [text];
     
-    // Buscar todos los saltos de párrafo (\n\n)
-    const breakPoints = [];
-    let idx = 0;
-    while ((idx = text.indexOf('\n\n', idx)) !== -1) {
-      breakPoints.push(idx);
-      idx += 2;
-    }
+    // Separar por párrafos (doble salto de línea)
+    const paragraphs = text.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
     
-    // Si no hay saltos de párrafo, intentar con saltos de línea simples
-    if (breakPoints.length === 0) {
-      idx = 0;
-      while ((idx = text.indexOf('\n', idx)) !== -1) {
-        breakPoints.push(idx);
-        idx += 1;
+    // Si solo hay un párrafo o no se pudo dividir
+    if (paragraphs.length <= 1) return [text];
+    
+    // Agrupar párrafos muy cortos con el anterior para no enviar líneas huérfanas
+    const parts = [];
+    let current = '';
+    
+    for (const para of paragraphs) {
+      if (current && (current.length + para.length) < 150) {
+        // Juntar con el anterior si ambos son cortos
+        current += '\n\n' + para;
+      } else if (!current) {
+        current = para;
+      } else {
+        parts.push(current);
+        current = para;
       }
     }
+    if (current) parts.push(current);
     
-    // Si definitivamente no hay dónde cortar, devolver como un solo mensaje
-    if (breakPoints.length === 0) return [text];
+    // Si todo quedó en una sola parte, devolver como está
+    if (parts.length <= 1) return [text];
     
-    // Encontrar el salto más cercano al centro del texto
-    const mid = text.length / 2;
-    let bestBreak = breakPoints[0];
-    let bestDist = Math.abs(breakPoints[0] - mid);
-    
-    for (const bp of breakPoints) {
-      const dist = Math.abs(bp - mid);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestBreak = bp;
-      }
-    }
-    
-    const part1 = text.substring(0, bestBreak).trim();
-    const part2 = text.substring(bestBreak).trim();
-    
-    // Si alguna parte quedó vacía, devolver como un solo mensaje
-    if (!part1 || !part2) return [text];
-    
-    return [part1, part2];
+    return parts;
   }
 }
 
