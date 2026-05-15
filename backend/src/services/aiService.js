@@ -34,14 +34,15 @@ class AIService {
   /**
    * Genera una respuesta de la IA para un mensaje del cliente
    */
-  async generateResponse(userMessage, contact, messageHistory = [], branchId = null, hasRecentHumanIntervention = false) {
+  async generateResponse(userMessage, contact, messageHistory = [], branchId = null, hasRecentHumanIntervention = false, mediaData = null) {
     try {
       // 1. Detectar flujo conversacional
-      const flow = detectFlow(userMessage, {
+      const flow = detectFlow(userMessage || (mediaData ? "[Imagen recibida]" : ""), {
         messageCount: messageHistory.length,
         clientType: contact?.clientType,
       });
 
+      // ... [rest of classification and product retrieval remains same, but using userMessage safely]
       // 2. Clasificar cliente
       let classification = null;
       if (messageHistory.length >= 2) {
@@ -54,21 +55,16 @@ class AIService {
       const categories = getRecommendedCategories(clientType);
       const productLimit = getProductLimit(confidenceLevel);
       
-      // Filtramos productos por la sucursal actual
       const effectiveBranchId = branchId || messageHistory[0]?.branchId || contact?.branchId;
       
-      // 3b. BÚSQUEDA INTELIGENTE: Si el cliente menciona palabras clave, buscamos productos específicos
       let specificProducts = [];
-      
-      // Extraemos keywords del mensaje actual y los últimos 3 para no perder el hilo
       const recentMessages = messageHistory.slice(-3).map(m => m.content).join(' ');
-      const searchContext = `${userMessage} ${recentMessages}`.toLowerCase();
+      const searchContext = `${userMessage || ''} ${recentMessages}`.toLowerCase();
       
-      // Lista de palabras clave que disparan búsqueda profunda
       const targetKeywords = ['retardante', 'lubricante', 'feromona', 'vibrador', 'lenceria', 'potencializador', 'crema', 'spray'];
       const foundTargetKeywords = targetKeywords.filter(k => searchContext.includes(k));
       
-      const keywords = userMessage.split(' ').filter(word => word.length > 3);
+      const keywords = (userMessage || '').split(' ').filter(word => word.length > 3);
       const allKeywords = [...new Set([...keywords, ...foundTargetKeywords])];
 
       if (allKeywords.length > 0) {
@@ -82,18 +78,16 @@ class AIService {
               ...allKeywords.map(k => ({ emotionalDesc: { contains: k } }))
             ]
           },
-          take: 8 // Aumentamos un poco el límite para darle opciones a la IA
+          take: 8
         });
       }
 
       let products = await catalogService.getProductsByCategories(categories, productLimit, effectiveBranchId);
       
-      // Unificamos productos (dando prioridad a los encontrados por búsqueda)
       const seenIds = new Set(specificProducts.map(p => p.id));
       products = [...specificProducts, ...products.filter(p => !seenIds.has(p.id))];
       products = products.sort((a, b) => Number(b.price) - Number(a.price));
       
-      // Si el cliente mencionó retardante y no encontramos nada por nombre/desc, intentamos búsqueda difusa manual
       if (searchContext.includes('retardante') && !products.some(p => (p.name + p.description).toLowerCase().includes('retardante'))) {
           const fallbackProducts = await prisma.product.findMany({
               where: { 
@@ -109,23 +103,18 @@ class AIService {
           products = [...fallbackProducts, ...products];
       }
 
-      // 4. Obtener INFO de la sucursal actual
+      // 4-6. Info sucursal, proximidad, lastOrder, systemPrompt (ya estaba bien)
       const currentBranch = branchId ? await prisma.branch.findUnique({ where: { id: branchId } }) : null;
-
-      // 5. Lógica de Proximidad: Obtener info de todas las sucursales autorizadas
       const branches = await prisma.branch.findMany({
         where: { isAuthorized: true, isActive: true }
       });
       const closestBranch = this.findClosestBranch(contact, branches);
-
-      // 5b. Obtener última dirección de envío si existe
       const lastOrder = contact?.id ? await prisma.order.findFirst({
         where: { contactId: contact.id },
         orderBy: { createdAt: 'desc' },
         select: { shippingAddress: true, shippingCity: true }
       }) : null;
 
-      // 6. Construir el system prompt con contexto de productos, sucursales y LOGÍSTICA
       const systemPrompt = buildSystemPrompt(
         {
           name: contact?.name,
@@ -140,10 +129,7 @@ class AIService {
         currentBranch || closestBranch || {}
       );
 
-      // 7. Agregar instrucciones del flujo actual
       const flowInstructions = getFlowInstructions(flow);
-
-      // 7b. Instrucciones de CONTINUIDAD si un humano estuvo antes
       let continuityContext = '';
       if (hasRecentHumanIntervention || messageHistory.length > 3) {
         continuityContext = `\n\n## ⚠️ CONTINUIDAD DE CONVERSACIÓN (CRÍTICO)
@@ -171,9 +157,25 @@ class AIService {
         });
       });
 
-      messages.push({ role: 'user', content: userMessage });
+      // Manejo Multimodal (Vision)
+      if (mediaData) {
+        messages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: userMessage || 'He enviado esta foto, ¿qué me puedes decir de ella respecto a tus productos?' },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:${mediaData.mimetype};base64,${mediaData.data}`,
+              },
+            },
+          ],
+        });
+      } else {
+        messages.push({ role: 'user', content: userMessage });
+      }
 
-      // 9. Llamar a OpenAI (con timeout de 30s para evitar que se cuelgue en Railway)
+      // 9. Llamar a OpenAI
       const completionPromise = openai.chat.completions.create({
         model: MODEL,
         messages,

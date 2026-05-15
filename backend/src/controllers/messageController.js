@@ -117,10 +117,28 @@ class MessageController {
         }
       }
 
-      await crmService.saveMessage(conversation.id, 'USER', body);
+      let mediaData = null;
+      if (msg.hasMedia) {
+        try {
+          const media = await msg.downloadMedia();
+          if (media && media.mimetype.startsWith('image/')) {
+            mediaData = {
+              data: media.data,
+              mimetype: media.mimetype
+            };
+            logger.info(`📸 [MEDIA] Imagen recibida de ${chatId} (${media.mimetype})`);
+          }
+        } catch (mediaError) {
+          logger.error(`❌ Error descargando media de ${chatId}:`, mediaError);
+        }
+      }
+
+      if (!body && !mediaData) return; // Si no hay texto ni imagen, no procesar
+
+      await crmService.saveMessage(conversation.id, 'USER', body || "[Imagen]");
       const messageHistory = conversation.messages || [];
 
-      const aiResult = await aiService.generateResponse(body, contact, messageHistory, branchId, false);
+      const aiResult = await aiService.generateResponse(body, contact, messageHistory, branchId, false, mediaData);
       
       if (!aiResult?.response) {
         logger.warn(`⚠️ [MSG] IA no generó texto para ${chatId}`);
