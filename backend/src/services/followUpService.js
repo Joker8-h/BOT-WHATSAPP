@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
+const { isWorkingHours } = require('../utils/helpers');
 
 class FollowUpService {
   constructor() {
@@ -27,6 +28,12 @@ class FollowUpService {
   async processFollowUps() {
     if (!this.whatsappService) {
       logger.warn('⚠️ FollowUp: WhatsApp service no inyectado aún.');
+      return;
+    }
+
+    // Doble validación de horario (Seguridad extra contra desajustes de zona horaria del servidor)
+    if (!isWorkingHours().isWorking) {
+      logger.info('🌙 [FollowUp-SKIP] Fuera de horario laboral. Abortando proceso.');
       return;
     }
 

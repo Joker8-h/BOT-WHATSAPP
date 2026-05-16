@@ -175,6 +175,9 @@ async function startServer() {
     cron.schedule('*/20 * * * *', () => {
       logger.info('⏰ [CRON] Iniciando sincronización programada...');
       syncService.syncAll();
+    }, {
+      scheduled: true,
+      timezone: "America/Bogota"
     });
 
     // 🚀 EJECUTAR SINCRONIZACIÓN PESADA 2 MINUTOS DESPUÉS DEL ARRANQUE
@@ -188,11 +191,17 @@ async function startServer() {
     // Follow-up automático (cada hora, Lun-Sáb 9am-6pm Colombia)
     cron.schedule('0 9-18 * * 1-6', () => {
       followUpService.processFollowUps();
+    }, {
+      scheduled: true,
+      timezone: "America/Bogota"
     });
 
     // Responder mensajes recibidos fuera de horario (9:01am, Lun-Sáb)
     cron.schedule('1 9 * * 1-6', () => {
       followUpService.processOfflineMessages();
+    }, {
+      scheduled: true,
+      timezone: "America/Bogota"
     });
 
     // 5. Servidor HTTP

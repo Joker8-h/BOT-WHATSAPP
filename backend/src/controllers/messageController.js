@@ -66,7 +66,7 @@ class MessageController {
       // ── 3. VERIFICAR HORARIO LABORAL ────────────────────────
       const workingStatus = isWorkingHours();
       if (!workingStatus.isWorking) {
-        logger.info(`🌙 [OFF-HOURS] Mensaje recibido de ${chatId} (Razón: ${workingStatus.reason})`);
+        logger.info(`🌙 [OFF-HOURS] Mensaje recibido de ${chatId} (Razón: ${workingStatus.reason}). Guardando para mañana.`);
         
         // Marcar conversación como pendiente de respuesta offline
         const currentContext = conversation.context || {};
@@ -75,24 +75,7 @@ class MessageController {
           data: { context: { ...currentContext, pendingOfflineReply: true } }
         });
 
-        // Solo enviar el mensaje automático una vez cada 24h por cliente
-        const lastMsg = conversation.messages[conversation.messages.length - 1];
-        const isRecentOutOffice = lastMsg?.role === 'ASSISTANT' && (lastMsg?.content.includes('descansando') || lastMsg?.content.includes('festivo'));
-
-        if (!isRecentOutOffice) {
-          let offHoursMsg = "";
-          
-          if (workingStatus.reason === 'holiday') {
-            offHoursMsg = "¡Hola! 🌹 Hoy es *día festivo* y nuestro equipo se encuentra disfrutando de un merecido descanso para recargar energías. \n\n¡Mañana mismo a primera hora te responderé personalmente con todo el amor! ✨ Puedes dejarme tus dudas aquí y quedarán agendadas.";
-          } else if (workingStatus.reason === 'sunday') {
-            offHoursMsg = "¡Hola! 🌹 Hoy es *domingo* y nuestro equipo está descansando. \n\nNuestro horario de atención es de *Lunes a Sábado de 9:00 AM a 6:00 PM*. ¡Mañana mismo a primera hora te responderé con todo el gusto! ✨";
-          } else {
-            offHoursMsg = "¡Hola! 🌹 Te cuento que en este momento nuestro equipo está fuera de su horario laboral descansando. \n\nNuestro horario de atención es de *Lunes a Sábado de 9:00 AM a 6:00 PM*. \n\n¡Mañana mismo a primera hora te responderé personalmente! ✨ Cuéntame qué necesitas y te dejaré agendado.";
-          }
-
-          await whatsappService.sendMessage(branchId, chatId, offHoursMsg);
-          await crmService.saveMessage(conversation.id, 'ASSISTANT', offHoursMsg);
-        }
+        // No enviamos mensaje automático para evitar despertar/molestar al cliente de noche
         return;
       }
 
