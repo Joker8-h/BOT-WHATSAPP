@@ -6,6 +6,9 @@ import {
 import { IconProducts, IconBarChart, IconDollar, IconAlertTriangle, IconUpload, IconPlus, IconEdit, IconTrash, IconSave, IconStar, IconSearch } from '../components/Icons';
 import Swal from 'sweetalert2';
 
+// Valida que la URL sea una imagen real (evita src="null" o strings vacíos)
+const isValidUrl = (url) => url && typeof url === 'string' && url.startsWith('http');
+
 export default function Products() {
   const [products, setProducts] = useState([]);
   const [filter, setFilter] = useState('');
@@ -230,7 +233,7 @@ export default function Products() {
         {products.map(p => (
           <div key={p.id} className={`product-card ${p.isFeatured ? 'featured' : ''} ${p.isAvailable === false ? 'deactivated' : ''} ${p.stock === 0 ? 'out-of-stock' : p.stock <= 5 ? 'low-stock' : ''}`}>
              <div className="product-image-container">
-              {p.imageUrl ? (
+              {isValidUrl(p.imageUrl) ? (
                 <img src={p.imageUrl} alt={p.name} className="product-thumb" />
               ) : (
                 <div className="product-thumb-placeholder">
@@ -312,7 +315,7 @@ export default function Products() {
                   <label>Imagen del Producto</label>
                   <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginTop: '0.5rem' }}>
                     <div style={{ width: '80px', height: '80px', borderRadius: 'var(--r)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg-0)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {form.imageUrl ? (
+                      {isValidUrl(form.imageUrl) ? (
                         <img src={form.imageUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
                         <IconProducts style={{ opacity: 0.2 }} />

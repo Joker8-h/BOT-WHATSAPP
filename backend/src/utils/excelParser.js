@@ -14,7 +14,7 @@ const cloudinary = require('../config/cloudinary');
 function uploadBufferToCloudinary(buffer) {
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
-      { folder: 'fantasias_products' },
+      { folder: 'fantasias_products', access_mode: 'public', type: 'upload' },
       (error, result) => {
         if (error) {
           logger.error('Error subiendo imagen a Cloudinary desde Excel:', error);
@@ -184,7 +184,9 @@ async function parseExcel(filePath) {
                 use_filename: true,
                 unique_filename: true,
                 quality: 'auto:best',
-                resource_type: 'image'
+                resource_type: 'image',
+                access_mode: 'public',
+                type: 'upload'
               },
               (error, result) => {
                 if (error) {

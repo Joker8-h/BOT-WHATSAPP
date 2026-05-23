@@ -31,7 +31,7 @@ router.post('/image', upload.single('image'), async (req, res) => {
     // Subir buffer a Cloudinary
     const uploadResult = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
-        { folder: 'fantasias/products' },
+        { folder: 'fantasias/products', access_mode: 'public', type: 'upload' },
         (error, result) => {
           if (error) {
             logger.error('❌ Cloudinary SDK Error:', error);
