@@ -42,7 +42,7 @@ class VisualService {
     ].join('/');
 
     // Retorna la URL final combinando la base y las transformaciones
-    return `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload/${transformations}/${this.baseImagePublicId}.jpg`;
+    return `https://res.cloudinary.com/${cloudinary.config().cloud_name}/image/upload/${transformations}/${this.baseImagePublicId}.jpg`;
   }
 
   /**
