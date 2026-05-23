@@ -234,7 +234,7 @@ export default function Products() {
           <div key={p.id} className={`product-card ${p.isFeatured ? 'featured' : ''} ${p.isAvailable === false ? 'deactivated' : ''} ${p.stock === 0 ? 'out-of-stock' : p.stock <= 5 ? 'low-stock' : ''}`}>
              <div className="product-image-container">
               {isValidUrl(p.imageUrl) ? (
-                <img src={p.imageUrl} alt={p.name} className="product-thumb" />
+                <img src={p.imageUrl} alt={p.name} className="product-thumb" referrerPolicy="no-referrer" />
               ) : (
                 <div className="product-thumb-placeholder">
                   <IconProducts />
@@ -316,7 +316,7 @@ export default function Products() {
                   <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginTop: '0.5rem' }}>
                     <div style={{ width: '80px', height: '80px', borderRadius: 'var(--r)', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--bg-0)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {isValidUrl(form.imageUrl) ? (
-                        <img src={form.imageUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={form.imageUrl} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} referrerPolicy="no-referrer" />
                       ) : (
                         <IconProducts style={{ opacity: 0.2 }} />
                       )}
