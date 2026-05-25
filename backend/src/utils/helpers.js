@@ -108,8 +108,8 @@ function isWorkingHours() {
     return { isWorking: false, reason: 'sunday' };
   }
 
-  // 3. Verificar Horario (9:00 AM a 9:00 PM)
-  const isBusinessHour = hour >= 9 && hour < 21;
+  // 3. Verificar Horario (9:00 AM a 6:00 PM)
+  const isBusinessHour = hour >= 9 && hour < 18;
   if (!isBusinessHour) {
     return { isWorking: false, reason: 'off-hours' };
   }

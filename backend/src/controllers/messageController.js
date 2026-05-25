@@ -8,7 +8,7 @@ const crmService = require('../services/crmService');
 const wompiService = require('../services/wompiService');
 const catalogService = require('../services/catalogService');
 const { prisma } = require('../config/database');
-const { isWorkingHours } = require('../utils/helpers');
+const { isWorkingHours, formatCOP } = require('../utils/helpers');
 
 class MessageController {
   constructor() {
@@ -160,11 +160,61 @@ class MessageController {
       // Imágenes
       if (actions.images?.length > 0) {
         for (const imgUrl of actions.images) {
-          if (imgUrl?.startsWith('http')) await whatsappService.sendMedia(branchId, chatId, imgUrl);
+          const cleanUrl = imgUrl.replace(/^Media:\s*/i, '');
+          if (cleanUrl?.startsWith('http')) await whatsappService.sendMedia(branchId, chatId, cleanUrl);
         }
       }
 
-      // Cierre de venta
+      // ── CONTRAENTREGA ──────────────────────────────────────
+      if (actions.shouldCreateContraEntrega && actions.productsToSell?.length > 0) {
+        logger.info(`📦 [CONTRAENTREGA] Procesando pedido contraentrega para ${chatId}`);
+        const orderItems = [];
+        let totalAmount = 0;
+        const productNames = [];
+
+        for (const pName of actions.productsToSell) {
+          const product = await catalogService.findProductByName(pName, branchId);
+          if (product) {
+            orderItems.push({ productId: product.id, quantity: 1, price: product.price });
+            totalAmount += parseFloat(product.price);
+            productNames.push(product.name);
+          }
+        }
+
+        if (orderItems.length > 0) {
+          // Crear orden en BD con estado PENDING
+          const order = await crmService.createOrder({
+            contactId: contact.id,
+            branchId,
+            items: orderItems,
+            amount: totalAmount,
+            shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
+            shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
+            status: 'PENDING'
+          });
+
+          // Confirmar al cliente
+          const confirmMsg = `✅ *¡Pedido registrado!* Te confirmamos tu pedido por *$${totalAmount.toLocaleString('es-CO')} COP*.\n\n📦 *Productos:* ${productNames.join(', ')}\n📍 *Dirección:* ${contactUpdates.address || contact.address || 'Por confirmar'}\n🏙️ *Ciudad:* ${contactUpdates.city || contact.city || 'Por confirmar'}\n\nTe contactaremos para coordinar la entrega. ¡Gracias por tu compra! 🔥`;
+          await whatsappService.sendMessage(branchId, chatId, confirmMsg);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', confirmMsg);
+
+          // Notificar al número central
+          const centralMsg = `📦 *PEDIDO CONTRAENTREGA* 📦\n\n` +
+            `👤 *Cliente:* ${contact.name || 'Sin nombre'} (${contact.phone})\n` +
+            `📱 *Teléfono:* ${contact.phone}\n` +
+            `📦 *Productos:* ${productNames.join(', ')}\n` +
+            `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
+            `📍 *DIRECCIÓN DE ENTREGA:*\n` +
+            `${contactUpdates.address || contact.address || 'Por confirmar'}\n` +
+            `🏙️ *Ciudad:* ${contactUpdates.city || contact.city || 'Por confirmar'}\n` +
+            `${contactUpdates.neighborhood ? `🏘️ *Barrio:* ${contactUpdates.neighborhood}\n` : ''}` +
+            `\n⚠️ *TIPO:* Contraentrega (pago en efectivo al recibir)`;
+
+          await whatsappService.notifyPhone(branchId, centralMsg);
+        }
+      }
+
+      // Cierre de venta Wompi
       if (actions.shouldCloseSale && actions.productsToSell?.length > 0) {
         logger.info(`💰 [SALE] Iniciando proceso de pago para ${chatId}`);
         const orderItems = [];

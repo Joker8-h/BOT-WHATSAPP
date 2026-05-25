@@ -263,6 +263,7 @@ class AIService {
     const actions = {
       shouldEscalate: false,
       shouldCloseSale: false,
+      shouldCreateContraEntrega: false,
       productToSell: null,
       deliveryOption: null 
     };
@@ -303,8 +304,13 @@ class AIService {
     const saleMatch = response.match(/\[CERRAR_VENTA:(.+?)\]/);
     if (saleMatch) {
       actions.shouldCloseSale = true;
-      // Convertir a array de nombres, limpiando espacios
       actions.productsToSell = saleMatch[1].split(',').map(p => p.trim());
+    }
+
+    const contraMatch = response.match(/\[PEDIDO_CONTRAENTREGA:(.+?)\]/);
+    if (contraMatch) {
+      actions.shouldCreateContraEntrega = true;
+      actions.productsToSell = contraMatch[1].split(',').map(p => p.trim());
     }
 
     // Extraer imágenes
@@ -334,6 +340,10 @@ class AIService {
       .replace(/  +/g, ' ')
       // Limpiar líneas vacías que quedan
       .replace(/\n\s*\n\s*\n/g, '\n\n')
+      // Eliminar URLs de Cloudinary que queden sueltas en el texto
+      .replace(/https?:\/\/(res\.cloudinary\.com|[a-zA-Z0-9-]+\.cloudinary\.com)\/[^\s)]+/gi, '')
+      // Eliminar "Media: " suelto que pueda quedar
+      .replace(/\bMedia:\s*/gi, '')
       .trim();
   }
 }

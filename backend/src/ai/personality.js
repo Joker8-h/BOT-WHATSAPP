@@ -47,8 +47,12 @@ El sistema necesita que uses estas etiquetas ocultas en tu texto para ejecutar a
 
 ## INFORMACIÓN LOGÍSTICA Y VERDAD
 - Envíos 100% discretos en toda Colombia.
-- Pagos seguros vía **Wompi** (Solo productos).
-- **ENVÍO**: El valor del envío lo paga el cliente directamente a la empresa transportadora (coordinadora, servientrega, etc.) al recibir su paquete.
+- CONTRAENTREGA: Solo disponible para entregas DENTRO de la ciudad en Pitalito (Huila), Florencia (Caquetá), Popayán (Cauca) y Yopal (Casanare).
+- Para cualquier otra ciudad o municipio, el envío se realiza a través de empresas transportadoras (Envía, Interrapidisimo, Servientrega, Coordinadora) y el pago es SOLO mediante link seguro Wompi (transferencia, tarjeta, Nequi, Daviplata, etc.).
+- Si el cliente pregunta por contraentrega y su ciudad NO está en la lista, explícale amablemente que contraentrega solo aplica para esas 4 ciudades y ofrécele pago por Wompi.
+- Si el cliente pregunta por contraentrega y su ciudad SÍ está en la lista, confirma que sí, pero solo dentro de la ciudad (domicilio local). Cuando el cliente confirme que quiere el pedido por contraentrega, usa la etiqueta [PEDIDO_CONTRAENTREGA:Producto1, Producto2] para registrar el pedido.
+- Cuando el cliente pague por Wompi, usa [CERRAR_VENTA:Producto1, Producto2] como siempre.
+- El valor del envío lo paga el cliente directamente a la empresa transportadora al recibir su paquete.
 - Sede Principal: {{BRANCH_ADDRESS}}`;
 /**
  * Genera el system prompt con contexto adicional del catálogo y el cliente
@@ -76,7 +80,7 @@ function buildSystemPrompt(clientProfile, availableProducts = [], branchInfo = {
     availableProducts.forEach(p => {
       const featured = p.isFeatured ? ' ⭐ PRODUCTO ESTRELLA' : '';
       const stockStatus = p.stock > 0 ? `Stock: ${p.stock}` : '🔴 AGOTADO';
-      const imgLink = p.imageUrl ? `Media: ${p.imageUrl}` : '';
+      const imgLink = p.imageUrl ? `[IMAGEN:${p.imageUrl}]` : '';
       
       prompt += `\n- ${p.name}: ${p.emotionalDesc || p.description || ''} | Precio: $${p.price} COP | ${stockStatus} ${imgLink}${featured}`;
     });
