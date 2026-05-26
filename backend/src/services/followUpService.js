@@ -23,6 +23,10 @@ class FollowUpService {
 
   /**
    * CRON principal: Busca conversaciones estancadas y envía follow-ups
+   * Reglas:
+   *   - Sin seguimiento previo y se estancó HOY → enviar follow-up
+   *   - Ya tiene seguimiento y pasaron 8+ días → enviar otro
+   *   - Caso contrario → saltar
    * Se ejecuta cada hora.
    */
   async processFollowUps() {
@@ -31,32 +35,22 @@ class FollowUpService {
       return;
     }
 
-    // Doble validación de horario (Seguridad extra contra desajustes de zona horaria del servidor)
     if (!isWorkingHours().isWorking) {
-      logger.info('🌙 [FollowUp-SKIP] Fuera de horario laboral. Abortando proceso.');
+      logger.info('🌙 [FollowUp-SKIP] Fuera de horario laboral.');
       return;
     }
 
     logger.info('🔔 Iniciando proceso de follow-up automático...');
 
     try {
-      // 1. Buscar conversaciones ACTIVAS donde:
-      //    - El último mensaje fue del BOT (ASSISTANT)
-      //    - Han pasado entre 4 y 24 horas sin respuesta del cliente
-      //    - La conversación NO está pausada/escalada
-      //    - No se ha enviado un follow-up previamente en esta conversación
       const now = new Date();
-      const fourHoursAgo = new Date(now.getTime() - 4 * 60 * 60 * 1000);
-      const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000);
 
       const stalledConversations = await prisma.conversation.findMany({
         where: {
           status: 'ACTIVE',
-          updatedAt: {
-            gte: twentyFourHoursAgo,
-            lte: fourHoursAgo
-          },
-          // Solo conversaciones con algo de interacción
+          updatedAt: { lte: new Date(now.getTime() - 4 * 60 * 60 * 1000) },
           messageCount: { gte: 2 }
         },
         include: {
@@ -73,22 +67,27 @@ class FollowUpService {
 
       for (const conv of stalledConversations) {
         try {
-          // Verificar que el último mensaje sea del bot (el cliente no respondió)
+          const context = conv.context || {};
+          const lastFollowUpAt = context.lastFollowUpAt ? new Date(context.lastFollowUpAt) : null;
+
+          // Regla 1: Sin seguimiento previo y se estancó hoy
+          const isStalledToday = conv.updatedAt >= todayStart;
+          const canSendToday = !lastFollowUpAt && isStalledToday;
+
+          // Regla 2: Ya tiene seguimiento y pasaron 8+ días
+          const canSendAfterEight = lastFollowUpAt && (now.getTime() - lastFollowUpAt.getTime() >= 8 * 24 * 60 * 60 * 1000);
+
+          if (!canSendToday && !canSendAfterEight) continue;
+
           const lastMsg = conv.messages[0];
           if (!lastMsg || lastMsg.role !== 'ASSISTANT') continue;
 
-          // Verificar que no sea un follow-up ya enviado
-          if (lastMsg.content.includes('⏰') || lastMsg.content.includes('follow-up')) continue;
-
-          // Verificar que la sucursal tenga WhatsApp activo
           const branchStatus = this.whatsappService.getBranchStatus(conv.branchId);
           if (!branchStatus?.isReady) continue;
 
-          // Generar un mensaje de follow-up contextual
           const followUpMsg = await this.generateFollowUpMessage(conv);
           if (!followUpMsg) continue;
 
-          // Enviar el mensaje
           const chatId = conv.contact.phone.includes('@') 
             ? conv.contact.phone 
             : `${conv.contact.phone}@c.us`;
@@ -96,13 +95,12 @@ class FollowUpService {
           const sent = await this.whatsappService.sendMessage(conv.branchId, chatId, followUpMsg);
           
           if (sent) {
-            // Guardar en historial
             await prisma.message.create({
               data: {
                 conversationId: conv.id,
                 role: 'ASSISTANT',
                 content: followUpMsg,
-                tokensUsed: 0 // No se usó IA para este mensaje
+                tokensUsed: 0
               }
             });
             
@@ -110,7 +108,8 @@ class FollowUpService {
               where: { id: conv.id },
               data: { 
                 messageCount: { increment: 1 },
-                updatedAt: new Date()
+                updatedAt: new Date(),
+                context: { ...context, lastFollowUpAt: now.toISOString() }
               }
             });
 
@@ -118,7 +117,6 @@ class FollowUpService {
             logger.info(`📩 Follow-up enviado a ${conv.contact.name || conv.contact.phone} (Conv: ${conv.id})`);
           }
 
-          // Anti-ban delay entre envíos
           await new Promise(r => setTimeout(r, 5000));
 
         } catch (err) {
@@ -216,6 +214,11 @@ class FollowUpService {
   async processOfflineMessages() {
     if (!this.whatsappService || !this.aiService) {
       logger.warn('⚠️ OfflineProcessor: servicios no inyectados.');
+      return;
+    }
+
+    if (!isWorkingHours().isWorking) {
+      logger.info('🌙 [Offline-SKIP] Fuera de horario laboral.');
       return;
     }
 

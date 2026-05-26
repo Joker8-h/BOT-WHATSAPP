@@ -258,9 +258,21 @@ class WhatsAppService {
       }
       // Los @lid se usan tal cual — no intentar obtener chat object para evitar timeouts
 
-      // --- Delay natural (simula tipeo sin bloquear Puppeteer) ---
-      const typingDelay = Math.min(text.length * 20, 2000);
-      await new Promise(resolve => setTimeout(resolve, typingDelay));
+      // ── Simular escritura (3 puntos) ──
+      let chat = null;
+      try {
+        chat = await client.getChatById(chatId);
+        await chat.sendStateTyping();
+      } catch (e) {
+        // Si no se puede obtener el chat, solo continuar con delay normal
+      }
+
+      const typingMs = Math.min(text.length * 30, 2500);
+      await new Promise(resolve => setTimeout(resolve, typingMs));
+
+      if (chat) {
+        try { await chat.clearState(); } catch (e) { /* ignorar */ }
+      }
 
       // --- Lógica de División de Mensajes Largos ---
       const maxLength = 450;
@@ -277,9 +289,16 @@ class WhatsAppService {
         }
         if (remaining) parts.push(remaining);
 
-        for (const part of parts) {
-          await client.sendMessage(chatId, part);
-          await new Promise(resolve => setTimeout(resolve, 1200));
+        for (let i = 0; i < parts.length; i++) {
+          // Mostrar escritura antes de cada parte
+          if (chat) {
+            try { await chat.sendStateTyping(); } catch (e) { /* ignorar */ }
+          }
+          await new Promise(resolve => setTimeout(resolve, 800));
+          await client.sendMessage(chatId, parts[i]);
+          if (i < parts.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 1200));
+          }
         }
         return true;
       }
