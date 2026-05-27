@@ -180,7 +180,7 @@ class AIService {
         model: MODEL,
         messages,
         temperature: 0.7,
-        max_tokens: 450,
+        max_tokens: 600,
       });
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('OpenAI timeout: la respuesta tardó más de 30 segundos')), 30000)

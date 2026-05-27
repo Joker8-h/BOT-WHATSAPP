@@ -175,9 +175,10 @@ class MessageController {
         for (const pName of actions.productsToSell) {
           const product = await catalogService.findProductByName(pName, branchId);
           if (product) {
-            orderItems.push({ productId: product.id, quantity: 1, price: product.price });
-            totalAmount += parseFloat(product.price);
-            productNames.push(product.name);
+            const qty = product.parsedQuantity || 1;
+            orderItems.push({ productId: product.id, quantity: qty, price: product.price });
+            totalAmount += parseFloat(product.price) * qty;
+            productNames.push(`${product.name}${qty > 1 ? ` x${qty}` : ''}`);
           }
         }
 
@@ -224,9 +225,10 @@ class MessageController {
         for (const pName of actions.productsToSell) {
           const product = await catalogService.findProductByName(pName, branchId);
           if (product) {
-            orderItems.push({ productId: product.id, quantity: 1, price: product.price });
-            totalAmount += parseFloat(product.price);
-            productNames.push(product.name);
+            const qty = product.parsedQuantity || 1;
+            orderItems.push({ productId: product.id, quantity: qty, price: product.price });
+            totalAmount += parseFloat(product.price) * qty;
+            productNames.push(`${product.name}${qty > 1 ? ` x${qty}` : ''}`);
           }
         }
 

@@ -70,15 +70,24 @@ class CatalogService {
    * Busca un producto por nombre en una sucursal
    */
   async findProductByName(name, branchId) {
+    // Detectar cantidad: "Producto x2" → name="Producto", quantity=2
+    const qtyMatch = name.match(/^(.+?)\s*x(\d+)$/i);
+    const productName = qtyMatch ? qtyMatch[1].trim() : name;
+    const quantity = qtyMatch ? parseInt(qtyMatch[2]) : 1;
+
     const product = await prisma.product.findFirst({
       where: {
         isAvailable: true,
         branchId,
-        name: { contains: name },
+        name: { contains: productName },
       },
     });
 
-    return product;
+    if (product) {
+      return { ...product, parsedQuantity: quantity };
+    }
+
+    return null;
   }
 
   /**
