@@ -7,6 +7,7 @@ const { antiBanDelay } = require('../utils/helpers');
 const { prisma } = require('../config/database');
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios');
 
 class WhatsAppService {
   constructor() {
@@ -346,7 +347,10 @@ class WhatsAppService {
       
       let media;
       if (mediaSource.startsWith('http')) {
-        media = await MessageMedia.fromUrl(mediaSource);
+        const response = await axios.get(mediaSource, { responseType: 'arraybuffer', timeout: 15000 });
+        const base64 = Buffer.from(response.data).toString('base64');
+        const mimetype = response.headers['content-type'] || 'image/png';
+        media = new MessageMedia(mimetype, base64, mediaSource.split('/').pop());
       } else {
         // Asumimos que es un path local (como el generado por TTS)
         media = MessageMedia.fromFilePath(mediaSource);
