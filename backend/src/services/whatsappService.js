@@ -345,6 +345,20 @@ class WhatsAppService {
 
       logger.info(`🖼️ Preparando envío de media para ${chatId} desde branch ${branchId}`);
       
+      // Verificar que la URL sea accesible antes de descargar
+      if (mediaSource.startsWith('http')) {
+        try {
+          const headResp = await axios.head(mediaSource, { timeout: 5000 });
+          if (headResp.status !== 200) {
+            logger.warn(`⚠️ Media URL no accesible (${headResp.status}): ${mediaSource}`);
+            return false;
+          }
+        } catch (headErr) {
+          logger.warn(`⚠️ Media URL no responde: ${mediaSource} — ${headErr.message}`);
+          return false;
+        }
+      }
+
       let media;
       if (mediaSource.startsWith('http')) {
         const response = await axios.get(mediaSource, { responseType: 'arraybuffer', timeout: 15000 });
@@ -352,14 +366,13 @@ class WhatsAppService {
         const mimetype = response.headers['content-type'] || 'image/png';
         media = new MessageMedia(mimetype, base64, mediaSource.split('/').pop());
       } else {
-        // Asumimos que es un path local (como el generado por TTS)
         media = MessageMedia.fromFilePath(mediaSource);
       }
 
       const sendOptions = {};
       if (options.caption) sendOptions.caption = options.caption;
       if (options.isAudio) {
-        sendOptions.sendAudioAsVoice = true; // Esto lo envía como nota de voz azul
+        sendOptions.sendAudioAsVoice = true;
       }
 
       await client.sendMessage(chatId, media, sendOptions);
@@ -367,7 +380,7 @@ class WhatsAppService {
       logger.info(`📤 Media enviado exitosamente a ${chatId}`);
       return true;
     } catch (error) {
-      logger.error(`❌ Error enviando media (Source: ${mediaSource}) en sucursal ${branchId} a ${to}:`, error.message);
+      logger.warn(`⚠️ Error enviando media (Source: ${mediaSource}) a ${to}: ${error.message}`);
       return false;
     }
   }

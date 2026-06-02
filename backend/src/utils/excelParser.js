@@ -135,7 +135,8 @@ async function parseExcel(filePath) {
         stock,
         price,
         category,
-        imageUrl: null 
+        imageUrl: null,
+        imageBuffer: null 
       });
     });
 
@@ -174,36 +175,9 @@ async function parseExcel(filePath) {
           }
         }
 
-        if (bestMatch && !bestMatch.imageUrl) {
-          logger.info(`☁️ [UPLOAD] Subiendo imagen para "${bestMatch.name}" (Fila Excel: ${Math.round(centerRow)})...`);
-          
-          const url = await new Promise((resolve) => {
-            const stream = cloudinary.uploader.upload_stream(
-              { 
-                folder: 'fantasias_products',
-                use_filename: true,
-                unique_filename: true,
-                quality: 'auto:best',
-                resource_type: 'image',
-                access_mode: 'public',
-                type: 'upload'
-              },
-              (error, result) => {
-                if (error) {
-                  logger.error('❌ Error Cloudinary:', error);
-                  resolve(null);
-                } else {
-                  resolve(result.secure_url);
-                }
-              }
-            );
-            stream.end(media.buffer);
-          });
-
-          if (url) {
-            bestMatch.imageUrl = url;
-            logger.info(`✅ [OK] Imagen vinculada a "${bestMatch.name}"`);
-          }
+        if (bestMatch && !bestMatch.imageBuffer) {
+          logger.info(`📎 [IMG] Imagen detectada para "${bestMatch.name}" (Fila: ${Math.round(centerRow)}). Buffer guardado para subida posterior.`);
+          bestMatch.imageBuffer = media.buffer;
         }
       } catch (err) {
         logger.error('❌ Error procesando imagen individual:', err);
@@ -306,4 +280,4 @@ function generateEmotionalDescription(name, category) {
   return templates[category] || templates.CONEXION_PAREJA;
 }
 
-module.exports = { parseExcel, mapExcelToProducts, mapCategory };
+module.exports = { parseExcel, mapExcelToProducts, mapCategory, uploadBufferToCloudinary };

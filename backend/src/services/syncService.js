@@ -2,7 +2,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { prisma } = require('../config/database');
-const { parseExcel, mapCategory } = require('../utils/excelParser');
+const { parseExcel, mapCategory, uploadBufferToCloudinary } = require('../utils/excelParser');
 const catalogService = require('./catalogService');
 const logger = require('../utils/logger');
 
@@ -114,9 +114,9 @@ class SyncService {
         if (existing && existing.imageUrl) {
           // Ya tiene imagen, no re-subir
           productData.imageUrl = existing.imageUrl;
-        } else if (row.imageUrl) {
-          // Imagen nueva del Excel
-          productData.imageUrl = row.imageUrl;
+        } else if (row.imageBuffer) {
+          // Producto nuevo o sin imagen: subir solo ahora
+          productData.imageUrl = await uploadBufferToCloudinary(row.imageBuffer);
         }
 
         let savedProduct;
