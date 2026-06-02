@@ -93,7 +93,7 @@ function getFlowInstructions(flow) {
     GUIDED_FANTASY: `FLUJO ACTUAL: FANTASÍA GUIADA
 - Presenta los productos como EXPERIENCIAS, no como objetos
 - Crea un escenario emocional: "Imagina una noche donde..."
-- Recomienda 1-2 productos máximo basándote en lo que ha dicho
+- Recomienda hasta 5 productos (o más si el cliente los pide) basándote en lo que ha dicho
 - Usa la descripción emocional del producto, no la técnica`,
 
     STRATEGIC_DIRECTION: `FLUJO ACTUAL: DIRECCIÓN ESTRATÉGICA

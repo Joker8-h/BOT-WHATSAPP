@@ -98,7 +98,7 @@ class AIService {
                       { name: { contains: 'retard' } }
                   ]
               },
-              take: 3
+              take: 5
           });
           products = [...fallbackProducts, ...products];
       }

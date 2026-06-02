@@ -35,7 +35,7 @@ class CatalogService {
    * Obtiene productos por categorías para una sucursal específica (para la IA)
    * Si no hay productos en esas categorías, busca cualquier otro de la misma sucursal (fallback)
    */
-  async getProductsByCategories(categories, limit = 3, branchId) {
+  async getProductsByCategories(categories, limit = 8, branchId) {
     if (!branchId) {
       logger.warn('⚠️ getProductsByCategories llamado sin branchId. Retornando vacío para evitar fuga de datos.');
       return [];

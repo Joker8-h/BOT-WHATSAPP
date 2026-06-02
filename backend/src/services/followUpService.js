@@ -304,7 +304,7 @@ class FollowUpService {
 
             // Enviar imágenes si las hay
             if (aiResult.actions?.images?.length > 0) {
-              for (const imageUrl of aiResult.actions.images.slice(0, 3)) {
+              for (const imageUrl of aiResult.actions.images.slice(0, 5)) {
                 await this.whatsappService.sendMedia(conv.branchId, chatId, imageUrl);
               }
             }
