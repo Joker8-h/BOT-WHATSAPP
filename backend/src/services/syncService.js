@@ -112,8 +112,18 @@ class SyncService {
         };
 
         if (existing && existing.imageUrl) {
-          // Ya tiene imagen, no re-subir
-          productData.imageUrl = existing.imageUrl;
+          // Solo verificar URLs del cloud antiguo (dwksiel3n). Las del cloud actual confiar.
+          const isOldCloud = existing.imageUrl.includes('dwksiel3n');
+          const isBroken = isOldCloud ? await isImageUrlBroken(existing.imageUrl) : false;
+          if (isBroken && row.imageBuffer) {
+            logger.warn(`🔄 Re-subiendo imagen para "${existing.name}" — URL anterior no accesible`);
+            productData.imageUrl = await uploadBufferToCloudinary(row.imageBuffer);
+          } else if (isBroken) {
+            logger.warn(`⚠️ "${existing.name}" tiene imagen rota pero no hay buffer en Excel para re-subirla`);
+            productData.imageUrl = null;
+          } else {
+            productData.imageUrl = existing.imageUrl;
+          }
         } else if (row.imageBuffer) {
           // Producto nuevo o sin imagen: subir solo ahora
           productData.imageUrl = await uploadBufferToCloudinary(row.imageBuffer);
@@ -168,6 +178,19 @@ class SyncService {
     } finally {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
     }
+  }
+}
+
+/**
+ * Verifica si una URL de imagen sigue accesible
+ */
+async function isImageUrlBroken(url) {
+  if (!url || !url.startsWith('http')) return true;
+  try {
+    const resp = await axios.head(url, { timeout: 5000 });
+    return resp.status !== 200;
+  } catch {
+    return true;
   }
 }
 

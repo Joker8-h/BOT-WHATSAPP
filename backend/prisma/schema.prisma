@@ -51,6 +51,7 @@ model Branch {
   metrics         DailyMetric[]
   employeeAccess  EmployeeAccess[]
   syncSources     SyncSource[]
+  apiKeys         ApiKey[]
 
   @@index([city])
   @@index([isActive])
@@ -92,6 +93,27 @@ model EmployeeAccess {
   updatedAt       DateTime  @updatedAt
 
   @@unique([phone, branchId])
+  @@index([branchId])
+}
+
+// ── API Keys para integraciones externas ──
+model ApiKey {
+  id              Int       @id @default(autoincrement())
+  key             String    @unique @db.VarChar(128) // hash SHA-256 de la llave
+  name            String    @db.VarChar(100) // nombre del consumidor (ej: "Sistema Web Tropi")
+  description     String?   @db.Text
+
+  // Scope
+  branchId        Int?
+  branch          Branch?   @relation(fields: [branchId], references: [id])
+
+  isActive        Boolean   @default(true)
+  permissions     String    @default("products:read") @db.VarChar(255) // "products:read,stock:write"
+
+  lastUsedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
   @@index([branchId])
 }
 

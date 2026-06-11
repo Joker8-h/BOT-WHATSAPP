@@ -47,6 +47,7 @@ const followUpService = require('./src/services/followUpService');
 const aiService = require('./src/services/aiService');
 const visualService = require('./src/services/visualService');
 const apiRoutes = require('./src/routes/api');
+const externalApiRoutes = require('./src/routes/externalApi');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,7 +68,16 @@ app.use(cors({
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting API
+// ─── API Pública para integración externa (ANTES que /api para evitar conflicto JWT) ───
+const externalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 600,
+  keyGenerator: (req) => req.headers['x-forwarded-for'] || req.ip,
+  message: { success: false, error: 'Demasiadas solicitudes, intenta más tarde' },
+});
+app.use('/api/v1', externalLimiter, externalApiRoutes);
+
+// ─── Rutas API y Pagos (Rate limit + JWT) ───
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 6000,
@@ -75,8 +85,6 @@ const apiLimiter = rateLimit({
   message: { success: false, error: 'Demasiadas solicitudes, intenta más tarde' },
 });
 app.use('/api', apiLimiter);
-
-// ─── Rutas API y Pagos ───
 app.use('/api', apiRoutes);
 
 // ─── Webhook de Pagos (Wompi es manejado vía apiRoutes /api/payment/wompi-webhook) ───

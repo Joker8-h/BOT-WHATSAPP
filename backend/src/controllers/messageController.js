@@ -68,6 +68,9 @@ class MessageController {
       if (!workingStatus.isWorking) {
         logger.info(`🌙 [OFF-HOURS] Mensaje recibido de ${chatId} (Razón: ${workingStatus.reason}). Guardando para mañana.`);
         
+        // Guardar el mensaje del usuario ANTES de marcar pendiente
+        await crmService.saveMessage(conversation.id, 'USER', body || "[Imagen]");
+        
         // Marcar conversación como pendiente de respuesta offline
         const currentContext = conversation.context || {};
         await prisma.conversation.update({
