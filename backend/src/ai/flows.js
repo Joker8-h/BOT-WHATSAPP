@@ -20,11 +20,18 @@ function detectFlow(message, context) {
     thanks: ['gracias', 'gracia', 'thank', 'perfecto', 'listo', 'vale gracias'],
     gift: ['regalo', 'sorpresa', 'aniversario', 'cumpleaños', 'especial'],
     couple: ['pareja', 'novio', 'novia', 'esposo', 'esposa', 'relación'],
+    replyToContact: ['escribiste', 'atendiendo', 'vi tu mensaje', 'vi el mensaje', 'veo tu mensaje', 'hace rato', 'recién veo', 'no te había visto', 'me mandaste', 'me enviaste', 'te respondo'],
+    store: ['tienda física', 'donde quedan', 'ubicación', 'sucursal', 'donde están', 'popayán', 'florencia', 'yopal', 'local fisico'],
   };
 
   // Detectar escalamiento
   if (keywords.help.some(k => msg.includes(k))) {
     return 'ESCALATION';
+  }
+
+  // Respondiendo a un mensaje previo (follow-up)
+  if (keywords.replyToContact.some(k => msg.includes(k))) {
+    return 'CONTACT_REPLY';
   }
 
   // Detectar cierre
@@ -50,6 +57,11 @@ function detectFlow(message, context) {
   // Busca catálogo completo
   if (keywords.catalog.some(k => msg.includes(k))) {
     return 'DISCOVERY';
+  }
+
+  // Pregunta por locales físicos
+  if (keywords.store.some(k => msg.includes(k))) {
+    return 'PHYSICAL_STORE';
   }
 
   // Menciona regalo o sorpresa
@@ -113,6 +125,23 @@ function getFlowInstructions(flow) {
   * Si NO está en esas ciudades: explícale que contraentrega solo está disponible en esas 4 ciudades, y ofrécele pago por link seguro Wompi
 - Si el cliente acepta pagar por Wompi, usa [CERRAR_VENTA:nombre_del_producto] para activar el link de pago
 - NO presiones, pero facilita el camino`,
+
+    CONTACT_REPLY: `FLUJO ACTUAL: RESPUESTA A CONTACTO
+- El cliente está respondiendo a un mensaje previo que le enviaste
+- Recíbelo natural: "Holaa, claro, por cierto agrégame a tus contactos como Sofía y así tenemos el contacto directo"
+- Hazlo sonar como un comentario casual, no como pregunta
+- Luego transiciona suavemente al flujo de venta: pregúntale qué necesita o si quiere que le muestres productos`,
+
+    PHYSICAL_STORE: `FLUJO ACTUAL: INFORMACIÓN DE LOCALES
+- El cliente pregunta por tiendas físicas
+- Proporciona con amabilidad las direcciones de los locales:
+
+🏬 *Popayán Cauca*: Cra 10 A #1AN-09 esquina, barrio Modelo
+🏬 *Florencia Caquetá*: CLL 18 #10-04, Local Fantasías, barrio Centro
+🏬 *Yopal Casanare*: CLL 9 #23-52, Local Fantasías, barrio Centro
+
+- IMPORTANTE: El local de Yopal solo está disponible por ahora esta semana. Si preguntan, di "estaremos por ahora esta semana, si hay cambios les avisamos"
+- Luego de informar, pregúntale si necesita algo más o si quiere ver productos`,
 
     ESCALATION: `FLUJO ACTUAL: ESCALAMIENTO A HUMANO
 - El cliente quiere hablar con una persona o administrador, o está molesto.
