@@ -12,6 +12,10 @@ npx prisma db push --accept-data-loss
 echo "🌱 Ejecutando semillas (Seed)..."
 node seed.js
 
+# 2c. Poblar sedes y empleados
+echo "🏪 Poblando sedes y empleados..."
+node scripts/seedSedes.js
+
 # 3. Iniciar la aplicación
 echo "🚀 Iniciando servidor..."
 node server.js
