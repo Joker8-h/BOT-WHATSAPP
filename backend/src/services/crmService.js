@@ -92,7 +92,7 @@ class CRMService {
         where: {
           contactId,
           branchId,
-          status: 'ACTIVE',
+          status: { in: ['ACTIVE', 'PAUSED'] },
         },
         include: {
           messages: {
