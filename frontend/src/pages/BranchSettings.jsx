@@ -1,10 +1,25 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getBranch, updateBranchSettings, updateBranchSchedule, formatDate } from '../api';
-import { IconSave, IconArrowLeft, IconMap, IconPhone, IconEdit } from '../components/Icons';
+import { IconSave, IconArrowLeft } from '../components/Icons';
 import Swal from 'sweetalert2';
 
-const DIAS = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+const DIAS = [
+  { num: 0, short: 'Dom' },
+  { num: 1, short: 'Lun' },
+  { num: 2, short: 'Mar' },
+  { num: 3, short: 'Mie' },
+  { num: 4, short: 'Jue' },
+  { num: 5, short: 'Vie' },
+  { num: 6, short: 'Sab' },
+];
+
+function formatHour(h) {
+  if (h === 0 || h === 24) return '12:00 AM';
+  if (h === 12) return '12:00 PM';
+  if (h < 12) return `${h}:00 AM`;
+  return `${h - 12}:00 PM`;
+}
 
 export default function BranchSettings() {
   const { id } = useParams();
@@ -12,6 +27,7 @@ export default function BranchSettings() {
   const [branch, setBranch] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState('info');
   const [form, setForm] = useState({
     name: '', city: '', address: '', phone: '',
     referencePoint: '', notes: '', storeFrontDesc: '',
@@ -89,137 +105,301 @@ export default function BranchSettings() {
     }
   };
 
-  if (loading) return <div className="loading">Cargando sede...</div>;
+  const activeDaysCount = scheduleForm.workingDays.split(',').length;
+
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-3)' }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏳</div>
+        <p>Cargando sede...</p>
+      </div>
+    </div>
+  );
 
   return (
-    <div>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2.5rem' }}>
+    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '2rem 1.5rem' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '2rem' }}>
+        <button onClick={() => navigate('/branches/management')} style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-2)' }}>
+          <IconArrowLeft />
+        </button>
         <div>
-          <button onClick={() => navigate('/branches/management')} className="btn-secondary" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <IconArrowLeft /> Volver a Sedes
-          </button>
-          <h1 className="page-title">{branch?.name}</h1>
-          <p className="page-subtitle">Configuración de la sede</p>
+          <h1 className="page-title" style={{ marginBottom: 0 }}>{branch?.name || 'Sede'}</h1>
+          <p className="page-subtitle" style={{ marginBottom: 0 }}>{branch?.city}</p>
         </div>
-      </header>
+      </div>
 
-      {/* Info general */}
-      <div className="card" style={{ maxWidth: '700px', padding: '2rem', marginBottom: '1.5rem' }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem', color: 'var(--purple)' }}>Información General</h2>
-        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-            <div className="form-group">
-              <label>Nombre de sede</label>
-              <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
+        <button onClick={() => setActiveTab('info')} style={tabStyle(activeTab === 'info')}>
+          🏪 Información General
+        </button>
+        <button onClick={() => setActiveTab('schedule')} style={tabStyle(activeTab === 'schedule')}>
+          🕐 Horario de Atención
+        </button>
+      </div>
+
+      {/* Tab: Info General */}
+      {activeTab === 'info' && (
+        <form onSubmit={handleSave}>
+          <div style={cardStyle}>
+            <div style={cardHeaderStyle}>
+              <span style={cardIconStyle}>📍</span>
+              <div>
+                <h3 style={cardTitleStyle}>Datos de la Sede</h3>
+                <p style={cardSubtitleStyle}>Información de contacto y ubicación</p>
+              </div>
             </div>
-            <div className="form-group">
-              <label>Ciudad</label>
-              <input value={form.city} onChange={e => setForm({...form, city: e.target.value})} />
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.2rem' }}>
+              <div>
+                <label style={labelStyle}>Nombre de Sede</label>
+                <input value={form.name} onChange={e => setForm({...form, name: e.target.value})} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Ciudad</label>
+                <input value={form.city} onChange={e => setForm({...form, city: e.target.value})} style={inputStyle} />
+              </div>
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <label style={labelStyle}>Dirección</label>
+              <input value={form.address} onChange={e => setForm({...form, address: e.target.value})} style={inputStyle} placeholder="Calle, número, barrio" />
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <label style={labelStyle}>Teléfono</label>
+              <input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} style={inputStyle} placeholder="+57 300 123 4567" />
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <label style={labelStyle}>Punto de Referencia</label>
+              <textarea rows={2} value={form.referencePoint} onChange={e => setForm({...form, referencePoint: e.target.value})} style={textareaStyle} placeholder="Ej: Sobre la misma cuadra del Gimnasio de la Salud" />
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <label style={labelStyle}>Descripción de Fachada</label>
+              <textarea rows={2} value={form.storeFrontDesc} onChange={e => setForm({...form, storeFrontDesc: e.target.value})} style={textareaStyle} placeholder="Ej: Fachada de dos pisos color negro" />
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <label style={labelStyle}>Notas Adicionales</label>
+              <textarea rows={3} value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} style={textareaStyle} placeholder="Ej: Estamos próximos a trasladarnos..." />
             </div>
           </div>
-          <div className="form-group">
-            <label>Dirección</label>
-            <input value={form.address} onChange={e => setForm({...form, address: e.target.value})} />
-          </div>
-          <div className="form-group">
-            <label>Teléfono</label>
-            <input value={form.phone} onChange={e => setForm({...form, phone: e.target.value})} />
-          </div>
-          <div className="form-group">
-            <label>Punto de referencia</label>
-            <textarea rows={2} value={form.referencePoint} onChange={e => setForm({...form, referencePoint: e.target.value})} placeholder="Ej: Sobre la misma cuadra del Gimnasio de la Salud" />
-          </div>
-          <div className="form-group">
-            <label>Descripción de fachada</label>
-            <textarea rows={2} value={form.storeFrontDesc} onChange={e => setForm({...form, storeFrontDesc: e.target.value})} placeholder="Ej: Fachada de dos pisos color negro" />
-          </div>
-          <div className="form-group">
-            <label>Notas adicionales</label>
-            <textarea rows={4} value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} placeholder="Ej: Estamos próximos a trasladarnos..." />
-          </div>
-          <button type="submit" disabled={saving} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
-            <IconSave /> {saving ? 'Guardando...' : 'Guardar Cambios'}
+
+          <button type="submit" disabled={saving}
+            style={{
+              width: '100%', padding: '1rem', borderRadius: 'var(--r-lg)', border: 'none',
+              background: saving ? 'var(--text-3)' : 'var(--purple)', color: '#fff',
+              fontSize: '0.95rem', fontWeight: 800, cursor: saving ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem',
+              boxShadow: '0 4px 15px rgba(83, 16, 110, 0.3)',
+            }}>
+            <IconSave />
+            {saving ? 'Guardando...' : 'Guardar Información'}
           </button>
         </form>
-      </div>
+      )}
 
-      {/* Horario */}
-      <div className="card" style={{ maxWidth: '700px', padding: '2rem' }}>
-        <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem', color: 'var(--purple)' }}>Horario de Atención</h2>
-        <div className="flex items-center gap-3 mb-4">
-          <input type="checkbox" checked={scheduleForm.useGlobalSchedule}
-            onChange={e => setScheduleForm({ ...scheduleForm, useGlobalSchedule: e.target.checked })}
-            className="w-4 h-4 text-blue-600 rounded" />
-          <span className="text-sm text-gray-600">Usar horario global del sistema</span>
-        </div>
-
-        {!scheduleForm.useGlobalSchedule && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="form-group">
-                <label>Hora inicio</label>
-                <input type="number" min="0" max="23" value={scheduleForm.workingHoursStart}
-                  onChange={e => setScheduleForm({ ...scheduleForm, workingHoursStart: parseInt(e.target.value) || 0 })} />
-              </div>
-              <div className="form-group">
-                <label>Hora fin</label>
-                <input type="number" min="0" max="23" value={scheduleForm.workingHoursEnd}
-                  onChange={e => setScheduleForm({ ...scheduleForm, workingHoursEnd: parseInt(e.target.value) || 0 })} />
-              </div>
-            </div>
-
-            <div>
-              <label style={{ display: 'block', fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-3)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>Días de atención</label>
-              <div className="flex gap-2">
-                {[0,1,2,3,4,5,6].map(d => (
-                  <button key={d} type="button" onClick={() => toggleDay(d)}
-                    className={`w-12 h-10 rounded-lg text-sm font-medium transition-colors ${
-                      scheduleForm.workingDays.split(',').map(Number).includes(d)
-                        ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}>{DIAS[d]}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <input type="checkbox" checked={scheduleForm.closedForLunch}
-                onChange={e => setScheduleForm({ ...scheduleForm, closedForLunch: e.target.checked })}
-                className="w-4 h-4 text-blue-600 rounded" />
-              <span className="text-sm text-gray-600">Cerrado en horario de almuerzo</span>
-            </div>
-
-            {scheduleForm.closedForLunch && (
-              <div className="grid grid-cols-2 gap-4 ml-7">
-                <div className="form-group">
-                  <label>Desde</label>
-                  <input type="number" min="0" max="23" value={scheduleForm.lunchStart}
-                    onChange={e => setScheduleForm({ ...scheduleForm, lunchStart: parseInt(e.target.value) || 0 })} />
-                </div>
-                <div className="form-group">
-                  <label>Hasta</label>
-                  <input type="number" min="0" max="23" value={scheduleForm.lunchEnd}
-                    onChange={e => setScheduleForm({ ...scheduleForm, lunchEnd: parseInt(e.target.value) || 0 })} />
+      {/* Tab: Horario */}
+      {activeTab === 'schedule' && (
+        <div>
+          {/* Toggle Card */}
+          <div style={{ ...cardStyle, background: scheduleForm.useGlobalSchedule ? 'var(--green-bg)' : 'var(--bg-card)', borderColor: scheduleForm.useGlobalSchedule ? 'rgba(45,138,92,0.2)' : 'var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                <span style={{ ...cardIconStyle, background: scheduleForm.useGlobalSchedule ? 'rgba(45,138,92,0.15)' : 'var(--purple-bg)' }}>
+                  {scheduleForm.useGlobalSchedule ? '🌍' : '🎯'}
+                </span>
+                <div>
+                  <h3 style={{ ...cardTitleStyle, color: scheduleForm.useGlobalSchedule ? 'var(--green)' : 'var(--purple)' }}>
+                    {scheduleForm.useGlobalSchedule ? 'Usando Horario Global' : 'Horario Propio de Esta Sede'}
+                  </h3>
+                  <p style={cardSubtitleStyle}>
+                    {scheduleForm.useGlobalSchedule
+                      ? 'Esta sede sigue el horario configurado en Configuración del Sistema'
+                      : 'Horario personalizado para esta sede específica'}
+                  </p>
                 </div>
               </div>
-            )}
-
-            <button type="button" onClick={handleSaveSchedule} disabled={saving}
-              className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', justifyContent: 'center' }}>
-              <IconSave /> Guardar Horario
-            </button>
+              <button type="button" onClick={() => setScheduleForm({ ...scheduleForm, useGlobalSchedule: !scheduleForm.useGlobalSchedule })}
+                style={{
+                  width: '52px', height: '28px', borderRadius: '14px', border: 'none', cursor: 'pointer', position: 'relative',
+                  background: scheduleForm.useGlobalSchedule ? 'var(--green)' : 'var(--purple)', transition: 'background 0.3s', flexShrink: 0,
+                }}>
+                <span style={{
+                  position: 'absolute', top: '3px', left: scheduleForm.useGlobalSchedule ? '27px' : '3px',
+                  width: '22px', height: '22px', borderRadius: '50%', background: '#fff',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.3s',
+                }} />
+              </button>
+            </div>
           </div>
-        )}
 
-        {scheduleForm.useGlobalSchedule && (
-          <p className="text-sm text-gray-500 italic">Esta sede usa el horario global configurado en Configuración del Sistema.</p>
-        )}
-      </div>
+          {/* Horario personalizado */}
+          {!scheduleForm.useGlobalSchedule && (
+            <>
+              {/* Horas */}
+              <div style={cardStyle}>
+                <div style={cardHeaderStyle}>
+                  <span style={cardIconStyle}>⏰</span>
+                  <div>
+                    <h3 style={cardTitleStyle}>Horario de Atención</h3>
+                    <p style={cardSubtitleStyle}>Horas de apertura y cierre de esta sede</p>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem', marginTop: '1rem' }}>
+                  <div>
+                    <label style={labelStyle}>Hora de Apertura</label>
+                    <select value={scheduleForm.workingHoursStart} onChange={e => setScheduleForm({ ...scheduleForm, workingHoursStart: parseInt(e.target.value) })} style={selectStyle}>
+                      {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{formatHour(i)}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Hora de Cierre</label>
+                    <select value={scheduleForm.workingHoursEnd} onChange={e => setScheduleForm({ ...scheduleForm, workingHoursEnd: parseInt(e.target.value) })} style={selectStyle}>
+                      {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{formatHour(i)}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
 
-      <style>{`
-        .form-group label { display: block; font-size: 0.65rem; font-weight: 800; color: var(--text-3); text-transform: uppercase; margin-bottom: 0.4rem; }
-        .form-group input, .form-group textarea { width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-1); font-size: 0.95rem; color: var(--text); font-family: var(--font); resize: vertical; }
-        .form-group input:focus, .form-group textarea:focus { outline: none; border-color: var(--purple); }
-      `}</style>
+              {/* Días */}
+              <div style={cardStyle}>
+                <div style={cardHeaderStyle}>
+                  <span style={cardIconStyle}>📅</span>
+                  <div>
+                    <h3 style={cardTitleStyle}>Días de Atención</h3>
+                    <p style={cardSubtitleStyle}>{activeDaysCount} día{activeDaysCount !== 1 ? 's' : ''} seleccionado{activeDaysCount !== 1 ? 's' : ''}</p>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+                  {DIAS.map(d => {
+                    const isActive = scheduleForm.workingDays.split(',').map(Number).includes(d.num);
+                    return (
+                      <button key={d.num} type="button" onClick={() => toggleDay(d.num)}
+                        style={{
+                          width: '64px', height: '64px', borderRadius: '14px', border: isActive ? '2px solid var(--green)' : '2px solid var(--border)',
+                          background: isActive ? 'var(--green-bg)' : 'var(--bg-1)', cursor: 'pointer', transition: 'all 0.2s',
+                          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.2rem',
+                        }}>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 800, color: isActive ? 'var(--green)' : 'var(--text-3)' }}>{d.short}</span>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isActive ? 'var(--green)' : 'var(--text-3)', opacity: isActive ? 1 : 0.3 }} />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Almuerzo */}
+              <div style={cardStyle}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <span style={cardIconStyle}>🍽️</span>
+                    <div>
+                      <h3 style={cardTitleStyle}>Parada de Almuerzo</h3>
+                      <p style={cardSubtitleStyle}>¿La sede cierra durante el almuerzo?</p>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setScheduleForm({ ...scheduleForm, closedForLunch: !scheduleForm.closedForLunch })}
+                    style={{
+                      width: '52px', height: '28px', borderRadius: '14px', border: 'none', cursor: 'pointer', position: 'relative',
+                      background: scheduleForm.closedForLunch ? 'var(--green)' : 'var(--border)', transition: 'background 0.3s',
+                    }}>
+                    <span style={{
+                      position: 'absolute', top: '3px', left: scheduleForm.closedForLunch ? '27px' : '3px',
+                      width: '22px', height: '22px', borderRadius: '50%', background: '#fff',
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.3s',
+                    }} />
+                  </button>
+                </div>
+                {scheduleForm.closedForLunch && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+                    <div>
+                      <label style={labelStyle}>Desde</label>
+                      <select value={scheduleForm.lunchStart} onChange={e => setScheduleForm({ ...scheduleForm, lunchStart: parseInt(e.target.value) })} style={selectStyle}>
+                        {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{formatHour(i)}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Hasta</label>
+                      <select value={scheduleForm.lunchEnd} onChange={e => setScheduleForm({ ...scheduleForm, lunchEnd: parseInt(e.target.value) })} style={selectStyle}>
+                        {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{formatHour(i)}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón Guardar */}
+              <button type="button" onClick={handleSaveSchedule} disabled={saving}
+                style={{
+                  width: '100%', padding: '1rem', borderRadius: 'var(--r-lg)', border: 'none',
+                  background: saving ? 'var(--text-3)' : 'var(--purple)', color: '#fff',
+                  fontSize: '0.95rem', fontWeight: 800, cursor: saving ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem',
+                  boxShadow: '0 4px 15px rgba(83, 16, 110, 0.3)',
+                }}>
+                <IconSave />
+                {saving ? 'Guardando...' : 'Guardar Horario'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+const cardStyle = {
+  background: 'var(--bg-card)', borderRadius: 'var(--r-lg)', padding: '1.5rem',
+  border: '1px solid var(--border)', boxShadow: 'var(--glow)', marginBottom: '1rem',
+};
+
+const cardHeaderStyle = {
+  display: 'flex', alignItems: 'center', gap: '0.8rem',
+};
+
+const cardIconStyle = {
+  width: '40px', height: '40px', borderRadius: '10px', background: 'var(--purple-bg)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0,
+};
+
+const cardTitleStyle = {
+  fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', margin: 0,
+};
+
+const cardSubtitleStyle = {
+  fontSize: '0.75rem', color: 'var(--text-3)', margin: 0,
+};
+
+const labelStyle = {
+  display: 'block', fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-3)',
+  textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.4rem',
+};
+
+const inputStyle = {
+  width: '100%', padding: '0.75rem 0.9rem', borderRadius: 'var(--r)',
+  border: '1px solid var(--border)', background: 'var(--bg-1)',
+  fontSize: '0.9rem', fontFamily: 'var(--font)', color: 'var(--text)',
+};
+
+const textareaStyle = {
+  ...inputStyle, resize: 'vertical', lineHeight: 1.5,
+};
+
+const selectStyle = {
+  width: '100%', padding: '0.75rem 0.9rem', borderRadius: 'var(--r)',
+  border: '1px solid var(--border)', background: 'var(--bg-1)',
+  fontSize: '0.9rem', fontFamily: 'var(--font)', color: 'var(--text)',
+  cursor: 'pointer', appearance: 'none',
+  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b808c' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center',
+};
+
+const tabStyle = (active) => ({
+  padding: '0.75rem 1.2rem', borderRadius: 'var(--r)', border: active ? '2px solid var(--purple)' : '1px solid var(--border)',
+  background: active ? 'var(--purple-bg)' : 'var(--bg-2)', color: active ? 'var(--purple)' : 'var(--text-3)',
+  fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s',
+});

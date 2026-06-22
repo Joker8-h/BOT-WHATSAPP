@@ -4,12 +4,35 @@ import { getSettings, updateSettings } from '../api';
 import { IconSave, IconArrowLeft } from '../components/Icons';
 import Swal from 'sweetalert2';
 
-const DIAS = ['Dom', 'Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab'];
+const DIAS = [
+  { num: 0, short: 'Dom', full: 'Domingo' },
+  { num: 1, short: 'Lun', full: 'Lunes' },
+  { num: 2, short: 'Mar', full: 'Martes' },
+  { num: 3, short: 'Mie', full: 'Miércoles' },
+  { num: 4, short: 'Jue', full: 'Jueves' },
+  { num: 5, short: 'Vie', full: 'Viernes' },
+  { num: 6, short: 'Sab', full: 'Sábado' },
+];
+
 const FESTIVOS_2026 = [
   '01-01','01-06','03-23','04-02','04-03','05-01','05-18',
   '06-08','06-15','06-29','07-20','08-07','08-17',
   '10-12','11-02','11-16','12-08','12-25'
 ];
+
+const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+function formatHour(h) {
+  if (h === 0 || h === 24) return '12:00 AM';
+  if (h === 12) return '12:00 PM';
+  if (h < 12) return `${h}:00 AM`;
+  return `${h - 12}:00 PM`;
+}
+
+function parseHolidayDate(str) {
+  const [m, d] = str.split('-').map(Number);
+  return { month: MONTH_NAMES[m - 1], day: d, full: `${d} de ${MONTH_NAMES[m - 1]}` };
+}
 
 export default function SystemSettings() {
   const navigate = useNavigate();
@@ -52,9 +75,7 @@ export default function SystemSettings() {
   const toggleDay = (dayNum) => {
     const days = form.workingDays.split(',').map(Number);
     if (days.includes(dayNum)) {
-      if (days.length > 1) {
-        setForm({ ...form, workingDays: days.filter(d => d !== dayNum).join(',') });
-      }
+      if (days.length > 1) setForm({ ...form, workingDays: days.filter(d => d !== dayNum).join(',') });
     } else {
       setForm({ ...form, workingDays: [...days, dayNum].sort().join(',') });
     }
@@ -92,115 +113,285 @@ export default function SystemSettings() {
     }
   };
 
-  if (loading) return <div className="p-8 text-center text-gray-500">Cargando...</div>;
+  const activeDaysCount = form.workingDays.split(',').length;
+  const schedulePreview = `${DIAS.filter(d => form.workingDays.split(',').map(Number).includes(d.num)).map(d => d.short).join(', ')} · ${formatHour(form.workingHoursStart)} - ${formatHour(form.workingHoursEnd)}`;
+
+  if (loading) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '60vh', color: 'var(--text-3)' }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>⏳</div>
+        <p>Cargando configuración...</p>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="max-w-2xl mx-auto p-6">
-      <div className="flex items-center gap-3 mb-6">
-        <button onClick={() => navigate(-1)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-600"><IconArrowLeft className="w-5 h-5" /></button>
-        <h1 className="text-2xl font-bold text-gray-800">Horario Global del Sistema</h1>
+    <div style={{ maxWidth: '780px', margin: '0 auto', padding: '2rem 1.5rem' }}>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '2rem' }}>
+        <button onClick={() => navigate(-1)} style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 'var(--r)', padding: '0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-2)' }}>
+          <IconArrowLeft />
+        </button>
+        <div>
+          <h1 className="page-title" style={{ marginBottom: 0 }}>Horario del Sistema</h1>
+          <p className="page-subtitle" style={{ marginBottom: 0 }}>Configuración global de atención para todas las sedes</p>
+        </div>
       </div>
 
-      <form onSubmit={handleSave} className="space-y-6 bg-white rounded-xl shadow-sm border p-6">
+      {/* Preview Card */}
+      <div style={{ background: 'linear-gradient(135deg, var(--purple) 0%, var(--purple-d) 100%)', borderRadius: 'var(--r-lg)', padding: '1.5rem 2rem', marginBottom: '1.5rem', color: '#fff' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+          <div style={{ width: '56px', height: '56px', background: 'rgba(255,255,255,0.15)', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.6rem' }}>
+            🕐
+          </div>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '1.5px', opacity: 0.7, marginBottom: '0.3rem', fontWeight: 600 }}>Horario Activo</p>
+            <p style={{ fontSize: '1.35rem', fontWeight: 800, letterSpacing: '0.3px' }}>{schedulePreview}</p>
+            <p style={{ fontSize: '0.8rem', opacity: 0.8, marginTop: '0.3rem' }}>
+              {activeDaysCount} días · {formatHour(form.workingHoursStart)} a {formatHour(form.workingHoursEnd)}
+              {form.closedForLunch && ` · Almuerzo ${formatHour(form.lunchStart)}-${formatHour(form.lunchEnd)}`}
+            </p>
+          </div>
+        </div>
+      </div>
 
-        {/* Horario */}
-        <div>
-          <h3 className="font-semibold text-gray-700 mb-3">Horario de Atención</h3>
-          <div className="grid grid-cols-2 gap-4">
+      <form onSubmit={handleSave}>
+        {/* Sección: Horario */}
+        <div style={cardStyle}>
+          <div style={cardHeaderStyle}>
+            <span style={cardIconStyle}>⏰</span>
             <div>
-              <label className="text-sm text-gray-500">Hora inicio</label>
-              <input type="number" min="0" max="23" value={form.workingHoursStart}
-                onChange={e => setForm({ ...form, workingHoursStart: parseInt(e.target.value) || 0 })}
-                className="w-full border rounded-lg px-3 py-2" />
+              <h3 style={cardTitleStyle}>Horario de Atención</h3>
+              <p style={cardSubtitleStyle}>Define las horas de apertura y cierre</p>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem', marginTop: '1rem' }}>
+            <div>
+              <label style={labelStyle}>Hora de Apertura</label>
+              <div style={timeInputWrapperStyle}>
+                <select value={form.workingHoursStart} onChange={e => setForm({ ...form, workingHoursStart: parseInt(e.target.value) })} style={timeSelectStyle}>
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={i}>{formatHour(i)}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div>
-              <label className="text-sm text-gray-500">Hora fin</label>
-              <input type="number" min="0" max="23" value={form.workingHoursEnd}
-                onChange={e => setForm({ ...form, workingHoursEnd: parseInt(e.target.value) || 0 })}
-                className="w-full border rounded-lg px-3 py-2" />
+              <label style={labelStyle}>Hora de Cierre</label>
+              <div style={timeInputWrapperStyle}>
+                <select value={form.workingHoursEnd} onChange={e => setForm({ ...form, workingHoursEnd: parseInt(e.target.value) })} style={timeSelectStyle}>
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={i}>{formatHour(i)}</option>
+                  ))}
+                </select>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Días */}
-        <div>
-          <h3 className="font-semibold text-gray-700 mb-3">Días de Atención</h3>
-          <div className="flex gap-2">
-            {[0,1,2,3,4,5,6].map(d => (
-              <button key={d} type="button" onClick={() => toggleDay(d)}
-                className={`w-12 h-10 rounded-lg text-sm font-medium transition-colors ${
-                  form.workingDays.split(',').map(Number).includes(d)
-                    ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}>{DIAS[d]}</button>
-            ))}
+        {/* Sección: Días */}
+        <div style={cardStyle}>
+          <div style={cardHeaderStyle}>
+            <span style={cardIconStyle}>📅</span>
+            <div>
+              <h3 style={cardTitleStyle}>Días de Atención</h3>
+              <p style={cardSubtitleStyle}>Selecciona los días que la tienda está abierta</p>
+            </div>
           </div>
+
+          <div style={{ display: 'flex', gap: '0.6rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+            {DIAS.map(d => {
+              const isActive = form.workingDays.split(',').map(Number).includes(d.num);
+              return (
+                <button key={d.num} type="button" onClick={() => toggleDay(d.num)}
+                  style={{
+                    width: '72px', height: '72px', borderRadius: '14px', border: isActive ? '2px solid var(--green)' : '2px solid var(--border)',
+                    background: isActive ? 'var(--green-bg)' : 'var(--bg-1)',
+                    cursor: 'pointer', transition: 'all 0.2s', display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center', gap: '0.2rem'
+                  }}>
+                  <span style={{ fontSize: '1rem', fontWeight: 800, color: isActive ? 'var(--green)' : 'var(--text-3)' }}>{d.short}</span>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: isActive ? 'var(--green)' : 'var(--text-3)', opacity: isActive ? 1 : 0.3 }} />
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: '0.75rem', color: 'var(--text-3)', marginTop: '0.75rem' }}>
+            {activeDaysCount} día{activeDaysCount !== 1 ? 's' : ''} seleccionado{activeDaysCount !== 1 ? 's' : ''}
+          </p>
         </div>
 
-        {/* Almuerzo */}
-        <div>
-          <div className="flex items-center gap-3 mb-3">
-            <input type="checkbox" checked={form.closedForLunch}
-              onChange={e => setForm({ ...form, closedForLunch: e.target.checked })}
-              className="w-4 h-4 text-blue-600 rounded" />
-            <h3 className="font-semibold text-gray-700">Cerrado en horario de almuerzo</h3>
-          </div>
-          {form.closedForLunch && (
-            <div className="grid grid-cols-2 gap-4 ml-7">
+        {/* Sección: Almuerzo */}
+        <div style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <span style={cardIconStyle}>🍽️</span>
               <div>
-                <label className="text-sm text-gray-500">Almuerzo desde</label>
-                <input type="number" min="0" max="23" value={form.lunchStart}
-                  onChange={e => setForm({ ...form, lunchStart: parseInt(e.target.value) || 0 })}
-                  className="w-full border rounded-lg px-3 py-2" />
+                <h3 style={cardTitleStyle}>Parada de Almuerzo</h3>
+                <p style={cardSubtitleStyle}>¿La tienda cierra durante el almuerzo?</p>
+              </div>
+            </div>
+            <button type="button" onClick={() => setForm({ ...form, closedForLunch: !form.closedForLunch })}
+              style={{
+                width: '52px', height: '28px', borderRadius: '14px', border: 'none', cursor: 'pointer', position: 'relative',
+                background: form.closedForLunch ? 'var(--green)' : 'var(--border)', transition: 'background 0.3s',
+              }}>
+              <span style={{
+                position: 'absolute', top: '3px', left: form.closedForLunch ? '27px' : '3px',
+                width: '22px', height: '22px', borderRadius: '50%', background: '#fff',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.3s',
+              }} />
+            </button>
+          </div>
+
+          {form.closedForLunch && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.2rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+              <div>
+                <label style={labelStyle}>Desde</label>
+                <div style={timeInputWrapperStyle}>
+                  <select value={form.lunchStart} onChange={e => setForm({ ...form, lunchStart: parseInt(e.target.value) })} style={timeSelectStyle}>
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <option key={i} value={i}>{formatHour(i)}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
-                <label className="text-sm text-gray-500">Almuerzo hasta</label>
-                <input type="number" min="0" max="23" value={form.lunchEnd}
-                  onChange={e => setForm({ ...form, lunchEnd: parseInt(e.target.value) || 0 })}
-                  className="w-full border rounded-lg px-3 py-2" />
+                <label style={labelStyle}>Hasta</label>
+                <div style={timeInputWrapperStyle}>
+                  <select value={form.lunchEnd} onChange={e => setForm({ ...form, lunchEnd: parseInt(e.target.value) })} style={timeSelectStyle}>
+                    {Array.from({ length: 24 }, (_, i) => (
+                      <option key={i} value={i}>{formatHour(i)}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* Festivos */}
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-gray-700">Festivos ({holidaysList.length})</h3>
-            <button type="button" onClick={loadPresetHolidays}
-              className="text-xs text-blue-600 hover:underline">Cargar Colombia 2026</button>
+        {/* Sección: Festivos */}
+        <div style={cardStyle}>
+          <div style={cardHeaderStyle}>
+            <span style={cardIconStyle}>🎉</span>
+            <div style={{ flex: 1 }}>
+              <h3 style={cardTitleStyle}>Días Festivos</h3>
+              <p style={cardSubtitleStyle}>Días en los que la tienda está cerrada</p>
+            </div>
+            <span style={{ background: 'var(--red-bg)', color: 'var(--red)', padding: '0.3rem 0.7rem', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700 }}>
+              {holidaysList.length} festivo{holidaysList.length !== 1 ? 's' : ''}
+            </span>
           </div>
-          <div className="flex gap-2 mb-3">
-            <input type="text" placeholder="MM-DD" value={newHoliday}
-              onChange={e => setNewHoliday(e.target.value)}
-              className="flex-1 border rounded-lg px-3 py-2 text-sm" maxLength="5" />
-            <button type="button" onClick={addHoliday}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">Agregar</button>
-          </div>
-          <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-            {holidaysList.sort().map(h => (
-              <span key={h} className="bg-red-50 text-red-700 px-2 py-1 rounded text-xs flex items-center gap-1">
-                {h}
-                <button type="button" onClick={() => removeHoliday(h)} className="text-red-400 hover:text-red-600">×</button>
-              </span>
-            ))}
+
+          <div style={{ marginTop: '1rem' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <input type="text" placeholder="MM-DD (ej: 01-01)" value={newHoliday}
+                onChange={e => setNewHoliday(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addHoliday())}
+                style={{ flex: 1, padding: '0.65rem 0.9rem', borderRadius: 'var(--r)', border: '1px solid var(--border)', background: 'var(--bg-1)', fontSize: '0.85rem', fontFamily: 'var(--font)', color: 'var(--text)' }} />
+              <button type="button" onClick={addHoliday}
+                style={{ padding: '0.65rem 1.2rem', borderRadius: 'var(--r)', border: 'none', background: 'var(--purple)', color: '#fff', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                + Agregar
+              </button>
+              <button type="button" onClick={loadPresetHolidays}
+                style={{ padding: '0.65rem 1.2rem', borderRadius: 'var(--r)', border: '1px solid var(--border)', background: 'var(--bg-2)', color: 'var(--purple)', fontSize: '0.8rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                🇨🇴 Colombia 2026
+              </button>
+            </div>
+
+            {holidaysList.length > 0 ? (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', maxHeight: '140px', overflowY: 'auto', padding: '0.5rem', background: 'var(--bg-1)', borderRadius: 'var(--r)' }}>
+                {holidaysList.sort().map(h => {
+                  const { full } = parseHolidayDate(h);
+                  return (
+                    <span key={h} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', background: 'var(--bg-2)', border: '1px solid var(--border)', padding: '0.35rem 0.6rem', borderRadius: '8px', fontSize: '0.75rem', color: 'var(--text)' }}>
+                      <span style={{ fontWeight: 600 }}>{full}</span>
+                      <button type="button" onClick={() => removeHoliday(h)}
+                        style={{ background: 'none', border: 'none', color: 'var(--red)', cursor: 'pointer', fontSize: '1rem', padding: 0, lineHeight: 1, fontWeight: 700 }}>×</button>
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '1.5rem', background: 'var(--bg-1)', borderRadius: 'var(--r)', color: 'var(--text-3)', fontSize: '0.85rem' }}>
+                No hay festivos configurados. Haz clic en "Colombia 2026" para cargar los oficiales.
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Mensaje */}
-        <div>
-          <h3 className="font-semibold text-gray-700 mb-2">Mensaje Fuera de Horario</h3>
+        {/* Sección: Mensaje */}
+        <div style={cardStyle}>
+          <div style={cardHeaderStyle}>
+            <span style={cardIconStyle}>💬</span>
+            <div>
+              <h3 style={cardTitleStyle}>Mensaje Fuera de Horario</h3>
+              <p style={cardSubtitleStyle}>Se envía automáticamente cuando escriben fuera del horario laboral</p>
+            </div>
+          </div>
           <textarea value={form.autoReplyMessage}
             onChange={e => setForm({ ...form, autoReplyMessage: e.target.value })}
-            className="w-full border rounded-lg px-3 py-2 text-sm" rows="3"
-            placeholder="Hola, estamos fuera de horario. Te atenderemos mañana..." />
+            style={{ width: '100%', padding: '0.85rem', borderRadius: 'var(--r)', border: '1px solid var(--border)', background: 'var(--bg-1)', fontSize: '0.9rem', fontFamily: 'var(--font)', color: 'var(--text)', resize: 'vertical', minHeight: '80px', marginTop: '1rem', lineHeight: 1.5 }}
+            placeholder="Hola, estamos fuera de horario. Nuestro horario es Lun-Vie 9AM-6PM. Escríbenos y te atenderemos pronto 😊" />
         </div>
 
-        <button type="submit" disabled={saving}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center gap-2">
-          <IconSave className="w-5 h-5" />
-          {saving ? 'Guardando...' : 'Guardar Configuración'}
-        </button>
+        {/* Botón Guardar */}
+        <div style={{ position: 'sticky', bottom: '1.5rem', marginTop: '1rem', zIndex: 10 }}>
+          <button type="submit" disabled={saving}
+            style={{
+              width: '100%', padding: '1rem', borderRadius: 'var(--r-lg)', border: 'none',
+              background: saving ? 'var(--text-3)' : 'var(--purple)', color: '#fff',
+              fontSize: '0.95rem', fontWeight: 800, cursor: saving ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem',
+              boxShadow: '0 4px 15px rgba(83, 16, 110, 0.3)',
+              transition: 'all 0.2s',
+            }}>
+            <IconSave />
+            {saving ? 'Guardando...' : 'Guardar Configuración'}
+          </button>
+        </div>
       </form>
     </div>
   );
 }
+
+const cardStyle = {
+  background: 'var(--bg-card)', borderRadius: 'var(--r-lg)', padding: '1.5rem',
+  border: '1px solid var(--border)', boxShadow: 'var(--glow)', marginBottom: '1rem',
+};
+
+const cardHeaderStyle = {
+  display: 'flex', alignItems: 'center', gap: '0.8rem',
+};
+
+const cardIconStyle = {
+  width: '40px', height: '40px', borderRadius: '10px', background: 'var(--purple-bg)',
+  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.1rem', flexShrink: 0,
+};
+
+const cardTitleStyle = {
+  fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)', margin: 0,
+};
+
+const cardSubtitleStyle = {
+  fontSize: '0.75rem', color: 'var(--text-3)', margin: 0,
+};
+
+const labelStyle = {
+  display: 'block', fontSize: '0.65rem', fontWeight: 800, color: 'var(--text-3)',
+  textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '0.4rem',
+};
+
+const timeInputWrapperStyle = {
+  position: 'relative',
+};
+
+const timeSelectStyle = {
+  width: '100%', padding: '0.75rem 0.9rem', borderRadius: 'var(--r)',
+  border: '1px solid var(--border)', background: 'var(--bg-1)',
+  fontSize: '0.95rem', fontFamily: 'var(--font)', color: 'var(--text)',
+  cursor: 'pointer', appearance: 'none',
+  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238b808c' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.75rem center',
+};
