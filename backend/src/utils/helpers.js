@@ -57,63 +57,73 @@ function truncate(text, maxLength = 200) {
 }
 
 /**
- * Lista de festivos de Colombia 2026 (Formato MM-DD)
+ * Verifica si estamos dentro del horario laboral
+ * @param {number|null} branchId - Si se provee, verifica horario de esa sede
  */
-const COLOMBIAN_HOLIDAYS_2026 = [
-  '01-01', // Año Nuevo
-  '01-06', // Reyes Magos
-  '03-23', // San José
-  '04-02', // Jueves Santo
-  '04-03', // Viernes Santo
-  '05-01', // Día del Trabajo
-  '05-18', // Ascensión del Señor
-  '06-08', // Corpus Christi
-  '06-15', // Sagrado Corazón
-  '06-29', // San Pedro y San Pablo
-  '07-20', // Independencia de Colombia
-  '08-07', // Batalla de Boyacá
-  '08-17', // Asunción de la Virgen
-  '10-12', // Día de la Raza
-  '11-02', // Todos los Santos
-  '11-16', // Independencia de Cartagena
-  '12-08', // Inmaculada Concepción
-  '12-25'  // Navidad
-];
+async function isWorkingHours(branchId = null) {
+  const settingsService = require('../services/settingsService');
+  let settings = settingsService.get();
 
-/**
- * Verifica si estamos dentro del horario laboral (Colombia: UTC-5)
- * Lunes a Sábado, 9:00 AM - 6:00 PM + Festivos
- */
-function isWorkingHours() {
+  // Si hay branchId, verificar si tiene horario propio
+  if (branchId) {
+    try {
+      const branchSchedule = await settingsService.getBranchSchedule(branchId);
+      if (branchSchedule && !branchSchedule.useGlobalSchedule) {
+        settings = {
+          workingHoursStart: branchSchedule.workingHoursStart ?? 9,
+          workingHoursEnd: branchSchedule.workingHoursEnd ?? 18,
+          workingDays: branchSchedule.workingDays || '1,2,3,4,5,6',
+          holidays: settings.holidays, // festivos siempre globales
+          closedForLunch: branchSchedule.closedForLunch ?? false,
+          lunchStart: branchSchedule.lunchStart,
+          lunchEnd: branchSchedule.lunchEnd,
+        };
+      }
+    } catch (e) {}
+  }
+
   const now = new Date();
-  
-  // Convertir a hora de Colombia (UTC-5)
-  const offset = now.getTimezoneOffset(); // en minutos
+  const offset = now.getTimezoneOffset();
   const colombiaTime = new Date(now.getTime() + (offset - 300) * 60 * 1000);
-  
+
   const month = String(colombiaTime.getMonth() + 1).padStart(2, '0');
   const date = String(colombiaTime.getDate()).padStart(2, '0');
   const todayMMDD = `${month}-${date}`;
 
-  // 1. Verificar si es festivo
-  if (COLOMBIAN_HOLIDAYS_2026.includes(todayMMDD)) {
+  // 1. Verificar festivos
+  let holidays = [];
+  try {
+    holidays = JSON.parse(settings.holidays || '[]');
+  } catch (e) {
+    holidays = [];
+  }
+  if (holidays.includes(todayMMDD)) {
     return { isWorking: false, reason: 'holiday' };
   }
 
-  const day = colombiaTime.getDay(); // 0: Dom, 1: Lun, ..., 6: Sab
+  const day = colombiaTime.getDay();
   const hour = colombiaTime.getHours();
-  
-  // 2. Verificar si es Domingo (0)
-  if (day === 0) {
-    return { isWorking: false, reason: 'sunday' };
+
+  // 2. Verificar días de trabajo
+  const workingDays = (settings.workingDays || '1,2,3,4,5,6').split(',').map(Number);
+  if (!workingDays.includes(day)) {
+    return { isWorking: false, reason: 'non-working-day' };
   }
 
-  // 3. Verificar Horario (9:00 AM a 6:00 PM)
-  const isBusinessHour = hour >= 9 && hour < 18;
-  if (!isBusinessHour) {
+  // 3. Verificar horario
+  const start = settings.workingHoursStart ?? 9;
+  const end = settings.workingHoursEnd ?? 18;
+  if (hour < start || hour >= end) {
     return { isWorking: false, reason: 'off-hours' };
   }
-  
+
+  // 4. Verificar almuerzo
+  if (settings.closedForLunch && settings.lunchStart != null && settings.lunchEnd != null) {
+    if (hour >= settings.lunchStart && hour < settings.lunchEnd) {
+      return { isWorking: false, reason: 'lunch-break' };
+    }
+  }
+
   return { isWorking: true, reason: null };
 }
 

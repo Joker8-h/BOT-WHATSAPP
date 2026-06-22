@@ -15,6 +15,7 @@ import BranchMap from './pages/BranchMap';
 import GlobalInventory from './pages/GlobalInventory';
 import Employees from './pages/Employees';
 import EmployeeAccess from './pages/EmployeeAccess';
+import SystemSettings from './pages/SystemSettings';
 
 /**
  * Componente para proteger rutas privadas
@@ -52,6 +53,7 @@ function AppContent() {
         <Route path="orders" element={<Orders />} />
         <Route path="employee-access" element={<EmployeeAccess />} />
         <Route path="campaigns" element={<Campaigns />} />
+        <Route path="system-settings" element={<ProtectedRoute adminOnly><SystemSettings /></ProtectedRoute>} />
         <Route path="settings" element={<Settings />} />
         
         <Route path="global-inventory" element={

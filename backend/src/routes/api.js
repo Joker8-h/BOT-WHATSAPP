@@ -111,6 +111,11 @@ api.post('/branches/:id/authorize', isAdmin, (req, res) => adminController.autho
 api.patch('/branches/:id/toggle', isAdmin, (req, res) => adminController.toggleBranchStatus(req, res));
 api.get('/branches/:id', isAdmin, (req, res) => adminController.getBranch(req, res));
 api.put('/branches/:id/settings', isAdmin, (req, res) => adminController.updateBranchSettings(req, res));
+api.put('/branches/:id/schedule', isAdmin, (req, res) => adminController.updateBranchSchedule(req, res));
+
+// ── Configuración Global del Sistema ──
+api.get('/admin/settings', isAdmin, (req, res) => adminController.getSettings(req, res));
+api.put('/admin/settings', isAdmin, (req, res) => adminController.updateSettings(req, res));
 
 // ── Gestión de WhatsApp (QR por sucursal) ──
 api.get('/whatsapp/status', checkBranchAccess, (req, res) => adminController.getWhatsAppStatus(req, res));

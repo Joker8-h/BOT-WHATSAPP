@@ -64,7 +64,7 @@ class MessageController {
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
 
       // ── 3. VERIFICAR HORARIO LABORAL ────────────────────────
-      const workingStatus = isWorkingHours();
+      const workingStatus = await isWorkingHours(branchId);
       if (!workingStatus.isWorking) {
         logger.info(`🌙 [OFF-HOURS] Mensaje recibido de ${chatId} (Razón: ${workingStatus.reason}). Guardando para mañana.`);
         

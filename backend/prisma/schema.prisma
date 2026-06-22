@@ -38,6 +38,15 @@ model Branch {
   notes           String? @db.Text         // Notas adicionales del local
   storeFrontDesc  String? @db.VarChar(300) // Descripción de fachada
 
+  // Horario de atención personalizado (null = usar global)
+  useGlobalSchedule   Boolean @default(true)
+  workingHoursStart   Int?                     // 0-23
+  workingHoursEnd     Int?                     // 0-23
+  workingDays         String? @db.VarChar(50)  // "1,2,3,4,5,6"
+  closedForLunch      Boolean @default(false)
+  lunchStart          Int?
+  lunchEnd            Int?
+
   // Notificaciones WhatsApp
   notificationGroupName String? @db.VarChar(200)
   notificationPhone     String? @db.VarChar(50) // Teléfono principal para recibir notificaciones de venta
@@ -101,6 +110,21 @@ model EmployeeAccess {
 
   @@unique([phone, branchId])
   @@index([branchId])
+}
+
+// ── Configuración Global del Sistema ──
+model SystemSettings {
+  id                  Int    @id @default(1)
+  workingHoursStart   Int    @default(9)                      // Hora inicio (0-23)
+  workingHoursEnd     Int    @default(18)                     // Hora fin (0-23)
+  workingDays         String @default("1,2,3,4,5,6") @db.VarChar(50) // 0=Dom,1=Lun,...6=Sab
+  holidays            String @db.Text                        // JSON: ["01-01","04-03",...]
+  timezone            String @default("America/Bogota") @db.VarChar(50)
+  closedForLunch      Boolean @default(false)
+  lunchStart          Int?                                  // Hora inicio almuerzo
+  lunchEnd            Int?                                  // Hora fin almuerzo
+  autoReplyMessage    String? @db.Text                      // Mensaje fuera de horario
+  updatedAt           DateTime @updatedAt
 }
 
 // ── API Keys para integraciones externas ──

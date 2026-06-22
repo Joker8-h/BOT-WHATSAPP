@@ -1098,6 +1098,66 @@ class AdminController {
       res.status(500).json({ success: false, error: error.message });
     }
   }
+
+  async getSettings(req, res) {
+    try {
+      const settings = await prisma.systemSettings.findUnique({ where: { id: 1 } });
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async updateSettings(req, res) {
+    try {
+      const { workingHoursStart, workingHoursEnd, workingDays, holidays, timezone, closedForLunch, lunchStart, lunchEnd, autoReplyMessage } = req.body;
+      const data = {};
+      if (workingHoursStart !== undefined) data.workingHoursStart = parseInt(workingHoursStart);
+      if (workingHoursEnd !== undefined) data.workingHoursEnd = parseInt(workingHoursEnd);
+      if (workingDays !== undefined) data.workingDays = workingDays;
+      if (holidays !== undefined) data.holidays = Array.isArray(holidays) ? JSON.stringify(holidays) : holidays;
+      if (timezone !== undefined) data.timezone = timezone;
+      if (closedForLunch !== undefined) data.closedForLunch = !!closedForLunch;
+      if (lunchStart !== undefined) data.lunchStart = parseInt(lunchStart);
+      if (lunchEnd !== undefined) data.lunchEnd = parseInt(lunchEnd);
+      if (autoReplyMessage !== undefined) data.autoReplyMessage = autoReplyMessage;
+
+      const settings = await prisma.systemSettings.upsert({
+        where: { id: 1 },
+        update: data,
+        create: { id: 1, ...data },
+      });
+
+      const settingsService = require('../services/settingsService');
+      await settingsService.load();
+
+      res.json({ success: true, data: settings });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async updateBranchSchedule(req, res) {
+    try {
+      const id = parseInt(req.params.id);
+      const { useGlobalSchedule, workingHoursStart, workingHoursEnd, workingDays, closedForLunch, lunchStart, lunchEnd } = req.body;
+
+      const data = {};
+      if (useGlobalSchedule !== undefined) data.useGlobalSchedule = !!useGlobalSchedule;
+      if (workingHoursStart !== undefined) data.workingHoursStart = parseInt(workingHoursStart);
+      if (workingHoursEnd !== undefined) data.workingHoursEnd = parseInt(workingHoursEnd);
+      if (workingDays !== undefined) data.workingDays = workingDays;
+      if (closedForLunch !== undefined) data.closedForLunch = !!closedForLunch;
+      if (lunchStart !== undefined) data.lunchStart = parseInt(lunchStart);
+      if (lunchEnd !== undefined) data.lunchEnd = parseInt(lunchEnd);
+
+      const branch = await prisma.branch.update({ where: { id }, data });
+
+      res.json({ success: true, data: branch });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
 }
 
 

@@ -35,7 +35,7 @@ class FollowUpService {
       return;
     }
 
-    if (!isWorkingHours().isWorking) {
+    if (!(await isWorkingHours()).isWorking) {
       logger.info('🌙 [FollowUp-SKIP] Fuera de horario laboral.');
       return;
     }
@@ -217,7 +217,7 @@ class FollowUpService {
       return;
     }
 
-    if (!isWorkingHours().isWorking) {
+    if (!(await isWorkingHours()).isWorking) {
       logger.info('🌙 [Offline-SKIP] Fuera de horario laboral.');
       return;
     }

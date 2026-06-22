@@ -158,6 +158,10 @@ async function startServer() {
       logger.warn('⚠️ No se encontró la imagen base del ticket en ./data/ticket_base.png. Saltando subida.');
     }
 
+    // 2b. Cargar configuración global del sistema
+    const settingsService = require('./src/services/settingsService');
+    await settingsService.load();
+
     // 2. Inicializar WhatsApp
     logger.info('📱 Motor WhatsApp Multi-Branch listo (se inicia bajo demanda)');
     whatsappService.onMessage(async (msg, branchId) => {

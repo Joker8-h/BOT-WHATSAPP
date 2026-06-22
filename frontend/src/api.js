@@ -152,6 +152,11 @@ export async function uploadImage(file) {
 export const getStockAlerts = (branchId = '') => api(`/api/dashboard/stock-alerts?branchId=${branchId}`);
 export const getMetrics = (branchId = '') => api(`/api/metrics?branchId=${branchId}`);
 
+// ── System Settings ──
+export const getSettings = () => api('/api/admin/settings');
+export const updateSettings = (data) => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(data) });
+export const updateBranchSchedule = (branchId, data) => api(`/api/branches/${branchId}/schedule`, { method: 'PUT', body: JSON.stringify(data) });
+
 // ── Formatters & Constants ──
 export function formatCOP(amount) {
   return new Intl.NumberFormat('es-CO', {

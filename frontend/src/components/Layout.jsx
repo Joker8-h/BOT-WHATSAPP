@@ -50,6 +50,7 @@ export default function Layout() {
     { path: '/branches/map', icon: <IconMap />, label: 'Mapa de Sedes' },
     { path: '/employees', icon: <IconEmployees />, label: 'Empleados' },
     { path: '/inventory/global', icon: <IconGlobe />, label: 'Stock Global' },
+    { path: '/system-settings', icon: <IconSettings />, label: 'Horario Global' },
   ];
 
   return (
