@@ -1056,6 +1056,48 @@ class AdminController {
       res.status(500).json({ success: false, error: error.message });
     }
   }
+
+  // ═══════════════════════════════════════
+  //  SEDES: GET branch individual + UPDATE settings
+  // ═══════════════════════════════════════
+  async getBranch(req, res) {
+    try {
+      const id = parseInt(req.params.id);
+      const branch = await prisma.branch.findUnique({
+        where: { id },
+        include: {
+          _count: { select: { products: true, orders: true, employeeAccess: true } },
+        },
+      });
+      if (!branch) return res.status(404).json({ success: false, error: 'Sede no encontrada' });
+
+      res.json({ success: true, data: branch });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async updateBranchSettings(req, res) {
+    try {
+      const id = parseInt(req.params.id);
+      const { address, phone, referencePoint, notes, storeFrontDesc, city, name } = req.body;
+
+      const data = {};
+      if (address !== undefined) data.address = address;
+      if (phone !== undefined) data.phone = phone;
+      if (referencePoint !== undefined) data.referencePoint = referencePoint;
+      if (notes !== undefined) data.notes = notes;
+      if (storeFrontDesc !== undefined) data.storeFrontDesc = storeFrontDesc;
+      if (city !== undefined) data.city = city;
+      if (name !== undefined) data.name = name;
+
+      const branch = await prisma.branch.update({ where: { id }, data });
+
+      res.json({ success: true, data: branch });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
 }
 
 

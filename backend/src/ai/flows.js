@@ -134,13 +134,9 @@ function getFlowInstructions(flow) {
 
     PHYSICAL_STORE: `FLUJO ACTUAL: INFORMACIÓN DE LOCALES
 - El cliente pregunta por tiendas físicas
-- Proporciona con amabilidad las direcciones de los locales:
-
-🏬 *Popayán Cauca*: Cra 10 A #1AN-09 esquina, barrio Modelo
-🏬 *Florencia Caquetá*: CLL 18 #10-04, Local Fantasías, barrio Centro
-🏬 *Yopal Casanare*: CLL 9 #23-52, Local Fantasías, barrio Centro
-
-- IMPORTANTE: El local de Yopal solo está disponible por ahora esta semana. Si preguntan, di "estaremos por ahora esta semana, si hay cambios les avisamos"
+- Usa la información de los locales disponible en el sistema (## LOCALES FÍSICOS)
+- Proporciona los datos con amabilidad: dirección, puntos de referencia, fachada si aplica
+- IMPORTANTE: Si está Yopal en los locales, menciona que está disponible solo por ahora esta semana y que avisamos si hay cambios
 - Luego de informar, pregúntale si necesita algo más o si quiere ver productos`,
 
     ESCALATION: `FLUJO ACTUAL: ESCALAMIENTO A HUMANO

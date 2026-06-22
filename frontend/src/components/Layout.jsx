@@ -48,6 +48,7 @@ export default function Layout() {
   const adminItems = [
     { path: '/branches/management', icon: <IconBranches />, label: 'Gestión de Sedes' },
     { path: '/branches/map', icon: <IconMap />, label: 'Mapa de Sedes' },
+    { path: '/employees', icon: <IconEmployees />, label: 'Empleados' },
     { path: '/inventory/global', icon: <IconGlobe />, label: 'Stock Global' },
   ];
 

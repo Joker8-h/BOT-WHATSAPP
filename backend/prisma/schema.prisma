@@ -33,6 +33,11 @@ model Branch {
   wompiPrivateKey    String?   @db.Text
   wompiIntegritySecret String? @db.Text
   
+  // Info del local físico
+  referencePoint  String? @db.VarChar(300) // Punto de referencia para llegar
+  notes           String? @db.Text         // Notas adicionales del local
+  storeFrontDesc  String? @db.VarChar(300) // Descripción de fachada
+
   // Notificaciones WhatsApp
   notificationGroupName String? @db.VarChar(200)
   notificationPhone     String? @db.VarChar(50) // Teléfono principal para recibir notificaciones de venta
@@ -84,8 +89,10 @@ model EmployeeAccess {
   id              Int       @id @default(autoincrement())
   phone           String    @db.VarChar(50)
   name            String?   @db.VarChar(100)
+  role            String?   @db.VarChar(100)  // Cargo: Encargada, Asesora, Directora, etc.
+  description     String?   @db.Text          // Descripción de funciones
 
-  // Link a la sucursal
+  // Link a la sucursal (null = nivel nacional)
   branchId        Int
   branch          Branch    @relation(fields: [branchId], references: [id])
 

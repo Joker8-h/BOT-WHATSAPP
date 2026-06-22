@@ -166,13 +166,21 @@ export default function BranchManagement() {
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.7rem', color: 'var(--text-3)' }}>
                 <span>ID: {b.id} · {b._count?.products || 0} Productos</span>
-                <button 
-                  className="btn-secondary" 
-                  style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
-                  onClick={() => openAudit(b)}
-                >
-                  <IconClipboard /> Ver Auditoría
-                </button>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                  <a href={`/branches/settings/${b.id}`} 
+                    className="btn-secondary" 
+                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '0.4rem', textDecoration: 'none' }}
+                  >
+                    <IconSettings /> Configurar
+                  </a>
+                  <button 
+                    className="btn-secondary" 
+                    style={{ padding: '0.3rem 0.6rem', fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                    onClick={() => openAudit(b)}
+                  >
+                    <IconClipboard /> Auditoría
+                  </button>
+                </div>
               </div>
             </div>
           ))}

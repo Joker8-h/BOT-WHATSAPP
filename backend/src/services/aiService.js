@@ -115,6 +115,14 @@ class AIService {
         select: { shippingAddress: true, shippingCity: true }
       }) : null;
 
+      const allBranches = await prisma.branch.findMany({
+        where: { isAuthorized: true, isActive: true },
+        select: {
+          id: true, name: true, city: true, address: true,
+          referencePoint: true, notes: true, storeFrontDesc: true,
+        },
+      });
+
       const systemPrompt = buildSystemPrompt(
         {
           name: contact?.name,
@@ -126,7 +134,8 @@ class AIService {
           lastOrderCity: lastOrder?.shippingCity
         },
         products,
-        currentBranch || closestBranch || {}
+        currentBranch || closestBranch || {},
+        allBranches
       );
 
       const flowInstructions = getFlowInstructions(flow);

@@ -67,6 +67,11 @@ export const getPendingBranches = () => api('/api/branches/pending');
 export const authorizeBranch = (id) => api(`/api/branches/${id}/authorize`, { method: 'POST' });
 export const setupNewBranch = (data) => api('/api/branches/setup', { method: 'POST', body: JSON.stringify(data) });
 export const toggleBranchStatus = (id) => api(`/api/branches/${id}/toggle`, { method: 'PATCH' });
+export const getBranch = (id) => api(`/api/branches/${id}`);
+export const updateBranchSettings = (id, data) => api(`/api/branches/${id}/settings`, {
+  method: 'PUT',
+  body: JSON.stringify(data),
+});
 
 // ── WhatsApp (Per-branch) ──
 export const getWhatsAppStatus = () => api('/api/whatsapp/status');
@@ -129,6 +134,12 @@ export const executeCampaign = (id) => api(`/api/admin/campaigns/${id}/execute`,
 export const getEmployees = () => api('/api/employees/access');
 export const addEmployee = (data) => api('/api/employees/access', { method: 'POST', body: JSON.stringify(data) });
 export const deleteEmployee = (id) => api(`/api/employees/access/${id}`, { method: 'DELETE' });
+
+// ── CRUD Empleados (Admin) ──
+export const getAllEmployees = (branchId = '') => api(`/api/employees?branchId=${branchId}`);
+export const createEmployee = (data) => api('/api/employees', { method: 'POST', body: JSON.stringify(data) });
+export const updateEmployee = (id, data) => api(`/api/employees/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteEmployeePermanent = (id) => api(`/api/employees/${id}`, { method: 'DELETE' });
 
 // ── Carga de Imágenes a Cloudinary ──
 export async function uploadImage(file) {

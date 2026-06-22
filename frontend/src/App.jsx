@@ -10,8 +10,10 @@ import Orders from './pages/Orders';
 import Campaigns from './pages/Campaigns';
 import Settings from './pages/Settings';
 import BranchManagement from './pages/BranchManagement';
+import BranchSettings from './pages/BranchSettings';
 import BranchMap from './pages/BranchMap';
 import GlobalInventory from './pages/GlobalInventory';
+import Employees from './pages/Employees';
 import EmployeeAccess from './pages/EmployeeAccess';
 
 /**
@@ -41,7 +43,9 @@ function AppContent() {
         <Route index element={<Dashboard />} />
         <Route path="products" element={<Products />} />
         <Route path="branches/management" element={<ProtectedRoute adminOnly><BranchManagement /></ProtectedRoute>} />
+        <Route path="branches/settings/:id" element={<ProtectedRoute adminOnly><BranchSettings /></ProtectedRoute>} />
         <Route path="branches/map" element={<ProtectedRoute adminOnly><BranchMap /></ProtectedRoute>} />
+        <Route path="employees" element={<ProtectedRoute adminOnly><Employees /></ProtectedRoute>} />
         <Route path="inventory/global" element={<ProtectedRoute adminOnly><GlobalInventory /></ProtectedRoute>} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="conversations" element={<Conversations />} />

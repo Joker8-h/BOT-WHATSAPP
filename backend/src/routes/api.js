@@ -10,6 +10,7 @@ const authController = require('../controllers/authController');
 const paymentController = require('../controllers/paymentController');
 const wompiController = require('../controllers/wompiController');
 const metricsController = require('../controllers/metricsController');
+const employeeController = require('../controllers/employeeController');
 const { authenticateToken, isAdmin, checkBranchAccess } = require('../middleware/auth');
 
 const router = express.Router();
@@ -108,6 +109,8 @@ api.get('/branches/pending', isAdmin, (req, res) => adminController.getPendingBr
 api.post('/branches/setup', isAdmin, (req, res) => adminController.setupNewBranch(req, res));
 api.post('/branches/:id/authorize', isAdmin, (req, res) => adminController.authorizeBranch(req, res));
 api.patch('/branches/:id/toggle', isAdmin, (req, res) => adminController.toggleBranchStatus(req, res));
+api.get('/branches/:id', isAdmin, (req, res) => adminController.getBranch(req, res));
+api.put('/branches/:id/settings', isAdmin, (req, res) => adminController.updateBranchSettings(req, res));
 
 // ── Gestión de WhatsApp (QR por sucursal) ──
 api.get('/whatsapp/status', checkBranchAccess, (req, res) => adminController.getWhatsAppStatus(req, res));
@@ -154,6 +157,12 @@ api.post('/admin/whatsapp/send', (req, res) => adminController.sendManualMessage
 
 // ── Gestión de Empleados Autorizados ──
 api.use('/employees/access', require('./employeeRoutes'));
+
+// ── CRUD Empleados (Admin) ──
+api.get('/employees', isAdmin, (req, res) => employeeController.list(req, res));
+api.post('/employees', isAdmin, (req, res) => employeeController.create(req, res));
+api.put('/employees/:id', isAdmin, (req, res) => employeeController.update(req, res));
+api.delete('/employees/:id', isAdmin, (req, res) => employeeController.remove(req, res));
 
 // ── Carga de Imágenes a Cloudinary ──
 api.use('/upload', require('./uploadRoutes'));

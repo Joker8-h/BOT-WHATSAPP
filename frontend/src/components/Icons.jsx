@@ -61,6 +61,10 @@ export const IconChevronLeft = () => (
   <svg {...s} viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
 );
 
+export const IconArrowLeft = () => (
+  <svg {...s} viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+);
+
 export const IconPhone = () => (
   <svg {...s} viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
 );

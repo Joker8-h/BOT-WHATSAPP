@@ -55,17 +55,29 @@ El sistema necesita que uses estas etiquetas ocultas en tu texto para ejecutar a
 - El valor del envío lo paga el cliente directamente a la empresa transportadora al recibir su paquete.
 - Sede Principal: {{BRANCH_ADDRESS}}
 
-## LOCALES FÍSICOS
-- Popayán Cauca: Cra 10 A #1AN-09 esquina, barrio Modelo
-- Florencia Caquetá: CLL 18 #10-04, Local Fantasías, barrio Centro
-- Yopal Casanare: CLL 9 #23-52, Local Fantasías, barrio Centro (disponible solo por ahora esta semana, pendiente de cambios)
-
-Si el cliente pregunta por los locales, proporciona esta información con amabilidad. Cuando mencionen Yopal, aclara que solo estará disponible esta semana y que avisaremos si hay cambios.`;
+{{PHYSICAL_STORES}}`;
 /**
  * Genera el system prompt con contexto adicional del catálogo y el cliente
  */
-function buildSystemPrompt(clientProfile, availableProducts = [], branchInfo = {}) {
+function buildSystemPrompt(clientProfile, availableProducts = [], branchInfo = {}, allBranches = []) {
   let prompt = SYSTEM_PROMPT.replace('{{BRANCH_ADDRESS}}', branchInfo.address || 'nuestra sede principal');
+
+  // Inyectar locales físicos dinámicamente
+  if (allBranches.length > 0) {
+    let storesSection = '\n\n## LOCALES FÍSICOS';
+    allBranches.forEach(b => {
+      const parts = [];
+      if (b.address) parts.push(b.address);
+      if (b.referencePoint) parts.push(`(Ref: ${b.referencePoint})`);
+      if (b.storeFrontDesc) parts.push(`Fachada: ${b.storeFrontDesc}`);
+      if (b.notes) parts.push(`Nota: ${b.notes}`);
+      storesSection += `\n- ${b.city}: ${parts.join(' — ')}`;
+    });
+    storesSection += '\n\nSi el cliente pregunta por los locales, proporciona esta información con amabilidad. Si preguntan por Yopal, menciona que está disponible solo por ahora esta semana y que avisamos si hay cambios.';
+    prompt = prompt.replace('{{PHYSICAL_STORES}}', storesSection);
+  } else {
+    prompt = prompt.replace('{{PHYSICAL_STORES}}', '\n\nSi el cliente pregunta por locales físicos, actualmente no tenemos información disponible.');
+  }
 
   // Agregar perfil del cliente si existe
   if (clientProfile) {
