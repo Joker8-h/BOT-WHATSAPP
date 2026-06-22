@@ -112,9 +112,7 @@ class SyncService {
         };
 
         if (existing && existing.imageUrl) {
-          // Solo verificar URLs del cloud antiguo (dwksiel3n). Las del cloud actual confiar.
-          const isOldCloud = existing.imageUrl.includes('dwksiel3n');
-          const isBroken = isOldCloud ? await isImageUrlBroken(existing.imageUrl) : false;
+          const isBroken = await isImageUrlBroken(existing.imageUrl);
           if (isBroken && row.imageBuffer) {
             logger.warn(`🔄 Re-subiendo imagen para "${existing.name}" — URL anterior no accesible`);
             productData.imageUrl = await uploadBufferToCloudinary(row.imageBuffer);
@@ -125,7 +123,6 @@ class SyncService {
             productData.imageUrl = existing.imageUrl;
           }
         } else if (row.imageBuffer) {
-          // Producto nuevo o sin imagen: subir solo ahora
           productData.imageUrl = await uploadBufferToCloudinary(row.imageBuffer);
         }
 
