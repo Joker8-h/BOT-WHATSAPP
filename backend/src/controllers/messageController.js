@@ -214,13 +214,21 @@ class MessageController {
         if (impliesContraentrega) {
           logger.warn(`⚠️ [SAFETY-NET] IA habla de contraentrega sin etiqueta — activando rescate automático. Texto: "${(aiResult.response || '').substring(0, 150)}"`);
           
-          // Extraer nombre de producto del texto de la IA (busca patrones como "- *Producto* por" o "pedido de Producto")
+          // Extraer nombre de producto del texto de la IA
           const aiFullText = aiResult.response || '';
           const productPatterns = [
+            // Patrón 1: "- *Nombre Producto* por $precio"
             /[-•]\s*\*?([^*\n$]{5,60}?)\*?\s+por\s+\$/i,
-            /pedido(?:\s+del?|\s+de\s+(?:tu|la|el))?\s+([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-]{5,60}?)(?:\s+por|\s+a|\s+en|\.|,|\n)/i,
-            /enviar(?:emos|é)?\s+(?:el\s+|la\s+)?([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-]{5,60}?)(?:\s+a|\s+por|\s+en|\.|,|\n)/i,
+            // Patrón 2: "pedido del/de Nombre Producto para/por/a/en/."
+            /pedido\s+del?\s+([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-#\.]{5,60}?)(?:\s+para|\s+por|\s+a\s|\s+en\s|\.|,|\n)/i,
+            // Patrón 3: "registrar.*pedido.*del Nombre" (orden flexible)
+            /registrar[^.]*pedido[^.]*del?\s+([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-#\.]{5,60}?)(?:\s+para|\s+por|\s+a\s|\s+en\s|\.|,|\n)/i,
+            // Patrón 4: "enviaremos/enviaré el/la Nombre para/a/por"
+            /enviar(?:emos|é|ás)?\s+(?:el\s+|la\s+)?([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-#\.]{5,60}?)(?:\s+para|\s+a\s|\s+por|\s+en\s|\.|,|\n)/i,
+            // Patrón 5: nombre con código de modelo (ej: "Vibrador Zenobia XHH-190854")
+            /([A-Za-záéíóúÁÉÍÓÚñÑ][A-Za-záéíóúÁÉÍÓÚñÑ\s]{3,40}[A-Z0-9]{2,6}[-][A-Z0-9]{2,10})/,
           ];
+
           
           let rescuedProduct = null;
           for (const pattern of productPatterns) {
