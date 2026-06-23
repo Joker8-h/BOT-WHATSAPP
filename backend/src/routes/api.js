@@ -113,6 +113,11 @@ api.get('/branches/:id', isAdmin, (req, res) => adminController.getBranch(req, r
 api.put('/branches/:id/settings', isAdmin, (req, res) => adminController.updateBranchSettings(req, res));
 api.put('/branches/:id/schedule', isAdmin, (req, res) => adminController.updateBranchSchedule(req, res));
 
+// ── Gestión de Admins (LIDs) por Sede ──
+api.get('/branches/:id/admins', isAdmin, (req, res) => adminController.getAdminLids(req, res));
+api.post('/branches/:id/admins', isAdmin, (req, res) => adminController.addAdminLid(req, res));
+api.delete('/branches/:id/admins/:lid', isAdmin, (req, res) => adminController.removeAdminLid(req, res));
+
 // ── Configuración Global del Sistema ──
 api.get('/admin/settings', isAdmin, (req, res) => adminController.getSettings(req, res));
 api.put('/admin/settings', isAdmin, (req, res) => adminController.updateSettings(req, res));

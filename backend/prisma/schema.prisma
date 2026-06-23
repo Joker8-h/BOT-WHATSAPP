@@ -50,6 +50,7 @@ model Branch {
   // Notificaciones WhatsApp
   notificationGroupName String? @db.VarChar(200)
   notificationPhone     String? @db.VarChar(50) // Teléfono principal para recibir notificaciones de venta
+  adminLids             String? @db.Text        // JSON array de LIDs de admins: ["261783138865208"]
   supportedCities       String? @db.Text // Ciudades que atiende (ej: "Bogota, Chia")
 
   createdAt       DateTime  @default(now())

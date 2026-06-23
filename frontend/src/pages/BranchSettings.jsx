@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getBranch, updateBranchSettings, updateBranchSchedule, formatDate } from '../api';
+import { getBranch, updateBranchSettings, updateBranchSchedule, getAdminLids, addAdminLid, removeAdminLid, formatDate } from '../api';
 import { IconSave, IconArrowLeft } from '../components/Icons';
 import Swal from 'sweetalert2';
 
@@ -41,8 +41,11 @@ export default function BranchSettings() {
     lunchStart: 12,
     lunchEnd: 13,
   });
+  const [adminLids, setAdminLids] = useState([]);
+  const [newAdminLid, setNewAdminLid] = useState('');
+  const [newAdminName, setNewAdminName] = useState('');
 
-  useEffect(() => { loadBranch(); }, [id]);
+  useEffect(() => { loadBranch(); loadAdminLids(); }, [id]);
 
   const loadBranch = async () => {
     setLoading(true);
@@ -69,6 +72,34 @@ export default function BranchSettings() {
       });
     }
     setLoading(false);
+  };
+
+  const loadAdminLids = async () => {
+    const res = await getAdminLids(id);
+    if (res?.success) setAdminLids(res.data || []);
+  };
+
+  const handleAddAdminLid = async () => {
+    if (!newAdminLid.trim()) return;
+    const res = await addAdminLid(id, { lid: newAdminLid.trim(), name: newAdminName.trim() || 'Admin' });
+    if (res?.success) {
+      setAdminLids(res.data);
+      setNewAdminLid('');
+      setNewAdminName('');
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Admin agregado', showConfirmButton: false, timer: 1500 });
+    } else {
+      Swal.fire('Error', res?.error || 'No se pudo agregar', 'error');
+    }
+  };
+
+  const handleRemoveAdminLid = async (lid) => {
+    const result = await Swal.fire({ title: '¿Eliminar este admin?', icon: 'warning', showCancelButton: true, confirmButtonColor: 'var(--red)', confirmButtonText: 'Eliminar' });
+    if (!result.isConfirmed) return;
+    const res = await removeAdminLid(id, lid);
+    if (res?.success) {
+      setAdminLids(res.data);
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Admin eliminado', showConfirmButton: false, timer: 1500 });
+    }
   };
 
   const handleSave = async (e) => {
@@ -130,12 +161,15 @@ export default function BranchSettings() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
         <button onClick={() => setActiveTab('info')} style={tabStyle(activeTab === 'info')}>
           🏪 Información General
         </button>
         <button onClick={() => setActiveTab('schedule')} style={tabStyle(activeTab === 'schedule')}>
           🕐 Horario de Atención
+        </button>
+        <button onClick={() => setActiveTab('admins')} style={tabStyle(activeTab === 'admins')}>
+          👑 Admins ({adminLids.length})
         </button>
       </div>
 
@@ -346,6 +380,65 @@ export default function BranchSettings() {
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {/* Tab: Admins */}
+      {activeTab === 'admins' && (
+        <div>
+          <div style={cardStyle}>
+            <div style={cardHeaderStyle}>
+              <span style={cardIconStyle}>👑</span>
+              <div>
+                <h3 style={cardTitleStyle}>Admins de esta Sede</h3>
+                <p style={cardSubtitleStyle}>WhatsApp LIDs autorizados para recibir info y hacer preguntas (nunca reciben ventas)</p>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '1rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+                <div>
+                  <label style={labelStyle}>LID de WhatsApp</label>
+                  <input type="text" value={newAdminLid} onChange={e => setNewAdminLid(e.target.value)}
+                    placeholder="Ej: 261783138865208"
+                    style={inputStyle} />
+                </div>
+                <div>
+                  <label style={labelStyle}>Nombre (opcional)</label>
+                  <input type="text" value={newAdminName} onChange={e => setNewAdminName(e.target.value)}
+                    placeholder="Ej: Andrés"
+                    style={inputStyle} />
+                </div>
+              </div>
+              <button type="button" onClick={handleAddAdminLid} disabled={!newAdminLid.trim()}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: 'var(--r)', border: 'none', background: newAdminLid.trim() ? 'var(--purple)' : 'var(--text-3)', color: '#fff', fontSize: '0.85rem', fontWeight: 700, cursor: newAdminLid.trim() ? 'pointer' : 'not-allowed' }}>
+                + Agregar Admin
+              </button>
+            </div>
+
+            <div style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+              {adminLids.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {adminLids.map((entry, idx) => (
+                    <div key={entry.lid || idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.75rem 1rem', background: 'var(--bg-1)', borderRadius: 'var(--r)', border: '1px solid var(--border)' }}>
+                      <div>
+                        <span style={{ fontWeight: 700, color: 'var(--text)', fontSize: '0.9rem' }}>{entry.name || 'Admin'}</span>
+                        <span style={{ color: 'var(--text-3)', fontSize: '0.8rem', marginLeft: '0.75rem' }}>{entry.lid}</span>
+                      </div>
+                      <button type="button" onClick={() => handleRemoveAdminLid(entry.lid)}
+                        style={{ background: 'var(--red-bg)', color: 'var(--red)', border: 'none', borderRadius: '6px', padding: '0.35rem 0.7rem', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+                        Eliminar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '1.5rem', background: 'var(--bg-1)', borderRadius: 'var(--r)', color: 'var(--text-3)', fontSize: '0.85rem' }}>
+                  No hay admins registrados. Los admins se detectan automáticamente cuando escriben al bot, o puedes agregarlos manualmente con su LID.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

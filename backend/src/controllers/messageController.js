@@ -61,16 +61,53 @@ class MessageController {
 
       // ── 1b. ¿ES EL DUEÑO/ADMIN? ─────────────────────────────
       const allBranches = await prisma.branch.findMany({
-        select: { id: true, notificationPhone: true }
+        select: { id: true, notificationPhone: true, adminLids: true }
       });
-      const matchedAdmin = allBranches.find(b => {
+
+      // Check 1: Phone match
+      let matchedAdmin = allBranches.find(b => {
         const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
         return phone && phone === cleanPhone;
       });
 
-      // DEBUG temporal - log para diagnosticar
-      if (allBranches.some(b => b.notificationPhone)) {
-        logger.info(`🔍 [DEBUG-ADMIN] cleanPhone: "${cleanPhone}" | Branches notificationPhones: ${allBranches.map(b => `${b.id}:${b.notificationPhone}`).join(', ')}`);
+      // Check 2: LID match
+      if (!matchedAdmin) {
+        matchedAdmin = allBranches.find(b => {
+          try {
+            const lids = JSON.parse(b.adminLids || '[]');
+            return lids.includes(cleanPhone);
+          } catch { return false; }
+        });
+      }
+
+      // Auto-detect: Si es @lid y no matchea, verificar si el contacto tiene phone = notificationPhone
+      if (!matchedAdmin && chatId.endsWith('@lid')) {
+        try {
+          const contact = await crmService.findOrCreateContact(chatId, branchId);
+          const contactPhone = contact?.phone?.replace(/[^0-9]/g, '');
+          matchedAdmin = allBranches.find(b => {
+            const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
+            return phone && contactPhone && phone === contactPhone;
+          });
+          if (matchedAdmin) {
+            // Guardar LID automáticamente
+            try {
+              const currentLids = JSON.parse(matchedAdmin.adminLids || '[]');
+              if (!currentLids.includes(cleanPhone)) {
+                currentLids.push(cleanPhone);
+                await prisma.branch.update({
+                  where: { id: matchedAdmin.id },
+                  data: { adminLids: JSON.stringify(currentLids) }
+                });
+                logger.info(`👑 [ADMIN-AUTO] LID ${cleanPhone} registrado automáticamente para sede ${matchedAdmin.id}`);
+              }
+            } catch (e) {
+              logger.error('Error guardando LID auto-detectado:', e);
+            }
+          }
+        } catch (e) {
+          // Silenciar errores de auto-detección
+        }
       }
 
       if (matchedAdmin) {

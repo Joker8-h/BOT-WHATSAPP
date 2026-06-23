@@ -157,6 +157,11 @@ export const getSettings = () => api('/api/admin/settings');
 export const updateSettings = (data) => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify(data) });
 export const updateBranchSchedule = (branchId, data) => api(`/api/branches/${branchId}/schedule`, { method: 'PUT', body: JSON.stringify(data) });
 
+// ── Admin LIDs ──
+export const getAdminLids = (branchId) => api(`/api/branches/${branchId}/admins`);
+export const addAdminLid = (branchId, data) => api(`/api/branches/${branchId}/admins`, { method: 'POST', body: JSON.stringify(data) });
+export const removeAdminLid = (branchId, lid) => api(`/api/branches/${branchId}/admins/${lid}`, { method: 'DELETE' });
+
 // ── Formatters & Constants ──
 export function formatCOP(amount) {
   return new Intl.NumberFormat('es-CO', {

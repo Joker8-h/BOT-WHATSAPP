@@ -1158,6 +1158,58 @@ class AdminController {
       res.status(500).json({ success: false, error: error.message });
     }
   }
+
+  async getAdminLids(req, res) {
+    try {
+      const id = parseInt(req.params.id);
+      const branch = await prisma.branch.findUnique({ where: { id }, select: { adminLids: true } });
+      const lids = JSON.parse(branch?.adminLids || '[]');
+      res.json({ success: true, data: lids });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async addAdminLid(req, res) {
+    try {
+      const id = parseInt(req.params.id);
+      const { lid, name } = req.body;
+      if (!lid) return res.status(400).json({ success: false, error: 'LID requerido' });
+
+      const branch = await prisma.branch.findUnique({ where: { id }, select: { adminLids: true } });
+      const currentLids = JSON.parse(branch?.adminLids || '[]');
+      const newEntry = { lid: lid.replace(/[^0-9]/g, ''), name: name || 'Admin' };
+
+      // Evitar duplicados
+      if (currentLids.some(e => e.lid === newEntry.lid)) {
+        return res.status(400).json({ success: false, error: 'Este LID ya está registrado' });
+      }
+
+      currentLids.push(newEntry);
+      await prisma.branch.update({ where: { id }, data: { adminLids: JSON.stringify(currentLids) } });
+
+      res.json({ success: true, data: currentLids });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async removeAdminLid(req, res) {
+    try {
+      const id = parseInt(req.params.id);
+      const lid = req.params.lid;
+
+      const branch = await prisma.branch.findUnique({ where: { id }, select: { adminLids: true } });
+      let currentLids = JSON.parse(branch?.adminLids || '[]');
+      currentLids = currentLids.filter(e => e.lid !== lid);
+
+      await prisma.branch.update({ where: { id }, data: { adminLids: JSON.stringify(currentLids) } });
+
+      res.json({ success: true, data: currentLids });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
 }
 
 
