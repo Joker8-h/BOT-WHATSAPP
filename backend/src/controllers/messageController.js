@@ -75,38 +75,49 @@ class MessageController {
         matchedAdmin = allBranches.find(b => {
           try {
             const lids = JSON.parse(b.adminLids || '[]');
-            return lids.includes(cleanPhone);
+            return lids.some(e => {
+              const lid = typeof e === 'string' ? e : e.lid;
+              return lid === cleanPhone;
+            });
           } catch { return false; }
         });
       }
 
-      // Auto-detect: Si es @lid y no matchea, verificar si el contacto tiene phone = notificationPhone
-      if (!matchedAdmin && chatId.endsWith('@lid')) {
-        try {
-          const contact = await crmService.findOrCreateContact(chatId, branchId);
-          const contactPhone = contact?.phone?.replace(/[^0-9]/g, '');
-          matchedAdmin = allBranches.find(b => {
+      // Check 3: Comando /admin para registrar LID desde WhatsApp Web
+      if (!matchedAdmin && body.trim().startsWith('/admin')) {
+        const parts = body.trim().split(/\s+/);
+        const targetPhone = parts[1]?.replace(/[^0-9]/g, '');
+        if (targetPhone) {
+          const targetBranch = allBranches.find(b => {
             const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
-            return phone && contactPhone && phone === contactPhone;
+            return phone === targetPhone;
           });
-          if (matchedAdmin) {
-            // Guardar LID automáticamente
+          if (targetBranch) {
             try {
-              const currentLids = JSON.parse(matchedAdmin.adminLids || '[]');
-              if (!currentLids.includes(cleanPhone)) {
-                currentLids.push(cleanPhone);
+              const currentLids = JSON.parse(targetBranch.adminLids || '[]');
+              if (!currentLids.some(e => e.lid === cleanPhone)) {
+                currentLids.push({ lid: cleanPhone, name: parts[2] || 'Admin' });
                 await prisma.branch.update({
-                  where: { id: matchedAdmin.id },
+                  where: { id: targetBranch.id },
                   data: { adminLids: JSON.stringify(currentLids) }
                 });
-                logger.info(`👑 [ADMIN-AUTO] LID ${cleanPhone} registrado automáticamente para sede ${matchedAdmin.id}`);
+                await whatsappService.sendMessage(branchId, chatId, `✅ LID registrado correctamente para la sede ${targetBranch.id}. Ya puedes usar el bot como admin.`);
+                logger.info(`👑 [ADMIN-REGISTER] LID ${cleanPhone} registrado vía comando /admin para sede ${targetBranch.id}`);
+                return;
+              } else {
+                await whatsappService.sendMessage(branchId, chatId, `ℹ️ Tu LID ya está registrado para la sede ${targetBranch.id}.`);
+                return;
               }
             } catch (e) {
-              logger.error('Error guardando LID auto-detectado:', e);
+              logger.error('Error registrando LID:', e);
             }
+          } else {
+            await whatsappService.sendMessage(branchId, chatId, `❌ No se encontró una sede con el número ${targetPhone}.`);
+            return;
           }
-        } catch (e) {
-          // Silenciar errores de auto-detección
+        } else {
+          await whatsappService.sendMessage(branchId, chatId, `📝 Para registrarte como admin, envía: /admin [tu número de WhatsApp]\nEjemplo: /admin 573166575904`);
+          return;
         }
       }
 
