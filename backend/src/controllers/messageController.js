@@ -132,6 +132,15 @@ class MessageController {
       let contact = await crmService.findOrCreateContact(chatId, branchId);
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
 
+      // Capturar nombre push de WhatsApp automáticamente si el contacto no tiene nombre
+      const pushName = msg._data?.notifyName || msg.notifyName || msg._data?.pushName;
+      if (pushName && (!contact.name || contact.name === 'Sin nombre')) {
+        await crmService.updateContactInfo(contact.id, { name: pushName });
+        contact.name = pushName;
+        logger.info(`📱 [PUSH-NAME] Nombre capturado automáticamente de WhatsApp: "${pushName}" para ${chatId}`);
+      }
+
+
       // ── 3. VERIFICAR HORARIO LABORAL ────────────────────────
       const workingStatus = await isWorkingHours(branchId);
       if (!workingStatus.isWorking) {
@@ -404,7 +413,10 @@ class MessageController {
           await whatsappService.sendMessage(branchId, chatId, fallbackMsg);
           await crmService.saveMessage(conversation.id, 'ASSISTANT', fallbackMsg);
           
-          await whatsappService.notifyPhone(branchId, `⚠️ *ALERTA DE PEDIDO (Contraentrega)*\nEl bot no encontró los productos en la BD:\nProductos: ${actions.productsToSell.join(', ')}\nCliente: ${contact.name} (${contact.phone})`);
+          const cleanPhoneAlert = (contact.phone || chatId).replace(/@[a-z.]+$/i, '');
+          const nameLabelAlert = contact.name && contact.name !== 'Sin nombre' ? contact.name : `Cliente ${cleanPhoneAlert}`;
+          await whatsappService.notifyPhone(branchId, `⚠️ *ALERTA DE PEDIDO (Contraentrega)*\nEl bot no encontró los productos en la BD:\nProductos: ${actions.productsToSell.join(', ')}\nCliente: ${nameLabelAlert} (${cleanPhoneAlert})`);
+
           return;
         }
 
@@ -426,28 +438,31 @@ class MessageController {
 
 
           // Notificar al número central
+          const cleanClientPhone = (contact.phone || chatId).replace(/@[a-z.]+$/i, '');
+          const clientName = contact.name && contact.name !== 'Sin nombre' ? contact.name : `Cliente ${cleanClientPhone}`;
           const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
           const finalAddr = contactUpdates.address || contact.address;
           const finalCity = contactUpdates.city || contact.city;
           const hasAddr = finalAddr && finalAddr !== 'Por confirmar';
           const hasCity = finalCity && finalCity !== 'Por confirmar';
           const addrWarning = (!hasAddr || !hasCity)
-            ? `\n⚠️ *DIRECCIÓN PENDIENTE DE CONFIRMACIÓN — CONTACTAR AL CLIENTE PARA OBTENER DIRECCIÓN COMPLETA*\n`
+            ? `\n⚠️ *DIRECCIÓN PENDIENTE — CONTACTAR AL CLIENTE*\n`
             : '';
           const centralMsg = `📦 *PEDIDO CONTRAENTREGA* 📦\n\n` +
-            `👤 *Cliente:* ${contact.name || 'Sin nombre'}\n` +
-            `📱 *WhatsApp:* ${contact.phone}\n` +
+            `👤 *Cliente:* ${clientName}\n` +
+            `📱 *WhatsApp:* ${cleanClientPhone}\n` +
             `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
             `📦 *Productos:* ${productNames.join(', ')}\n` +
             `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
             `📍 *DIRECCIÓN DE ENTREGA:*\n` +
             `${hasAddr ? finalAddr : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
             `🏙️ *CIUDAD:* ${hasCity ? finalCity : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
-            `${contactUpdates.neighborhood ? `🏘️ *Barrio:* ${contactUpdates.neighborhood}\n` : ''}` +
+            `${contactUpdates.neighborhood || contact.neighborhood ? `🏘️ *Barrio:* ${contactUpdates.neighborhood || contact.neighborhood}\n` : ''}` +
             `${addrWarning}` +
             `\n⚠️ *TIPO:* Contraentrega (pago en efectivo al recibir)`;
 
           await whatsappService.notifyPhone(branchId, centralMsg);
+
         }
       }
 
