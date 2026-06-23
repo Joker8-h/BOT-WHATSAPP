@@ -200,18 +200,6 @@ class MessageController {
         return;
       }
 
-      // Separar mensaje largo en 2 envíos naturales (por párrafo, sin cortar palabras)
-      const responseParts = this.splitMessageNaturally(aiResult.response);
-      
-      for (let i = 0; i < responseParts.length; i++) {
-        await whatsappService.sendMessage(branchId, chatId, responseParts[i]);
-        // Pequeña pausa entre mensajes para simular escritura humana
-        if (i < responseParts.length - 1) {
-          await new Promise(r => setTimeout(r, 1200));
-        }
-      }
-      await crmService.saveMessage(conversation.id, 'ASSISTANT', aiResult.response, null, aiResult.tokensUsed);
-
       const actions = aiResult.actions || {};
       
       // Actualizar cliente
@@ -227,6 +215,36 @@ class MessageController {
         await crmService.updateContactInfo(contact.id, contactUpdates);
       }
 
+      // VALIDACIÓN DE DIRECCIÓN PREVIA AL ENVÍO DE RESPUESTA
+      // Si la IA intenta cerrar venta/contraentrega pero falta dirección/ciudad,
+      // suprimimos la respuesta generada de la IA para evitar confirmaciones falsas.
+      const finalAddress = contactUpdates.address || contact.address;
+      const finalCity = contactUpdates.city || contact.city;
+      const missingAddress = !finalAddress || finalAddress === 'Por confirmar';
+      const missingCity = !finalCity || finalCity === 'Por confirmar';
+
+      let aiResponseToSend = aiResult.response;
+      if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && (missingAddress || missingCity)) {
+        logger.warn(`⚠️ [MSG-BLOCKED] IA intentó cerrar venta pero falta dirección/ciudad. Suprimiendo respuesta contradictoria.`);
+        aiResponseToSend = null;
+      }
+
+      if (aiResponseToSend) {
+        // Separar mensaje largo en 2 envíos naturales (por párrafo, sin cortar palabras)
+        const responseParts = this.splitMessageNaturally(aiResponseToSend);
+        
+        for (let i = 0; i < responseParts.length; i++) {
+          await whatsappService.sendMessage(branchId, chatId, responseParts[i]);
+          // Pequeña pausa entre mensajes para simular escritura humana
+          if (i < responseParts.length - 1) {
+            await new Promise(r => setTimeout(r, 1200));
+          }
+        }
+        await crmService.saveMessage(conversation.id, 'ASSISTANT', aiResponseToSend, null, aiResult.tokensUsed);
+      } else {
+        await crmService.saveMessage(conversation.id, 'ASSISTANT', '[Mensaje suprimido por validación de backend]', null, aiResult.tokensUsed);
+      }
+
       // Clasificación
       if (actions.classification) await crmService.updateClassification(contact.id, actions.classification);
 
@@ -240,21 +258,19 @@ class MessageController {
 
       // ── CONTRAENTREGA ──────────────────────────────────────
       if (actions.shouldCreateContraEntrega && actions.productsToSell?.length > 0) {
-        // VALIDACIÓN: Dirección obligatoria antes de crear pedido
-        const finalAddress = contactUpdates.address || contact.address;
-        const finalCity = contactUpdates.city || contact.city;
-        
-        if (!finalAddress || finalAddress === 'Por confirmar') {
+        if (missingAddress) {
           logger.warn(`⚠️ [CONTRAENTREGA] Sin dirección para ${chatId} — bloqueando pedido`);
-          await whatsappService.sendMessage(branchId, chatId, 
-            '📍 Para registrar tu pedido necesito tu dirección completa. ¿En qué dirección te lo enviamos? 🏠');
+          const msgDir = '📍 Para registrar tu pedido necesito tu dirección completa. ¿En qué dirección te lo enviamos? 🏠';
+          await whatsappService.sendMessage(branchId, chatId, msgDir);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', msgDir);
           return;
         }
         
-        if (!finalCity || finalCity === 'Por confirmar') {
+        if (missingCity) {
           logger.warn(`⚠️ [CONTRAENTREGA] Sin ciudad para ${chatId} — bloqueando pedido`);
-          await whatsappService.sendMessage(branchId, chatId, 
-            '🏙️ ¿En qué ciudad te encuentras? Necesito confirmar la ciudad antes de registrar tu pedido.');
+          const msgCity = '🏙️ ¿En qué ciudad te encuentras? Necesito confirmar la ciudad antes de registrar tu pedido.';
+          await whatsappService.sendMessage(branchId, chatId, msgCity);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', msgCity);
           return;
         }
 
@@ -318,21 +334,19 @@ class MessageController {
 
       // Cierre de venta Wompi
       if (actions.shouldCloseSale && actions.productsToSell?.length > 0) {
-        // VALIDACIÓN: Dirección obligatoria antes de generar link de pago
-        const finalAddressWompi = contactUpdates.address || contact.address;
-        const finalCityWompi = contactUpdates.city || contact.city;
-        
-        if (!finalAddressWompi || finalAddressWompi === 'Por confirmar') {
+        if (missingAddress) {
           logger.warn(`⚠️ [WOMPI] Sin dirección para ${chatId} — bloqueando link de pago`);
-          await whatsappService.sendMessage(branchId, chatId, 
-            '📍 Para generar tu link de pago necesito tu dirección completa. ¿En qué dirección te lo enviamos? 🏠');
+          const msgDir = '📍 Para generar tu link de pago necesito tu dirección completa. ¿En qué dirección te lo enviamos? 🏠';
+          await whatsappService.sendMessage(branchId, chatId, msgDir);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', msgDir);
           return;
         }
         
-        if (!finalCityWompi || finalCityWompi === 'Por confirmar') {
+        if (missingCity) {
           logger.warn(`⚠️ [WOMPI] Sin ciudad para ${chatId} — bloqueando link de pago`);
-          await whatsappService.sendMessage(branchId, chatId, 
-            '🏙️ ¿En qué ciudad te encuentras? Necesito confirmar la ciudad antes de generar el link de pago.');
+          const msgCity = '🏙️ ¿En qué ciudad te encuentras? Necesito confirmar la ciudad antes de generar el link de pago.';
+          await whatsappService.sendMessage(branchId, chatId, msgCity);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', msgCity);
           return;
         }
 
