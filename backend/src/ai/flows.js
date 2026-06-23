@@ -23,6 +23,7 @@ function detectFlow(message, context) {
     couple: ['pareja', 'novio', 'novia', 'esposo', 'esposa', 'relación'],
     replyToContact: ['escribiste', 'atendiendo', 'vi tu mensaje', 'vi el mensaje', 'veo tu mensaje', 'hace rato', 'recién veo', 'no te había visto', 'me mandaste', 'me enviaste', 'te respondo'],
     store: ['tienda física', 'donde quedan', 'ubicación', 'sucursal', 'donde están', 'popayán', 'florencia', 'yopal', 'local fisico'],
+    address: ['calle', 'carrera', 'cra', 'avenida', 'av', 'diagonal', 'transversal', 'barrio', 'torre', 'apto', 'apartamento', 'manzana', 'lote'],
   };
 
   // Detectar escalamiento
@@ -52,6 +53,13 @@ function detectFlow(message, context) {
 
   // Detectar preguntas de envío
   if (keywords.shipping.some(k => msg.includes(k))) {
+    return 'CLOSING';
+  }
+
+  // Detectar dirección del cliente (cuando responde con su dirección después de que se la pedimos)
+  const hasAddressKeyword = keywords.address.some(k => msg.includes(k));
+  const hasNumberAndHash = /\d+\s*[-#]\s*\d+/.test(msg);
+  if (hasAddressKeyword && (hasNumberAndHash || msg.length > 10)) {
     return 'CLOSING';
   }
 
