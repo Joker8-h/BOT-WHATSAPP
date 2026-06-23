@@ -292,6 +292,13 @@ class MessageController {
 
           // Notificar al número central
           const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
+          const finalAddr = contactUpdates.address || contact.address;
+          const finalCity = contactUpdates.city || contact.city;
+          const hasAddr = finalAddr && finalAddr !== 'Por confirmar';
+          const hasCity = finalCity && finalCity !== 'Por confirmar';
+          const addrWarning = (!hasAddr || !hasCity)
+            ? `\n⚠️ *DIRECCIÓN PENDIENTE DE CONFIRMACIÓN — CONTACTAR AL CLIENTE PARA OBTENER DIRECCIÓN COMPLETA*\n`
+            : '';
           const centralMsg = `📦 *PEDIDO CONTRAENTREGA* 📦\n\n` +
             `👤 *Cliente:* ${contact.name || 'Sin nombre'}\n` +
             `📱 *WhatsApp:* ${contact.phone}\n` +
@@ -299,9 +306,10 @@ class MessageController {
             `📦 *Productos:* ${productNames.join(', ')}\n` +
             `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
             `📍 *DIRECCIÓN DE ENTREGA:*\n` +
-            `${contactUpdates.address || contact.address || 'Por confirmar'}\n` +
-            `🏙️ *CIUDAD:* ${contactUpdates.city || contact.city || 'Por confirmar'}\n` +
+            `${hasAddr ? finalAddr : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
+            `🏙️ *CIUDAD:* ${hasCity ? finalCity : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
             `${contactUpdates.neighborhood ? `🏘️ *Barrio:* ${contactUpdates.neighborhood}\n` : ''}` +
+            `${addrWarning}` +
             `\n⚠️ *TIPO:* Contraentrega (pago en efectivo al recibir)`;
 
           await whatsappService.notifyPhone(branchId, centralMsg);
