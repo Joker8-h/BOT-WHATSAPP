@@ -71,10 +71,13 @@ function buildSystemPrompt(clientProfile, availableProducts = [], branchInfo = {
       if (b.address) parts.push(b.address);
       if (b.referencePoint) parts.push(`(Ref: ${b.referencePoint})`);
       if (b.storeFrontDesc) parts.push(`Fachada: ${b.storeFrontDesc}`);
-      if (b.notes) parts.push(`Nota: ${b.notes}`);
-      storesSection += `\n- ${b.city}: ${parts.join(' — ')}`;
+      let cityName = b.city;
+      if (cityName === 'Administración Global') {
+        cityName = 'Popayán (Administración Global)';
+      }
+      storesSection += `\n- ${cityName}: ${parts.join(' — ')}`;
     });
-    storesSection += '\n\nSi el cliente pregunta por los locales físicos, proporcionales la lista completa mencionando TODAS las ciudades y direcciones de la sección LOCALES FÍSICOS sin omitir ninguna (ni siquiera la sede principal). Menciónalas exactamente como aparecen aquí. Si preguntan por Yopal, menciona que está disponible solo por ahora esta semana y que avisamos si hay cambios.';
+    storesSection += '\n\nSi el cliente pregunta por los locales físicos, proporcionales la lista completa mencionando TODAS las ciudades y direcciones de la sección LOCALES FÍSICOS sin omitir ninguna (ni siquiera la sede principal). Menciónalas exactamente como aparecen aquí. Recuerda siempre que "Administración Global" corresponde a la ciudad de Popayán. Si preguntan por Yopal, menciona que está disponible solo por ahora esta semana y que avisamos si hay cambios.';
     prompt = prompt.replace('{{PHYSICAL_STORES}}', storesSection);
   } else {
     prompt = prompt.replace('{{PHYSICAL_STORES}}', '\n\nSi el cliente pregunta por locales físicos, actualmente no tenemos información disponible.');
