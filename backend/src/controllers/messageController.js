@@ -203,23 +203,68 @@ class MessageController {
       const actions = aiResult.actions || {};
       logger.debug(`🔍 [ACTIONS] Para ${chatId}: contraentrega=${actions.shouldCreateContraEntrega}, closeSale=${actions.shouldCloseSale}, productos=${JSON.stringify(actions.productsToSell)}, addr=${actions.capturedAddress}, city=${actions.capturedCity}`);
 
-      // SAFETY NET: Si la IA dice en texto que va a registrar el pedido contraentrega pero no usó la etiqueta,
-      // detectarlo y activar shouldCreateContraEntrega manualmente.
+      // SAFETY NET ACTIVO: Si la IA dice en texto que va a registrar el pedido contraentrega pero no usó la etiqueta,
+      // activar el pedido automáticamente extrayendo el producto del texto de la IA.
       if (!actions.shouldCreateContraEntrega && !actions.shouldCloseSale) {
         const aiText = (aiResult.response || '').toLowerCase();
         const impliesContraentrega = (
-          (aiText.includes('registrar tu pedido') || aiText.includes('proceder') || aiText.includes('contraentrega')) &&
-          (aiText.includes('dirección') || aiText.includes('entrega') || aiText.includes('enviar'))
+          (aiText.includes('registrar tu pedido') || aiText.includes('proceder') || aiText.includes('contra entrega') || aiText.includes('contraentrega') || aiText.includes('pagar en efectivo')) &&
+          (aiText.includes('dirección') || aiText.includes('entrega') || aiText.includes('enviar') || aiText.includes('pedido'))
         );
         if (impliesContraentrega) {
-          // Intentar extraer el producto de la respuesta de la IA
-          // Buscar en el historial reciente el último producto mencionado
-          const recentHistory = messageHistory.filter(m => m.role === 'assistant').slice(-3);
-          const historyText = recentHistory.map(m => m.content).join(' ');
-          // Extraer producto del catálogo que aparezca en el historial
-          logger.warn(`⚠️ [SAFETY-NET] La IA habla de contraentrega en texto pero no usó [PEDIDO_CONTRAENTREGA]. Texto: "${(aiResult.response || '').substring(0, 200)}"`);
+          logger.warn(`⚠️ [SAFETY-NET] IA habla de contraentrega sin etiqueta — activando rescate automático. Texto: "${(aiResult.response || '').substring(0, 150)}"`);
+          
+          // Extraer nombre de producto del texto de la IA (busca patrones como "- *Producto* por" o "pedido de Producto")
+          const aiFullText = aiResult.response || '';
+          const productPatterns = [
+            /[-•]\s*\*?([^*\n$]{5,60}?)\*?\s+por\s+\$/i,
+            /pedido(?:\s+del?|\s+de\s+(?:tu|la|el))?\s+([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-]{5,60}?)(?:\s+por|\s+a|\s+en|\.|,|\n)/i,
+            /enviar(?:emos|é)?\s+(?:el\s+|la\s+)?([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-]{5,60}?)(?:\s+a|\s+por|\s+en|\.|,|\n)/i,
+          ];
+          
+          let rescuedProduct = null;
+          for (const pattern of productPatterns) {
+            const match = aiFullText.match(pattern);
+            if (match && match[1]) {
+              rescuedProduct = match[1].trim().replace(/[*_]/g, '');
+              break;
+            }
+          }
+          
+          // Si no encontramos en la IA, buscar en el historial reciente
+          if (!rescuedProduct) {
+            const recentAI = messageHistory.filter(m => m.role === 'assistant').slice(-5);
+            for (const msg of recentAI.reverse()) {
+              for (const pattern of productPatterns) {
+                const match = (msg.content || '').match(pattern);
+                if (match && match[1]) {
+                  rescuedProduct = match[1].trim().replace(/[*_]/g, '');
+                  break;
+                }
+              }
+              if (rescuedProduct) break;
+            }
+          }
+          
+          if (rescuedProduct) {
+            logger.info(`✅ [SAFETY-NET] Producto rescatado: "${rescuedProduct}" — activando shouldCreateContraEntrega`);
+            actions.shouldCreateContraEntrega = true;
+            actions.productsToSell = [rescuedProduct];
+          } else {
+            logger.warn(`⚠️ [SAFETY-NET] No se pudo extraer el producto del texto. Se requerirá intervención manual.`);
+            // Notificar al admin para que cierre manualmente
+            try {
+              const contactForNotif = contact;
+              await whatsappService.notifyPhone(branchId, 
+                `⚠️ *PEDIDO PERDIDO — ACCIÓN REQUERIDA*\n\nLa IA confirmó una venta en texto pero no registró el pedido.\n\n👤 *Cliente:* ${contactForNotif.name || 'Sin nombre'}\n📱 *WhatsApp:* ${contactForNotif.phone}\n\nTexto de la IA:\n"${(aiResult.response || '').substring(0, 300)}"`
+              );
+            } catch (notifErr) {
+              logger.error('Error notificando admin en SAFETY-NET:', notifErr);
+            }
+          }
         }
       }
+
 
       
       // Actualizar cliente

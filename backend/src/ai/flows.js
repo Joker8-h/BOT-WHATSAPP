@@ -133,15 +133,13 @@ function getFlowInstructions(flow) {
 - **PRIMERO VERIFICA**: ¿Tienes la DIRECCIÓN del cliente capturada con [CAPTURAR_DIRECCION] y la CIUDAD con [CAPTURAR_CIUDAD]? Si falta alguno, PÍDELO ANTES de continuar. NO cierres la venta sin dirección.
 - Confirma el producto que quiere
 - Da el precio claro en COP
-- Si el cliente pregunta por CONTRAENTREGA:
-  * Revisa la CIUDAD del cliente en el perfil
-  * Si está en Pitalito, Florencia, Popayán o Yopal: confirma que sí hay contraentrega solo dentro de la ciudad, y espera a que el cliente CONFIRME que lo quiere
-  * Si el cliente dice que SÍ lo quiere por contraentrega, verifica que tengas dirección y usa [PEDIDO_CONTRAENTREGA:nombre_del_producto]
-  * Si NO está en esas ciudades: explícale que contraentrega solo está disponible en esas 4 ciudades, y ofrécele pago por link seguro Wompi
-- Si el cliente acepta pagar por Wompi, verifica que tengas dirección y usa [CERRAR_VENTA:nombre_del_producto] para activar el link de pago
-- **CUANDO EL CLIENTE DIGA QUE SÍ QUIERE COMPRAR** (ej: "sí quiero", "envíamelo", "dale", "lo llevo", "confirmo"), DEBES usar [CERRAR_VENTA] o [PEDIDO_CONTRAENTREGA] INMEDIATAMENTE. NO preguntes más, NO des más información, CIERRA la venta.
+- **CIERRE AUTOMÁTICO**: Cuando el cliente confirme que quiere comprar (ej: "sí", "de acuerdo", "dale", "lo llevo", "añádelo", "en efectivo", "confirmo"):
+  * Si la CIUDAD del cliente es Pitalito, Florencia, Popayán o Yopal: usa INMEDIATAMENTE [PEDIDO_CONTRAENTREGA:nombre_exacto_del_producto]. NO esperes que el cliente diga la palabra "contraentrega". Si está en esas ciudades, el pedido siempre es contraentrega por defecto.
+  * Si NO está en esas ciudades: usa [CERRAR_VENTA:nombre_del_producto] para generar el link de pago Wompi.
+- **CUANDO EL CLIENTE DIGA QUE SÍ QUIERE COMPRAR** (ej: "sí quiero", "envíamelo", "dale", "lo llevo", "confirmo", "quiero pagar en efectivo"), DEBES usar [CERRAR_VENTA] o [PEDIDO_CONTRAENTREGA] INMEDIATAMENTE. NO preguntes más, NO des más información, CIERRA la venta.
 - NO presiones, pero facilita el camino
-- **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA]. Pide la dirección primero.`,
+- **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA]. Pide la dirección primero.
+- **RECUERDA**: Después de usar la etiqueta, NO digas "Pedido registrado" ni confirmes como exitoso. Solo di "Perfecto, procederé a registrar tu pedido..." y el sistema se encarga del resto.`,
 
     CONTACT_REPLY: `FLUJO ACTUAL: RESPUESTA A CONTACTO
 - El cliente está respondiendo a un mensaje previo que le enviaste
