@@ -133,7 +133,15 @@ class MessageController {
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
 
       // Capturar nombre push de WhatsApp automáticamente si el contacto no tiene nombre
-      const pushName = msg._data?.notifyName || msg.notifyName || msg._data?.pushName;
+      let pushName = msg._data?.notifyName || msg.notifyName || msg._data?.pushName;
+      if (!pushName && typeof msg.getContact === 'function') {
+        try {
+          const contactObj = await msg.getContact();
+          pushName = contactObj?.pushname || contactObj?.name;
+        } catch (err) {
+          logger.error(`❌ Error al obtener contacto de WhatsApp para ${chatId}:`, err);
+        }
+      }
       if (pushName && (!contact.name || contact.name === 'Sin nombre')) {
         await crmService.updateContactInfo(contact.id, { name: pushName });
         contact.name = pushName;
@@ -214,12 +222,28 @@ class MessageController {
 
       // SAFETY NET ACTIVO: Si la IA dice en texto que va a registrar el pedido contraentrega pero no usó la etiqueta,
       // activar el pedido automáticamente extrayendo el producto del texto de la IA.
+      // IMPORTANTE: Solo aplica para contraentrega. Si menciona Wompi/transferencia/link, NO activar contraentrega.
       if (!actions.shouldCreateContraEntrega && !actions.shouldCloseSale) {
         const aiText = (aiResult.response || '').toLowerCase();
-        const impliesContraentrega = (
-          (aiText.includes('registrar tu pedido') || aiText.includes('proceder') || aiText.includes('contra entrega') || aiText.includes('contraentrega') || aiText.includes('pagar en efectivo')) &&
+        
+        // Detectar si es pago por Wompi/transferencia (NO contraentrega)
+        const isWompiPayment = (
+          aiText.includes('link') || aiText.includes('wompi') || 
+          aiText.includes('transferencia') || aiText.includes('pago online') ||
+          aiText.includes('pago seguro') || aiText.includes('link de pago')
+        );
+
+        const impliesContraentrega = !isWompiPayment && (
+          (aiText.includes('registrar tu pedido') || aiText.includes('contra entrega') || aiText.includes('contraentrega') || aiText.includes('pagar en efectivo') || aiText.includes('pago en efectivo')) &&
           (aiText.includes('dirección') || aiText.includes('entrega') || aiText.includes('enviar') || aiText.includes('pedido'))
         );
+
+        // SAFETY NET para Wompi: si la IA habla de generar el link pero no usó [CERRAR_VENTA]
+        const impliesWompiClose = isWompiPayment && (
+          aiText.includes('voy a generar') || aiText.includes('proceder') || 
+          aiText.includes('generar tu link') || aiText.includes('link de pago')
+        );
+
         if (impliesContraentrega) {
           logger.warn(`⚠️ [SAFETY-NET] IA habla de contraentrega sin etiqueta — activando rescate automático. Texto: "${(aiResult.response || '').substring(0, 150)}"`);
           
@@ -278,6 +302,37 @@ class MessageController {
             } catch (notifErr) {
               logger.error('Error notificando admin en SAFETY-NET:', notifErr);
             }
+          }
+        }
+
+        // SAFETY NET para Wompi: rescatar cierre de venta cuando la IA habla de link de pago sin [CERRAR_VENTA]
+        if (impliesWompiClose) {
+          logger.warn(`⚠️ [SAFETY-NET-WOMPI] IA habla de generar link de pago sin etiqueta [CERRAR_VENTA] — activando rescate. Texto: "${(aiResult.response || '').substring(0, 150)}"`);
+          const aiFullTextW = aiResult.response || '';
+          const wProductPatterns = [
+            /[-•]\s*\*?([^*\n$]{5,60}?)\*?\s+por\s+\$/i,
+            /pedido\s+del?\s+([A-Za-záéíóúÁÉÍÓÚñÑ0-9\s\-#\.]{5,60}?)(?:\s+para|\s+por|\s+a\s|\s+en\s|\.|,|\n)/i,
+            /([A-Za-záéíóúÁÉÍÓÚñÑ][A-Za-záéíóúÁÉÍÓÚñÑ\s]{3,40}[A-Z0-9]{2,6}[-][A-Z0-9]{2,10})/,
+          ];
+          let wRescuedProduct = null;
+          for (const pat of wProductPatterns) {
+            const m = aiFullTextW.match(pat);
+            if (m && m[1]) { wRescuedProduct = m[1].trim().replace(/[*_]/g, ''); break; }
+          }
+          if (!wRescuedProduct) {
+            const recentAIW = messageHistory.filter(m => m.role === 'assistant').slice(-5);
+            for (const msgW of recentAIW.reverse()) {
+              for (const pat of wProductPatterns) {
+                const m = (msgW.content || '').match(pat);
+                if (m && m[1]) { wRescuedProduct = m[1].trim().replace(/[*_]/g, ''); break; }
+              }
+              if (wRescuedProduct) break;
+            }
+          }
+          if (wRescuedProduct) {
+            logger.info(`✅ [SAFETY-NET-WOMPI] Producto rescatado: "${wRescuedProduct}" — activando shouldCloseSale (Wompi)`);
+            actions.shouldCloseSale = true;
+            actions.productsToSell = [wRescuedProduct];
           }
         }
       }
