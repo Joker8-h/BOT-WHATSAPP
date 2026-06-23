@@ -133,6 +133,11 @@ class WompiController {
         const itemsList = order.items.map(i => `- ${i.product.name} (x${i.quantity})`).join('\n');
         const neighborhoodInfo = order.contact.neighborhood ? `🏘️ *Barrio:* ${order.contact.neighborhood}\n` : '';
         const deliveryPhone = order.contact.deliveryPhone || 'No proporcionado';
+        const hasAddress = order.shippingAddress && order.shippingAddress !== 'Por confirmar';
+        const hasCity = order.shippingCity && order.shippingCity !== 'Por confirmar';
+        const addressWarning = (!hasAddress || !hasCity) 
+          ? `\n⚠️ *DIRECCIÓN PENDIENTE DE CONFIRMACIÓN — CONTACTAR AL CLIENTE PARA OBTENER DIRECCIÓN COMPLETA*\n` 
+          : '';
         const notificationMsg = `✅ *¡CLIENTE YA PAGÓ VÍA WOMPI!* ✅\n\n` +
                                 `💰 *Total pagado:* ${formatCOP(order.amount)}\n` +
                                 `👤 *Cliente:* ${order.contact.name || 'Sin nombre'}\n` +
@@ -141,9 +146,10 @@ class WompiController {
                                 `🏪 *Sucursal:* ${order.branch.name} (${order.branch.city})\n\n` +
                                 `📦 *Productos:*\n${itemsList}\n\n` +
                                 `📍 *DIRECCIÓN DE ENVÍO:*\n` +
-                                `${order.shippingAddress || 'No especificada'}\n` +
-                                `🏙️ *CIUDAD:* ${order.shippingCity || 'No especificada'}\n` +
+                                `${hasAddress ? order.shippingAddress : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
+                                `🏙️ *CIUDAD:* ${hasCity ? order.shippingCity : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
                                 `${neighborhoodInfo}` +
+                                `${addressWarning}` +
                                 `💳 *Ref Wompi:* ${transaction.id}\n\n` +
                                 `🚀 *ACCIÓN REQUERIDA:* Preparar despacho inmediato`;
         

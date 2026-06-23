@@ -240,6 +240,24 @@ class MessageController {
 
       // ── CONTRAENTREGA ──────────────────────────────────────
       if (actions.shouldCreateContraEntrega && actions.productsToSell?.length > 0) {
+        // VALIDACIÓN: Dirección obligatoria antes de crear pedido
+        const finalAddress = contactUpdates.address || contact.address;
+        const finalCity = contactUpdates.city || contact.city;
+        
+        if (!finalAddress || finalAddress === 'Por confirmar') {
+          logger.warn(`⚠️ [CONTRAENTREGA] Sin dirección para ${chatId} — bloqueando pedido`);
+          await whatsappService.sendMessage(branchId, chatId, 
+            '📍 Para registrar tu pedido necesito tu dirección completa. ¿En qué dirección te lo enviamos? 🏠');
+          return;
+        }
+        
+        if (!finalCity || finalCity === 'Por confirmar') {
+          logger.warn(`⚠️ [CONTRAENTREGA] Sin ciudad para ${chatId} — bloqueando pedido`);
+          await whatsappService.sendMessage(branchId, chatId, 
+            '🏙️ ¿En qué ciudad te encuentras? Necesito confirmar la ciudad antes de registrar tu pedido.');
+          return;
+        }
+
         logger.info(`📦 [CONTRAENTREGA] Procesando pedido contraentrega para ${chatId}`);
         const orderItems = [];
         let totalAmount = 0;
@@ -292,6 +310,24 @@ class MessageController {
 
       // Cierre de venta Wompi
       if (actions.shouldCloseSale && actions.productsToSell?.length > 0) {
+        // VALIDACIÓN: Dirección obligatoria antes de generar link de pago
+        const finalAddressWompi = contactUpdates.address || contact.address;
+        const finalCityWompi = contactUpdates.city || contact.city;
+        
+        if (!finalAddressWompi || finalAddressWompi === 'Por confirmar') {
+          logger.warn(`⚠️ [WOMPI] Sin dirección para ${chatId} — bloqueando link de pago`);
+          await whatsappService.sendMessage(branchId, chatId, 
+            '📍 Para generar tu link de pago necesito tu dirección completa. ¿En qué dirección te lo enviamos? 🏠');
+          return;
+        }
+        
+        if (!finalCityWompi || finalCityWompi === 'Por confirmar') {
+          logger.warn(`⚠️ [WOMPI] Sin ciudad para ${chatId} — bloqueando link de pago`);
+          await whatsappService.sendMessage(branchId, chatId, 
+            '🏙️ ¿En qué ciudad te encuentras? Necesito confirmar la ciudad antes de generar el link de pago.');
+          return;
+        }
+
         logger.info(`💰 [SALE] Iniciando proceso de pago para ${chatId}`);
         const orderItems = [];
         let totalAmount = 0;

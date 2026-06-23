@@ -116,15 +116,17 @@ function getFlowInstructions(flow) {
 - Prepárate para el cierre`,
 
     CLOSING: `FLUJO ACTUAL: CIERRE DE VENTA
+- **PRIMERO VERIFICA**: ¿Tienes la DIRECCIÓN del cliente capturada con [CAPTURAR_DIRECCION] y la CIUDAD con [CAPTURAR_CIUDAD]? Si falta alguno, PÍDELO ANTES de continuar. NO cierres la venta sin dirección.
 - Confirma el producto que quiere
 - Da el precio claro en COP
 - Si el cliente pregunta por CONTRAENTREGA:
   * Revisa la CIUDAD del cliente en el perfil
   * Si está en Pitalito, Florencia, Popayán o Yopal: confirma que sí hay contraentrega solo dentro de la ciudad, y espera a que el cliente CONFIRME que lo quiere
-  * Si el cliente dice que SÍ lo quiere por contraentrega, usa [PEDIDO_CONTRAENTREGA:nombre_del_producto]
+  * Si el cliente dice que SÍ lo quiere por contraentrega, verifica que tengas dirección y usa [PEDIDO_CONTRAENTREGA:nombre_del_producto]
   * Si NO está en esas ciudades: explícale que contraentrega solo está disponible en esas 4 ciudades, y ofrécele pago por link seguro Wompi
-- Si el cliente acepta pagar por Wompi, usa [CERRAR_VENTA:nombre_del_producto] para activar el link de pago
-- NO presiones, pero facilita el camino`,
+- Si el cliente acepta pagar por Wompi, verifica que tengas dirección y usa [CERRAR_VENTA:nombre_del_producto] para activar el link de pago
+- NO presiones, pero facilita el camino
+- **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA]. Pide la dirección primero.`,
 
     CONTACT_REPLY: `FLUJO ACTUAL: RESPUESTA A CONTACTO
 - El cliente está respondiendo a un mensaje previo que le enviaste
