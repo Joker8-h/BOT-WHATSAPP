@@ -129,7 +129,7 @@ class MessageController {
       }
 
       // ── 2. CRM Y CONVERSACIÓN ────────────────────────────────
-      const contact = await crmService.findOrCreateContact(chatId, branchId);
+      let contact = await crmService.findOrCreateContact(chatId, branchId);
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
 
       // ── 3. VERIFICAR HORARIO LABORAL ────────────────────────
@@ -211,8 +211,44 @@ class MessageController {
       if (actions.capturedInterests) contactUpdates.interests = actions.capturedInterests;
       if (actions.capturedDeliveryPhone) contactUpdates.deliveryPhone = actions.capturedDeliveryPhone;
 
+      // FALLBACK: Si la IA intentó cerrar contraentrega/venta pero no capturó la dirección con etiqueta,
+      // intentar rescatar la dirección que la IA menciona en su propio texto de respuesta.
+      // Ej: "Estaremos enviando el producto a tu dirección en Calle 15E #31, Barrio Modelo"
+      if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && !contactUpdates.address && !contact.address) {
+        const aiText = aiResult.response || '';
+        // Buscar patrones de dirección en el texto de respuesta de la IA
+        const addrInText = aiText.match(/(?:direcci[oó]n(?:\s+en)?|dirección\s+como|direcci[oó]n:\s*|enviar[^a]*a|enviando[^a]*a)\s*([A-Za-z0-9#\-\.° ,áéíóúÁÉÍÓÚñÑ]{8,80})/i);
+        if (addrInText && addrInText[1]) {
+          const rescued = addrInText[1].trim().replace(/[.,!?]+$/, '');
+          logger.info(`🔍 [ADDR-RESCUE] Dirección rescatada del texto de IA: "${rescued}"`);
+          contactUpdates.address = rescued;
+        }
+        // También intentar extraer del mensaje entrante del usuario
+        const userAddrMatch = body.match(/(?:calle|carrera|avenida|diagonal|transversal|cl|kr|av|dg|tv)\s+[A-Za-z0-9#\-\.° ,áéíóúÁÉÍÓÚñÑ]{3,60}/i);
+        if (!contactUpdates.address && userAddrMatch) {
+          const rescued = userAddrMatch[0].trim();
+          logger.info(`🔍 [ADDR-RESCUE] Dirección rescatada del mensaje del usuario: "${rescued}"`);
+          contactUpdates.address = rescued;
+        }
+      }
+
+      // FALLBACK: Si la IA mencionó una ciudad (Popayán, Pitalito, etc.) pero no usó [CAPTURAR_CIUDAD]
+      if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && !contactUpdates.city && !contact.city) {
+        const ciudadesContraentrega = ['Popayán', 'Pitalito', 'Florencia', 'Yopal'];
+        const bodyAndResponse = `${body} ${aiResult.response || ''}`;
+        for (const ciudad of ciudadesContraentrega) {
+          if (bodyAndResponse.toLowerCase().includes(ciudad.toLowerCase())) {
+            logger.info(`🔍 [CITY-RESCUE] Ciudad rescatada del texto: "${ciudad}"`);
+            contactUpdates.city = ciudad;
+            break;
+          }
+        }
+      }
+
       if (Object.keys(contactUpdates).length > 0) {
         await crmService.updateContactInfo(contact.id, contactUpdates);
+        // Recargar contact para que los checks de dirección usen los datos frescos
+        contact = await crmService.findOrCreateContact(chatId, branchId);
       }
 
       // VALIDACIÓN DE DIRECCIÓN PREVIA AL ENVÍO DE RESPUESTA
@@ -311,10 +347,10 @@ class MessageController {
             status: 'PENDING'
           });
 
-          // Confirmar al cliente
-          const confirmMsg = `✅ *¡Pedido registrado!* Te confirmamos tu pedido por *$${totalAmount.toLocaleString('es-CO')} COP*.\n\n📦 *Productos:* ${productNames.join(', ')}\n📍 *Dirección:* ${contactUpdates.address || contact.address || 'Por confirmar'}\n🏙️ *Ciudad:* ${contactUpdates.city || contact.city || 'Por confirmar'}\n\nTe contactaremos para coordinar la entrega. ¡Gracias por tu compra! 🔥`;
-          await whatsappService.sendMessage(branchId, chatId, confirmMsg);
-          await crmService.saveMessage(conversation.id, 'ASSISTANT', confirmMsg);
+          // La IA ya informó al cliente que el pedido fue registrado.
+          // No enviamos un segundo mensaje de confirmación para evitar confusión.
+          logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por $${totalAmount.toLocaleString('es-CO')} COP — sin doble confirmación al cliente.`);
+
 
           // Notificar al número central
           const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
