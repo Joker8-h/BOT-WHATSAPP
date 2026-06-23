@@ -135,10 +135,58 @@ ${catalogStr}`;
 /**
  * Genera el prompt para el MODO DUEÑO/ADMIN (nunca vende, solo info)
  */
-function buildAdminPrompt(context, allProducts = []) {
+function buildAdminPrompt(context, allProducts = [], businessData = {}) {
   const catalogStr = allProducts.map(p => {
     return `- ${p.name} | Stock: ${p.stock} | Precio: $${p.price}`;
   }).join('\n');
+
+  const formatCOP = (v) => `$${(v || 0).toLocaleString('es-CO')} COP`;
+
+  // ── Sección de datos del negocio ──
+  let businessSection = '';
+
+  // Resumen del día
+  businessSection += `\n## RESUMEN DE HOY
+- Ventas pagadas: ${formatCOP(businessData.todayRevenue)} (${businessData.todayOrdersCount} pedidos)
+- Conversaciones activas: ${businessData.activeConversations || 0}
+- Conversaciones esperando humano (escalamiento): ${businessData.escalatedConversations || 0}
+- Clientes nuevos hoy: ${businessData.newContactsToday || 0}`;
+
+  // Revenue histórico
+  businessSection += `\n\n## TOTALES HISTÓRICOS
+- Revenue total (pagado): ${formatCOP(businessData.totalRevenue)}
+- Total pedidos pagados (todos los tiempos): ${businessData.totalOrdersAllTime || 0}`;
+
+  // Pedidos pendientes
+  if (businessData.pendingOrders && businessData.pendingOrders.length > 0) {
+    businessSection += `\n\n## PEDIDOS PENDIENTES (esperando pago)`;
+    businessData.pendingOrders.forEach(o => {
+      businessSection += `\n- #${o.id} | ${o.client} | ${o.products.join(', ')} | ${formatCOP(o.amount)} | ${o.city}`;
+    });
+  } else {
+    businessSection += `\n\n## PEDIDOS PENDIENTES\nNo hay pedidos pendientes.`;
+  }
+
+  // Pedidos pagados hoy
+  if (businessData.paidOrdersToday && businessData.paidOrdersToday.length > 0) {
+    businessSection += `\n\n## PEDIDOS PAGADOS HOY`;
+    businessData.paidOrdersToday.forEach(o => {
+      businessSection += `\n- #${o.id} | ${o.client} | ${o.products.join(', ')} | ${formatCOP(o.amount)}`;
+    });
+  } else {
+    businessSection += `\n\n## PEDIDOS PAGADOS HOY\nNo hay pedidos pagados hoy.`;
+  }
+
+  // Stock bajo
+  if (businessData.lowStockProducts && businessData.lowStockProducts.length > 0) {
+    businessSection += `\n\n## ⚠️ PRODUCTOS CON STOCK BAJO (≤10 unidades)`;
+    businessData.lowStockProducts.forEach(p => {
+      const status = p.stock === 0 ? '🔴 AGOTADO' : p.stock <= 3 ? '🟠 CRÍTICO' : '🟡 BAJO';
+      businessSection += `\n- ${p.name}: ${p.stock} unidades ${status}`;
+    });
+  } else {
+    businessSection += `\n\n## STOCK\nTodos los productos tienen stock suficiente.`;
+  }
 
   return `Eres el asistente virtual del dueño de Fantasías.
 El usuario que te escribe es el DUEÑO o ADMINISTRADOR del negocio.
@@ -146,13 +194,18 @@ El usuario que te escribe es el DUEÑO o ADMINISTRADOR del negocio.
 ## REGLAS ESTRICTAS (INVIOLABLES):
 1. **NUNCA vendas, recomiendas productos, ofrezcas combos ni hagas promociones.** El dueño NO es tu cliente.
 2. **NUNCA uses lenguaje de ventas, ni tono seductor, ni frases de cierre.** Esto es solo para clientes.
-3. **SÍ puedes** responder preguntas sobre: stock, inventario, ventas del día, pedidos, estado de órdenes, precios.
+3. **SÍ puedes** responder TODO sobre el negocio: ventas, pedidos, stock, métricas, clientes, conversaciones.
 4. Sé directo, técnico y conciso. Respuestas cortas y precisas.
-5. Si el dueño pregunta "¿Cuánto vendí hoy?" o "¿Qué pedidos hay?", responde con la información disponible del sistema.
-6. Si el dueño pregunta algo que no puedes responder (ej: datos financieros detallados), di que no tienes acceso a esa información.
-7. Si el dueño te pide que vendas o hagas algo de ventas, recuerda amablemente: "Mi función es darte información, no vender a clientes."
+5. Si el dueño pregunta "¿Cuánto vendí hoy?" responde con los datos reales que ves arriba.
+6. Si el dueño pregunta por un producto específico, busca en el catálogo y dame su stock y precio.
+7. Si el dueño pide una lista de algo (pedidos, productos, clientes), muéstrala formateada.
+8. Si el dueño te pide que vendas o hagas algo de ventas, recuerda: "Mi función es darte información, no vender a clientes."
+9. Puedes hacer resúmenes, comparativas, agrupaciones por categoría, lo que el dueño necesite.
+10. Si hay alertas de stock bajo, menciónalo proactivamente.
 
-## INVENTARIO DISPONIBLE:
+${businessSection}
+
+## CATÁLOGO DE PRODUCTOS:
 ${catalogStr}`;
 }
 

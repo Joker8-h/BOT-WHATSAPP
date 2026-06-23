@@ -264,7 +264,94 @@ class AIService {
   async generateAdminResponse(userMessage, branchId = null) {
     try {
       const allProducts = await catalogService.getAllProducts(branchId);
-      const systemPrompt = buildAdminPrompt({ branchId }, allProducts);
+
+      // ── Consultar datos reales del negocio ──
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const whereBranch = branchId ? { branchId } : {};
+
+      // Ventas de hoy
+      const todaySales = await prisma.order.aggregate({
+        where: { ...whereBranch, status: 'PAID', createdAt: { gte: today } },
+        _sum: { amount: true },
+        _count: true,
+      });
+
+      // Pedidos pendientes
+      const pendingOrders = await prisma.order.findMany({
+        where: { ...whereBranch, status: 'PENDING' },
+        include: { contact: { select: { name: true, phone: true } }, items: { include: { product: { select: { name: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      // Pedidos pagados recientes (hoy)
+      const paidOrdersToday = await prisma.order.findMany({
+        where: { ...whereBranch, status: 'PAID', createdAt: { gte: today } },
+        include: { contact: { select: { name: true, phone: true } }, items: { include: { product: { select: { name: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      });
+
+      // Conversaciones activas
+      const activeConversations = await prisma.conversation.count({
+        where: { ...whereBranch, status: 'ACTIVE' },
+      });
+
+      // Conversaciones escaladas (esperando humano)
+      const escalatedConversations = await prisma.conversation.count({
+        where: { ...whereBranch, status: 'ESCALATED' },
+      });
+
+      // Clientes nuevos hoy
+      const newContactsToday = await prisma.contact.count({
+        where: { ...whereBranch, createdAt: { gte: today } },
+      });
+
+      // Stock bajo (≤10)
+      const lowStockProducts = await prisma.product.findMany({
+        where: { ...whereBranch, isAvailable: true, stock: { lte: 10 } },
+        select: { name: true, stock: true, category: true },
+        orderBy: { stock: 'asc' },
+        take: 15,
+      });
+
+      // Revenue total histórico
+      const totalRevenue = await prisma.order.aggregate({
+        where: { ...whereBranch, status: 'PAID' },
+        _sum: { amount: true },
+        _count: true,
+      });
+
+      // ── Armar datos para el prompt ──
+      const businessData = {
+        todayRevenue: todaySales._sum.amount ? parseFloat(todaySales._sum.amount) : 0,
+        todayOrdersCount: todaySales._count || 0,
+        pendingOrders: pendingOrders.map(o => ({
+          id: o.id,
+          client: o.contact?.name || 'Sin nombre',
+          phone: o.contact?.phone || '',
+          amount: parseFloat(o.amount),
+          products: o.items.map(i => `${i.product?.name} x${i.quantity}`),
+          city: o.shippingCity || '',
+          address: o.shippingAddress || '',
+        })),
+        paidOrdersToday: paidOrdersToday.map(o => ({
+          id: o.id,
+          client: o.contact?.name || 'Sin nombre',
+          amount: parseFloat(o.amount),
+          products: o.items.map(i => `${i.product?.name} x${i.quantity}`),
+        })),
+        activeConversations,
+        escalatedConversations,
+        newContactsToday,
+        lowStockProducts,
+        totalRevenue: totalRevenue._sum.amount ? parseFloat(totalRevenue._sum.amount) : 0,
+        totalOrdersAllTime: totalRevenue._count || 0,
+      };
+
+      const systemPrompt = buildAdminPrompt({ branchId }, allProducts, businessData);
 
       const completion = await openai.chat.completions.create({
         model: MODEL,
