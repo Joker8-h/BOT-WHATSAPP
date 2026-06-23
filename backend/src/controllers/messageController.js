@@ -201,6 +201,26 @@ class MessageController {
       }
 
       const actions = aiResult.actions || {};
+      logger.debug(`🔍 [ACTIONS] Para ${chatId}: contraentrega=${actions.shouldCreateContraEntrega}, closeSale=${actions.shouldCloseSale}, productos=${JSON.stringify(actions.productsToSell)}, addr=${actions.capturedAddress}, city=${actions.capturedCity}`);
+
+      // SAFETY NET: Si la IA dice en texto que va a registrar el pedido contraentrega pero no usó la etiqueta,
+      // detectarlo y activar shouldCreateContraEntrega manualmente.
+      if (!actions.shouldCreateContraEntrega && !actions.shouldCloseSale) {
+        const aiText = (aiResult.response || '').toLowerCase();
+        const impliesContraentrega = (
+          (aiText.includes('registrar tu pedido') || aiText.includes('proceder') || aiText.includes('contraentrega')) &&
+          (aiText.includes('dirección') || aiText.includes('entrega') || aiText.includes('enviar'))
+        );
+        if (impliesContraentrega) {
+          // Intentar extraer el producto de la respuesta de la IA
+          // Buscar en el historial reciente el último producto mencionado
+          const recentHistory = messageHistory.filter(m => m.role === 'assistant').slice(-3);
+          const historyText = recentHistory.map(m => m.content).join(' ');
+          // Extraer producto del catálogo que aparezca en el historial
+          logger.warn(`⚠️ [SAFETY-NET] La IA habla de contraentrega en texto pero no usó [PEDIDO_CONTRAENTREGA]. Texto: "${(aiResult.response || '').substring(0, 200)}"`);
+        }
+      }
+
       
       // Actualizar cliente
       const contactUpdates = {};

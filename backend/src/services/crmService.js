@@ -97,11 +97,14 @@ class CRMService {
         },
         include: {
           messages: {
-            orderBy: { createdAt: 'asc' },
-            take: 50,
+            orderBy: { createdAt: 'desc' },
+            take: 20,
           },
         },
       });
+
+      // Reordenar cronológicamente (la query trae desc para limitar a los últimos 20)
+      if (conversation) conversation.messages = conversation.messages.reverse();
 
       if (!conversation) {
         conversation = await prisma.conversation.create({
