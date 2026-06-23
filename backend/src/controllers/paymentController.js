@@ -78,13 +78,19 @@ class PaymentController {
       await whatsappService.sendMessage(order.branchId, order.contact.phone + '@c.us', confirmMsg);
 
       // B. NOTIFICAR: PRIMERO al teléfono directo, LUEGO al grupo como respaldo
+      const hasAddr = order.contact.address && order.contact.address !== 'Por confirmar';
+      const hasCity = order.contact.city && order.contact.city !== 'Por confirmar';
+      const addrWarning = (!hasAddr || !hasCity)
+        ? `\n⚠️ *DIRECCIÓN PENDIENTE DE CONFIRMACIÓN — CONTACTAR AL CLIENTE PARA OBTENER DIRECCIÓN COMPLETA*\n`
+        : '';
       const groupMsg = `🚨 *¡NUEVA VENTA REALIZADA!* 🚨\n\n` +
         `Sede: *${order.branch.name}*\n` +
         `Cliente: ${order.contact.name} (${order.contact.phone})\n` +
         `Productos:\n${productsList}\n` +
         `Total: ${formatCOP(order.amount)}\n\n` +
-        `📍 *DIRECCIÓN DE ENVÍO:*\n${order.contact.address || 'No especificada, contactar cliente'}\n` +
-        `${order.contact.city || ''}\n\n` +
+        `📍 *DIRECCIÓN DE ENVÍO:*\n${hasAddr ? order.contact.address : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
+        `🏙️ *CIUDAD:* ${hasCity ? order.contact.city : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
+        `${addrWarning}` +
         `⚠️ *Acción:* Preparar despacho de inmediato.`;
       
       await whatsappService.notifyPhone(order.branchId, groupMsg);

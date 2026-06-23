@@ -456,14 +456,18 @@ class WhatsAppService {
       if (branch?.notificationPhone) {
         const phone = branch.notificationPhone.replace(/[^0-9]/g, '');
         const chatId = `${phone}@c.us`;
-        await this.sendMessage(branchId, chatId, message);
-        logger.info(`📱 Notificación de venta enviada al teléfono ${phone} para sucursal ${branchId}`);
+        const sent = await this.sendMessage(branchId, chatId, message);
+        if (!sent) {
+          logger.warn(`⚠️ Falló envío de notificación al teléfono ${phone} de sucursal ${branchId}`);
+        } else {
+          logger.info(`📱 Notificación de venta enviada al teléfono ${phone} para sucursal ${branchId}`);
+        }
         
         // PRIORIDAD 2 (adicional): También enviar al grupo si existe
         if (branch.notificationGroupName) {
           await this.notifyGroup(branchId, message);
         }
-        return true;
+        return sent;
       }
 
       // FALLBACK: Si no hay teléfono, intentar con el grupo
@@ -472,11 +476,10 @@ class WhatsAppService {
         return await this.notifyGroup(branchId, message);
       }
 
-      logger.warn(`⚠️ Sucursal ${branchId} no tiene ni teléfono ni grupo de notificación configurado`);
+      logger.warn(`⚠️ Sucursal ${branchId} no tiene ni teléfono ni grupo de notificación configurado. Configura notificationPhone en la sucursal.`);
       return false;
     } catch (error) {
       logger.error(`Error en notifyPhone para sucursal ${branchId}:`, error);
-      // Intentar fallback al grupo si el envío al teléfono falló
       try {
         return await this.notifyGroup(branchId, message);
       } catch (groupError) {

@@ -11,6 +11,7 @@ async function seedSedes() {
       referencePoint: 'Sobre la misma cuadra del Gimnasio de la Salud',
       notes: null,
       storeFrontDesc: null,
+      notificationPhone: '573166575904',
     },
     create: {
       id: 1,
@@ -19,11 +20,12 @@ async function seedSedes() {
       address: 'Cra 10A # 1AN-09, Barrio Modelo (esquina)',
       phone: '',
       referencePoint: 'Sobre la misma cuadra del Gimnasio de la Salud',
+      notificationPhone: '573166575904',
       isActive: true,
       isAuthorized: true,
     },
   });
-  console.log(`✅ Sede: ${popayan.name}`);
+  console.log(`✅ Sede: ${popayan.name} | Notif: ${popayan.notificationPhone || 'NO CONFIGURADO'}`);
 
   // ── SEDE FLORENCIA ──
   const florencia = await prisma.branch.upsert({
@@ -46,7 +48,7 @@ async function seedSedes() {
       isAuthorized: true,
     },
   });
-  console.log(`✅ Sede: ${florencia.name}`);
+  console.log(`✅ Sede: ${florencia.name} | Notif: ${florencia.notificationPhone || '⚠️ SIN CONFIGURAR'}`);
 
   // ── SEDE PITALITO ──
   const pitalito = await prisma.branch.upsert({
@@ -68,7 +70,7 @@ async function seedSedes() {
       isAuthorized: true,
     },
   });
-  console.log(`✅ Sede: ${pitalito.name}`);
+  console.log(`✅ Sede: ${pitalito.name} | Notif: ${pitalito.notificationPhone || '⚠️ SIN CONFIGURAR'}`);
 
   // ── SEDE YOPAL ──
   const yopal = await prisma.branch.upsert({
@@ -92,7 +94,7 @@ async function seedSedes() {
       isAuthorized: true,
     },
   });
-  console.log(`✅ Sede: ${yopal.name}`);
+  console.log(`✅ Sede: ${yopal.name} | Notif: ${yopal.notificationPhone || '⚠️ SIN CONFIGURAR'}`);
 
   // ── EMPLEADOS ──
   const employees = [
