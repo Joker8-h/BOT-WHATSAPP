@@ -1,5 +1,5 @@
 const { openai, MODEL } = require('../config/openai');
-const { buildSystemPrompt, buildEmployeePrompt } = require('../ai/personality');
+const { buildSystemPrompt, buildEmployeePrompt, buildAdminPrompt } = require('../ai/personality');
 const { detectFlow, getFlowInstructions } = require('../ai/flows');
 const { classifyClient, getRecommendedCategories, getProductLimit } = require('../ai/decisionEngine');
 const { prisma } = require('../config/database');
@@ -261,6 +261,35 @@ class AIService {
     }
   }
 
+  async generateAdminResponse(userMessage, branchId = null) {
+    try {
+      const allProducts = await catalogService.getAllProducts(branchId);
+      const systemPrompt = buildAdminPrompt({ branchId }, allProducts);
+
+      const completion = await openai.chat.completions.create({
+        model: MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage }
+        ],
+        temperature: 0.3,
+      });
+
+      const aiResponse = completion.choices[0].message.content.trim();
+      const actions = this.parseActions(aiResponse);
+      const cleanResponse = this.cleanResponse(aiResponse);
+
+      return {
+        response: `👑 *MODO ADMIN*\n\n${cleanResponse}`,
+        actions,
+        tokensUsed: completion.usage?.total_tokens || 0
+      };
+    } catch (error) {
+      logger.error('Error en generateAdminResponse:', error);
+      return { response: '❌ Error consultando información.' };
+    }
+  }
+
   findClosestBranch(contact, branches) {
     if (!contact?.city || !branches.length) return branches[0] || null;
     const contactCity = contact.city.toLowerCase().trim();
@@ -308,6 +337,11 @@ class AIService {
     const neighborhoodMatch = response.match(/\[CAPTURAR_BARRIO:(.+?)\]/);
     if (neighborhoodMatch) {
       actions.capturedNeighborhood = neighborhoodMatch[1].trim();
+    }
+
+    const deliveryPhoneMatch = response.match(/\[CAPTURAR_TELEFONO_ENTREGA:(.+?)\]/);
+    if (deliveryPhoneMatch) {
+      actions.capturedDeliveryPhone = deliveryPhoneMatch[1].trim();
     }
 
     const saleMatch = response.match(/\[CERRAR_VENTA:(.+?)\]/);

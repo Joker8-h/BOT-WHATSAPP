@@ -59,6 +59,19 @@ class MessageController {
         return;
       }
 
+      // ── 1b. ¿ES EL DUEÑO/ADMIN? ─────────────────────────────
+      const branchForAdmin = await prisma.branch.findUnique({
+        where: { id: branchId },
+        select: { notificationPhone: true }
+      });
+      const adminPhone = branchForAdmin?.notificationPhone?.replace(/[^0-9]/g, '');
+      if (adminPhone && cleanPhone === adminPhone) {
+        logger.info(`👑 [ADMIN] Mensaje del dueño (${chatId})`);
+        const adminResponse = await aiService.generateAdminResponse(body, branchId);
+        await whatsappService.sendMessage(branchId, chatId, adminResponse.response);
+        return;
+      }
+
       // ── 2. CRM Y CONVERSACIÓN ────────────────────────────────
       const contact = await crmService.findOrCreateContact(chatId, branchId);
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
@@ -152,6 +165,7 @@ class MessageController {
       if (actions.capturedAddress) contactUpdates.address = actions.capturedAddress;
       if (actions.capturedNeighborhood) contactUpdates.neighborhood = actions.capturedNeighborhood;
       if (actions.capturedInterests) contactUpdates.interests = actions.capturedInterests;
+      if (actions.capturedDeliveryPhone) contactUpdates.deliveryPhone = actions.capturedDeliveryPhone;
 
       if (Object.keys(contactUpdates).length > 0) {
         await crmService.updateContactInfo(contact.id, contactUpdates);
@@ -203,14 +217,16 @@ class MessageController {
           await crmService.saveMessage(conversation.id, 'ASSISTANT', confirmMsg);
 
           // Notificar al número central
+          const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
           const centralMsg = `📦 *PEDIDO CONTRAENTREGA* 📦\n\n` +
-            `👤 *Cliente:* ${contact.name || 'Sin nombre'} (${contact.phone})\n` +
-            `📱 *Teléfono:* ${contact.phone}\n` +
+            `👤 *Cliente:* ${contact.name || 'Sin nombre'}\n` +
+            `📱 *WhatsApp:* ${contact.phone}\n` +
+            `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
             `📦 *Productos:* ${productNames.join(', ')}\n` +
             `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
             `📍 *DIRECCIÓN DE ENTREGA:*\n` +
             `${contactUpdates.address || contact.address || 'Por confirmar'}\n` +
-            `🏙️ *Ciudad:* ${contactUpdates.city || contact.city || 'Por confirmar'}\n` +
+            `🏙️ *CIUDAD:* ${contactUpdates.city || contact.city || 'Por confirmar'}\n` +
             `${contactUpdates.neighborhood ? `🏘️ *Barrio:* ${contactUpdates.neighborhood}\n` : ''}` +
             `\n⚠️ *TIPO:* Contraentrega (pago en efectivo al recibir)`;
 

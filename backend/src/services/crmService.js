@@ -57,6 +57,7 @@ class CRMService {
           address: data.address || undefined,
           neighborhood: data.neighborhood || undefined,
           interests: data.interests || undefined,
+          deliveryPhone: data.deliveryPhone || undefined,
         },
       });
     } catch (error) {

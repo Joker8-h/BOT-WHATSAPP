@@ -132,15 +132,17 @@ class WompiController {
         // NOTIFICAR: PRIMERO al teléfono directo, LUEGO al grupo como respaldo
         const itemsList = order.items.map(i => `- ${i.product.name} (x${i.quantity})`).join('\n');
         const neighborhoodInfo = order.contact.neighborhood ? `🏘️ *Barrio:* ${order.contact.neighborhood}\n` : '';
+        const deliveryPhone = order.contact.deliveryPhone || 'No proporcionado';
         const notificationMsg = `✅ *¡CLIENTE YA PAGÓ VÍA WOMPI!* ✅\n\n` +
                                 `💰 *Total pagado:* ${formatCOP(order.amount)}\n` +
                                 `👤 *Cliente:* ${order.contact.name || 'Sin nombre'}\n` +
-                                `📱 *Teléfono:* ${order.contact.phone}\n` +
+                                `📱 *WhatsApp:* ${order.contact.phone}\n` +
+                                `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
                                 `🏪 *Sucursal:* ${order.branch.name} (${order.branch.city})\n\n` +
                                 `📦 *Productos:*\n${itemsList}\n\n` +
                                 `📍 *DIRECCIÓN DE ENVÍO:*\n` +
                                 `${order.shippingAddress || 'No especificada'}\n` +
-                                `🏙️ *Ciudad:* ${order.shippingCity || 'No especificada'}\n` +
+                                `🏙️ *CIUDAD:* ${order.shippingCity || 'No especificada'}\n` +
                                 `${neighborhoodInfo}` +
                                 `💳 *Ref Wompi:* ${transaction.id}\n\n` +
                                 `🚀 *ACCIÓN REQUERIDA:* Preparar despacho inmediato`;
