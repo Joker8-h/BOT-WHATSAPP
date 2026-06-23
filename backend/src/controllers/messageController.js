@@ -289,6 +289,16 @@ class MessageController {
           }
         }
 
+        if (orderItems.length === 0) {
+          logger.error(`⚠️ [CONTRAENTREGA] No se encontraron productos en BD para: ${actions.productsToSell.join(', ')}`);
+          const fallbackMsg = '⚠️ Hubo un problema identificando los productos en nuestro sistema. Un asesor revisará tu pedido en breve para confirmarlo manualmente.';
+          await whatsappService.sendMessage(branchId, chatId, fallbackMsg);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', fallbackMsg);
+          
+          await whatsappService.notifyPhone(branchId, `⚠️ *ALERTA DE PEDIDO (Contraentrega)*\nEl bot no encontró los productos en la BD:\nProductos: ${actions.productsToSell.join(', ')}\nCliente: ${contact.name} (${contact.phone})`);
+          return;
+        }
+
         if (orderItems.length > 0) {
           // Crear orden en BD con estado PENDING
           const order = await crmService.createOrder({
@@ -363,6 +373,16 @@ class MessageController {
             totalAmount += parseFloat(product.price) * qty;
             productNames.push(`${product.name}${qty > 1 ? ` x${qty}` : ''}`);
           }
+        }
+
+        if (orderItems.length === 0) {
+          logger.error(`⚠️ [WOMPI] No se encontraron productos en BD para: ${actions.productsToSell.join(', ')}`);
+          const fallbackMsg = '⚠️ Hubo un problema identificando los productos en nuestro sistema. Un asesor revisará tu pedido en breve para generar el link de pago manualmente.';
+          await whatsappService.sendMessage(branchId, chatId, fallbackMsg);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', fallbackMsg);
+          
+          await whatsappService.notifyPhone(branchId, `⚠️ *ALERTA DE PEDIDO (Wompi)*\nEl bot no encontró los productos en la BD:\nProductos: ${actions.productsToSell.join(', ')}\nCliente: ${contact.name} (${contact.phone})`);
+          return;
         }
 
         if (orderItems.length > 0) {
