@@ -60,13 +60,21 @@ class MessageController {
       }
 
       // ── 1b. ¿ES EL DUEÑO/ADMIN? ─────────────────────────────
-      const branchForAdmin = await prisma.branch.findUnique({
-        where: { id: branchId },
-        select: { notificationPhone: true }
+      const allBranches = await prisma.branch.findMany({
+        select: { id: true, notificationPhone: true }
       });
-      const adminPhone = branchForAdmin?.notificationPhone?.replace(/[^0-9]/g, '');
-      if (adminPhone && cleanPhone === adminPhone) {
-        logger.info(`👑 [ADMIN] Mensaje del dueño (${chatId})`);
+      const matchedAdmin = allBranches.find(b => {
+        const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
+        return phone && phone === cleanPhone;
+      });
+
+      // DEBUG temporal - log para diagnosticar
+      if (allBranches.some(b => b.notificationPhone)) {
+        logger.info(`🔍 [DEBUG-ADMIN] cleanPhone: "${cleanPhone}" | Branches notificationPhones: ${allBranches.map(b => `${b.id}:${b.notificationPhone}`).join(', ')}`);
+      }
+
+      if (matchedAdmin) {
+        logger.info(`👑 [ADMIN] Mensaje del dueño (${chatId}) - Branch ${matchedAdmin.id}`);
         const adminResponse = await aiService.generateAdminResponse(body, branchId);
         await whatsappService.sendMessage(branchId, chatId, adminResponse.response);
         return;
