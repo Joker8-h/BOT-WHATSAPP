@@ -15,6 +15,7 @@ function detectFlow(message, context) {
     price: ['precio', 'cuanto', 'cuánto', 'vale', 'cuesta', 'valor', 'costos', 'costo'],
     shipping: ['envio', 'envío', 'llega', 'domicilio', 'despacho', 'entregan'],
     payment: ['pago', 'pagar', 'tarjeta', 'transferencia', 'nequi', 'daviplata'],
+    confirmSale: ['enviamelo', 'enviamelos', 'envíamelo', 'envíamelos', 'sí quiero', 'si quiero', 'dale', 'ok compra', 'lo quiero', 'sí lo llevo', 'si lo llevo', 'confirmo', 'correcto', 'afirmativo', 'eso', 'sale', 'deacuerdo', 'de acuerdo', 'ok mande', 'ok envíe', 'ok enviame'],
     catalog: ['catalogo', 'catálogo', 'productos', 'que tienen', 'qué tienen', 'que venden'],
     help: ['ayuda', 'asesor', 'asesora', 'humano', 'persona', 'hablar con alguien', 'administrador', 'reclamo', 'queja', 'jefe', 'gerente', 'quejarme'],
     thanks: ['gracias', 'gracia', 'thank', 'perfecto', 'listo', 'vale gracias'],
@@ -36,6 +37,11 @@ function detectFlow(message, context) {
 
   // Detectar cierre
   if (keywords.payment.some(k => msg.includes(k))) {
+    return 'CLOSING';
+  }
+
+  // Detectar confirmación de compra (el cliente dice que sí, que lo envíen, etc.)
+  if (keywords.confirmSale.some(k => msg.includes(k))) {
     return 'CLOSING';
   }
 
@@ -125,6 +131,7 @@ function getFlowInstructions(flow) {
   * Si el cliente dice que SÍ lo quiere por contraentrega, verifica que tengas dirección y usa [PEDIDO_CONTRAENTREGA:nombre_del_producto]
   * Si NO está en esas ciudades: explícale que contraentrega solo está disponible en esas 4 ciudades, y ofrécele pago por link seguro Wompi
 - Si el cliente acepta pagar por Wompi, verifica que tengas dirección y usa [CERRAR_VENTA:nombre_del_producto] para activar el link de pago
+- **CUANDO EL CLIENTE DIGA QUE SÍ QUIERE COMPRAR** (ej: "sí quiero", "envíamelo", "dale", "lo llevo", "confirmo"), DEBES usar [CERRAR_VENTA] o [PEDIDO_CONTRAENTREGA] INMEDIATAMENTE. NO preguntes más, NO des más información, CIERRA la venta.
 - NO presiones, pero facilita el camino
 - **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA]. Pide la dirección primero.`,
 
