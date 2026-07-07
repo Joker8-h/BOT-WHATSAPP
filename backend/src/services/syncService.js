@@ -38,7 +38,7 @@ class SyncService {
 
       logger.info('✅ Sincronización global completada.');
     } catch (error) {
-      logger.error('❌ Error en syncAll:', error);
+      logger.error('❌ Error en syncAll:', error.message || error);
     }
   }
 
