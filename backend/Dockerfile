@@ -14,8 +14,9 @@ WORKDIR /app
 ENV PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
 
-# Dependencias del sistema requeridas por el Chromium de puppeteer
+# Dependencias del sistema + Chromium para WhatsApp
 RUN apt-get update && apt-get install -y \
+    chromium \
     ca-certificates \
     fonts-liberation \
     libasound2 \
