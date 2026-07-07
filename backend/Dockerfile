@@ -14,6 +14,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
+    fonts-noto-color-emoji \
     libappindicator3-1 \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -29,12 +30,18 @@ RUN apt-get update && apt-get install -y \
     libxcomposite1 \
     libxdamage1 \
     libxrandr2 \
+    libxss1 \
+    libxtst6 \
+    libatspi2.0-0 \
     xdg-utils \
+    dbus-x11 \
     --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    dbus-uuidgen --ensure
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
 
 # Instalar dependencias del backend
 COPY backend/package*.json ./
