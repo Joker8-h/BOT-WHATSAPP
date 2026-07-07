@@ -16,6 +16,10 @@ node seed.js
 echo "🏪 Poblando sedes y empleados..."
 node scripts/seedSedes.js
 
-# 3. Iniciar la aplicación (con --expose-gc para liberar memoria RAM durante sync de imágenes)
+# 3. Limpiar cualquier sesión corrupta que haga colapsar a Chromium
+echo "🧹 Eliminando sesiones corruptas antiguas..."
+rm -rf /app/.wwebjs_auth/*
+
+# 4. Iniciar la aplicación (con --expose-gc para liberar memoria RAM durante sync de imágenes)
 echo "🚀 Iniciando servidor..."
 node --expose-gc server.js
