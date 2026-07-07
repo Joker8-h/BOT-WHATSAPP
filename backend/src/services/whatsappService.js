@@ -128,22 +128,11 @@ class WhatsAppService {
 
         if (qr) {
           logger.info(`📱 QR Generado para sucursal ${branchId}`);
-          // Convertir QR a base64 image para el admin panel
-          try {
-            const qrBase64 = await qrcode.toDataURL(qr);
-            this.sessions.set(branchId, { 
-              ...this.sessions.get(branchId), 
-              qr: qrBase64, 
-              status: 'WAITING_QR' 
-            });
-          } catch (e) {
-            // Si no puede generar imagen, guardar el string raw
-            this.sessions.set(branchId, { 
-              ...this.sessions.get(branchId), 
-              qr, 
-              status: 'WAITING_QR' 
-            });
-          }
+          this.sessions.set(branchId, { 
+            ...this.sessions.get(branchId), 
+            qr, 
+            status: 'WAITING_QR' 
+          });
         }
 
         if (connection === 'close') {
