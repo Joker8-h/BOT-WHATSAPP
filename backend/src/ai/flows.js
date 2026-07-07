@@ -24,7 +24,13 @@ function detectFlow(message, context) {
     replyToContact: ['escribiste', 'atendiendo', 'vi tu mensaje', 'vi el mensaje', 'veo tu mensaje', 'hace rato', 'recién veo', 'no te había visto', 'me mandaste', 'me enviaste', 'te respondo'],
     store: ['tienda física', 'donde quedan', 'ubicación', 'sucursal', 'donde están', 'popayán', 'florencia', 'yopal', 'local fisico'],
     address: ['calle', 'carrera', 'cra', 'avenida', 'av', 'diagonal', 'transversal', 'barrio', 'torre', 'apto', 'apartamento', 'manzana', 'lote'],
+    polla: ['polla', 'mundial', 'futbol', 'fútbol', 'copa', 'mundialista', 'champions', 'liga', 'partido', 'apostar', 'apuesta'],
   };
+
+  // Detectar polla mundialista (PRIORIDAD MÁXIMA — antes de cualquier otro flujo)
+  if (keywords.polla.some(k => msg.includes(k))) {
+    return 'POLL';
+  }
 
   // Detectar escalamiento
   if (keywords.help.some(k => msg.includes(k))) {
@@ -159,6 +165,14 @@ function getFlowInstructions(flow) {
 - Confirma cortamente: "Entiendo perfectamente. Ya mismo te comunico con uno de nuestros asesores para ayudarte."
 - NO des correos ni números. Solo di que ya los pasas.
 - Responde con [ESCALAR] al final de tu mensaje`,
+
+    POLL: `FLUJO ACTUAL: POLLA MUNDIALISTA
+- El cliente pregunta por la polla mundialista, fútbol, copa, mundial, o cualquier tema relacionado
+- Responde con entusiasmo y calidez
+- SIEMPRE incluye el link: https://polla.fantasias.com.co
+- Sé breve y directo: NO vendas productos en este momento
+- Ejemplo de respuesta: "¡Claro que sí! 🏆 Participa en nuestra polla mundialista y compite con otros fans. Entra aquí 👉 https://polla.fantasias.com.co ¿En qué más te puedo ayudar?"
+- Si el cliente quiere volver a productos, transiciona suavemente al flujo de ventas`,
 
     FAREWELL: `FLUJO ACTUAL: DESPEDIDA
 - Agradece amablemente
