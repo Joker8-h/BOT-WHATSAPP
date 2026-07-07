@@ -11,10 +11,11 @@ RUN npm run build
 FROM node:20-bookworm-slim
 WORKDIR /app
 
-# Solo necesitamos dependencias mínimas para Node.js y crypto (requeridas por Baileys)
+# Solo necesitamos dependencias mínimas para Node.js, crypto y git (requerido por Baileys en npm install)
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
+    git \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
