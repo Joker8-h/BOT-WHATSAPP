@@ -112,7 +112,7 @@ class WhatsAppService {
         dataPath: './.wwebjs_auth',
       }),
       puppeteer: {
-        headless: 'new',
+        headless: true,
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
@@ -120,7 +120,6 @@ class WhatsAppService {
           '--disable-accelerated-2d-canvas',
           '--no-first-run',
           '--no-zygote',
-          '--single-process',
           '--disable-gpu',
           '--disable-software-rasterizer',
           '--disable-features=IsolateOrigins,site-per-process',
@@ -128,7 +127,6 @@ class WhatsAppService {
           '--window-size=1280,800',
           '--disable-blink-features=AutomationControlled',
           '--disable-extensions',
-          '--disable-dbus',
           '--disable-background-networking',
           '--disable-default-apps',
           '--disable-sync',
