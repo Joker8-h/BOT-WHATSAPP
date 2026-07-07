@@ -10,28 +10,17 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// 🛡️ LIMPIEZA DE EMERGENCIA DE BLOQUEOS (NATIVO NODE)
+// 🛡️ INICIALIZAR DIRECTORIO DE SESIONES BAILEYS
 try {
-  const authDir = path.join(process.cwd(), '.wwebjs_auth');
-  if (fs.existsSync(authDir)) {
-    console.log('🧹 [INIT-CLEAN] Limpiando bloqueos de forma nativa...');
-    const cleanRecursively = (dir) => {
-      const files = fs.readdirSync(dir);
-      files.forEach(file => {
-        const p = path.join(dir, file);
-        if (fs.lstatSync(p).isDirectory()) {
-          cleanRecursively(p);
-        } else if (file.includes('Singleton') || file.includes('.lock')) {
-          try { fs.unlinkSync(p); } catch (e) {}
-        }
-      });
-    };
-    cleanRecursively(authDir);
-    console.log('✅ [INIT-CLEAN] Entorno desbloqueado.');
+  const baileysDir = path.join(process.cwd(), '.baileys_auth');
+  if (!fs.existsSync(baileysDir)) {
+    fs.mkdirSync(baileysDir, { recursive: true });
+    console.log('📁 [INIT] Directorio de sesiones Baileys creado.');
   }
 } catch (e) {
-  console.warn('⚠️ [INIT-CLEAN] No se pudo limpiar, puede haber bloqueos.');
+  console.warn('⚠️ [INIT] No se pudo crear directorio de sesiones.');
 }
+
 
 const cors = require('cors');
 const helmet = require('helmet');

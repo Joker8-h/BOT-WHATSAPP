@@ -1,31 +1,50 @@
 // ─────────────────────────────────────────────────────────
-//  SERVICE: WhatsApp — Gestión Multi-sucursal (Multi-Session)
+//  SERVICE: WhatsApp — Gestión Multi-sucursal con Baileys
+//  Sin Chromium/Puppeteer — WebSocket directo a WhatsApp
 // ─────────────────────────────────────────────────────────
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  makeInMemoryStore,
+  jidNormalizedUser,
+  proto,
+  downloadContentFromMessage,
+  generateWAMessageFromContent,
+  prepareWAMessageMedia,
+  getContentType,
+} = require('@whiskeysockets/baileys');
+const { Boom } = require('@hapi/boom');
 const logger = require('../utils/logger');
 const { antiBanDelay } = require('../utils/helpers');
 const { prisma } = require('../config/database');
 const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
+const qrcode = require('qrcode');
+const P = require('pino');
+
+// Logger silencioso para Baileys (no llena los logs)
+const baileysLogger = P({ level: 'silent' });
 
 class WhatsAppService {
   constructor() {
-    // Mapa de clientes: branchId -> client
+    // Mapa de sockets: branchId -> socket Baileys
     this.clients = new Map();
-    // Mapa de estados: branchId -> { isReady: boolean, qr: string, status: string }
+    // Mapa de estados: branchId -> { isReady, qr, status }
     this.sessions = new Map();
-    this.pendingInits = new Set(); // 🚩 Nuevo: Control de procesos en curso
+    this.pendingInits = new Set();
     
     this.messageHandler = null;
-
-    // Flag para distinguir desconexiones manuales vs accidentales
     this.manualLogout = new Set();
-
-    // Configuración global anti-ban
     this.maxPerMinute = parseInt(process.env.MAX_MESSAGES_PER_MINUTE) || 20;
 
-    // El cierre de recursos se maneja asincrónicamente en server.js (Graceful Shutdown)
+    // Directorio para guardar sesiones (auth)
+    this.authDir = path.join(process.cwd(), '.baileys_auth');
+    if (!fs.existsSync(this.authDir)) {
+      fs.mkdirSync(this.authDir, { recursive: true });
+    }
   }
 
   /**
@@ -61,7 +80,6 @@ class WhatsAppService {
    * Inicializa o recupera una sesión para una sucursal específica
    */
   async initializeBranch(branchId) {
-    // ── Evitar duplicidad de inicialización (CRÍTICO) ──
     if (this.clients.has(branchId)) {
       logger.info(`ℹ️ Sucursal ${branchId} ya tiene un cliente activo.`);
       return this.clients.get(branchId);
@@ -73,156 +91,160 @@ class WhatsAppService {
     }
 
     this.pendingInits.add(branchId);
+    logger.info(`🚀 [WA-INIT] Iniciando instancia Baileys para sucursal: ${branchId}`);
 
-    logger.info(`🚀 [WA-INIT] Iniciando instancia para sucursal: ${branchId}`);
-    console.log(`🔧 [WA-INIT] Chromium path: ${process.env.PUPPETEER_EXECUTABLE_PATH || 'auto-detect'}`);
-    console.log(`🔧 [WA-INIT] CWD: ${process.cwd()}`);
-    
-    // Limpieza de candados de sesión (Locks) — Crítico para Railway/Docker
-    const possibleLockPaths = [
-      path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`, 'Default', 'SingletonLock'),
-      path.join(process.cwd(), '.wwebjs_auth', `session-branch_${branchId}`, 'SingletonLock')
-    ];
+    try {
+      const authDir = path.join(this.authDir, `branch_${branchId}`);
+      if (!fs.existsSync(authDir)) {
+        fs.mkdirSync(authDir, { recursive: true });
+      }
 
-    // Intentar borrar el candado con reintentos (Railway/Docker fix)
-    let lockCleared = false;
-    for (let i = 0; i < 15; i++) {
-      for (const lockPath of possibleLockPaths) {
-        try {
-          if (fs.existsSync(lockPath)) {
-            fs.unlinkSync(lockPath);
-            logger.info(`🔓 Candado eliminado con éxito en intento ${i+1}: ${lockPath}`);
-            lockCleared = true;
-          } else {
-            lockCleared = true; // No existe, así que estamos bien
+      const { state, saveCreds } = await useMultiFileAuthState(authDir);
+      const { version } = await fetchLatestBaileysVersion();
+      
+      logger.info(`📦 Baileys versión WA: ${version.join('.')}`);
+
+      // Estado inicial
+      this.sessions.set(branchId, { isReady: false, qr: null, status: 'INITIALIZING' });
+
+      const sock = makeWASocket({
+        version,
+        logger: baileysLogger,
+        auth: state,
+        printQRInTerminal: false, // Lo manejamos nosotros
+        generateHighQualityLinkPreview: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 30000,
+        keepAliveIntervalMs: 10000,
+        retryRequestDelayMs: 250,
+        browser: ['Fantasias Bot', 'Chrome', '120.0.0'],
+      });
+
+      this.clients.set(branchId, sock);
+
+      // ── Evento: QR Code ──
+      sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+          logger.info(`📱 QR Generado para sucursal ${branchId}`);
+          // Convertir QR a base64 image para el admin panel
+          try {
+            const qrBase64 = await qrcode.toDataURL(qr);
+            this.sessions.set(branchId, { 
+              ...this.sessions.get(branchId), 
+              qr: qrBase64, 
+              status: 'WAITING_QR' 
+            });
+          } catch (e) {
+            // Si no puede generar imagen, guardar el string raw
+            this.sessions.set(branchId, { 
+              ...this.sessions.get(branchId), 
+              qr, 
+              status: 'WAITING_QR' 
+            });
           }
-        } catch (e) {
-          logger.warn(`⏳ Intento ${i+1}: El candado de la sucursal ${branchId} sigue retenido. Esperando 1s...`);
         }
-      }
-      if (lockCleared) break;
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
 
-    const startTime = Date.now();
+        if (connection === 'close') {
+          const shouldReconnect = (lastDisconnect?.error instanceof Boom)
+            ? lastDisconnect.error.output?.statusCode !== DisconnectReason.loggedOut
+            : true;
+          
+          const reason = lastDisconnect?.error?.output?.statusCode;
+          logger.warn(`🔌 WhatsApp sucursal ${branchId} desconectado. Razón: ${reason}`);
 
-    // Eliminar la variable que Railway inyecta, que puede apuntar a un path incorrecto
-    delete process.env.PUPPETEER_EXECUTABLE_PATH;
-    delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
+          this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
+          this.clients.delete(branchId);
+          this.pendingInits.delete(branchId);
 
-    const client = new Client({
-      authStrategy: new LocalAuth({
-        clientId: `branch_${branchId}`,
-        dataPath: './.wwebjs_auth',
-      }),
-      puppeteer: {
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--no-first-run',
-          '--no-zygote',
-        ],
-        executablePath: '/usr/bin/chromium',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        protocolTimeout: 300000,
-      },
-      authTimeoutMs: 300000,
-      takeoverOnConflict: true,
-      takeoverTimeoutMs: 15000,
-      webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1012170943-alpha.html',
-      }
-    });
-
-    // Estado inicial
-    this.sessions.set(branchId, { isReady: false, qr: null, status: 'INITIALIZING' });
-
-    // ── Eventos del Cliente ──
-    client.on('qr', (qr) => {
-      logger.info(`📱 QR Generado para sucursal ${branchId}`);
-      this.sessions.set(branchId, { ...this.sessions.get(branchId), qr, status: 'WAITING_QR' });
-    });
-
-    client.on('ready', () => {
-      logger.info(`✅ WhatsApp sucursal ${branchId} conectado!`);
-      this.sessions.set(branchId, { isReady: true, qr: null, status: 'READY' });
-    });
-
-    client.on('authenticated', () => {
-      logger.info(`🔐 WhatsApp sucursal ${branchId} autenticado`);
-      // Fallback: si 'ready' no llega (script injection timeout), marcar como listo igual
-      setTimeout(() => {
-        const s = this.sessions.get(branchId);
-        if (s && !s.isReady) {
-          logger.info(`✅ WhatsApp sucursal ${branchId} listo (vía fallback authenticated)`);
-          this.sessions.set(branchId, { ...s, isReady: true, status: 'READY' });
+          if (this.manualLogout.has(branchId)) {
+            logger.info(`🛑 Desconexión MANUAL de sucursal ${branchId}. No se reconectará.`);
+            this.manualLogout.delete(branchId);
+          } else if (shouldReconnect) {
+            logger.info(`🔄 Desconexión accidental. Reconectando sucursal ${branchId} en 5s...`);
+            setTimeout(() => {
+              this.initializeBranch(branchId).catch(err =>
+                logger.error(`Error re-inicializando tras desconexión en ${branchId}:`, err)
+              );
+            }, 5000);
+          } else {
+            logger.warn(`⚠️ Sesión cerrada (logout). Necesita escanear QR nuevamente.`);
+          }
         }
-      }, 15000); 
-    });
 
-    client.on('auth_failure', (msg) => {
-      logger.error(`❌ Error auth sucursal ${branchId}:`, msg);
-      this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'AUTH_FAILURE' });
-    });
-
-    client.on('disconnected', (reason) => {
-      logger.warn(`🔌 WhatsApp sucursal ${branchId} desconectado:`, reason);
-      this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
-      this.clients.delete(branchId);
-
-      // Solo auto-reconectar si NO fue un cierre manual desde el admin
-      if (this.manualLogout.has(branchId)) {
-        logger.info(`🛑 Desconexión MANUAL de sucursal ${branchId}. No se reconectará.`);
-        this.manualLogout.delete(branchId);
-      } else {
-        logger.info(`🔄 Desconexión accidental. Regenerando QR para sucursal ${branchId} en 5s...`);
-        setTimeout(() => {
-          this.initializeBranch(branchId).catch(err => 
-            logger.error(`Error re-inicializando tras desconexión en ${branchId}:`, err)
-          );
-        }, 5000);
-      }
-    });
-
-    // Handler de mensajes entrantes
-    client.on('message', async (msg) => {
-      logger.info(`📩 [WA-RAW] Mensaje de ${msg.from}: ${msg.body?.substring(0, 20)}...`);
-      if (this.messageHandler) {
-        try {
-          await this.messageHandler(msg, branchId);
-        } catch (error) {
-          logger.error(`Error procesando mensaje en sucursal ${branchId}:`, error);
+        if (connection === 'open') {
+          logger.info(`✅ WhatsApp sucursal ${branchId} conectado!`);
+          this.sessions.set(branchId, { isReady: true, qr: null, status: 'READY' });
+          this.pendingInits.delete(branchId);
         }
-      }
-    });
+      });
 
-    // ── Iniciar Cliente (Sin await para evitar timeout 500) ──
-    this.clients.set(branchId, client);
-    
-    client.initialize().then(() => {
-      const endTime = Date.now();
-      logger.info(`✅ [WA-READY] WhatsApp sucursal ${branchId} listo en ${(endTime - startTime)/1000}s`);
-      this.pendingInits.delete(branchId);
-    }).catch(err => {
+      // ── Guardar credenciales cuando cambian ──
+      sock.ev.on('creds.update', saveCreds);
+
+      // ── Handler de mensajes entrantes ──
+      sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
+        
+        for (const msg of messages) {
+          if (msg.key.fromMe) continue; // Ignorar mensajes propios
+          
+          const from = msg.key.remoteJid;
+          const body = msg.message?.conversation 
+            || msg.message?.extendedTextMessage?.text 
+            || msg.message?.imageMessage?.caption
+            || msg.message?.videoMessage?.caption
+            || '';
+
+          logger.info(`📩 [WA-RAW] Mensaje de ${from}: ${body?.substring(0, 20)}...`);
+
+          if (this.messageHandler) {
+            // Adaptar formato de Baileys al formato que espera el messageHandler
+            const msgId = msg.key.id || `${from}-${Date.now()}`;
+            const adaptedMsg = {
+              from,
+              body,
+              fromMe: msg.key.fromMe || false,
+              hasMedia: !!(msg.message?.imageMessage || msg.message?.videoMessage || msg.message?.documentMessage || msg.message?.audioMessage),
+              timestamp: msg.messageTimestamp || Math.floor(Date.now() / 1000),
+              id: {
+                _serialized: msgId,
+                id: msgId,
+              },
+              _baileysMsg: msg, // Guardar referencia original
+              // Simular interface de whatsapp-web.js
+              reply: async (text) => {
+                await this.sendMessage(branchId, from, text);
+              }
+            };
+
+            try {
+              await this.messageHandler(adaptedMsg, branchId);
+            } catch (error) {
+              logger.error(`Error procesando mensaje en sucursal ${branchId}:`, error);
+            }
+          }
+        }
+      });
+
+      return sock;
+    } catch (err) {
       console.error(`❌ [WHATSAPP-ERROR] Sucursal ${branchId}:`, err.message || err);
       logger.error(`❌ Error crítico iniciando sucursal ${branchId}:`, err);
-      this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'ERROR' });
+      this.sessions.set(branchId, { isReady: false, qr: null, status: 'ERROR' });
       this.clients.delete(branchId);
       this.pendingInits.delete(branchId);
-      // Auto-recovery: reintentar en 30 segundos
+
       logger.info(`🔄 Auto-recovery: reintentando sucursal ${branchId} en 30s...`);
       setTimeout(() => {
-        this.initializeBranch(branchId).catch(e => 
+        this.initializeBranch(branchId).catch(e =>
           logger.error(`❌ Auto-recovery falló para sucursal ${branchId}:`, e)
         );
       }, 30000);
-    });
 
-    return client;
+      return null;
+    }
   }
 
   /**
@@ -233,47 +255,33 @@ class WhatsAppService {
   }
 
   /**
+   * Normaliza un número de teléfono al formato JID de WhatsApp
+   */
+  _normalizeJid(to) {
+    if (to.includes('@')) return to;
+    const clean = to.replace(/\D/g, '');
+    return `${clean}@s.whatsapp.net`;
+  }
+
+  /**
    * Envía un mensaje desde una sucursal específica
    */
   async sendMessage(branchId, to, text) {
     const masterBranchId = 1;
-    const client = this.clients.get(masterBranchId);
+    const sock = this.clients.get(masterBranchId);
     const session = this.sessions.get(masterBranchId);
 
-    if (!client) {
+    if (!sock) {
       logger.warn(`WhatsApp Central (Branch ${masterBranchId}): cliente no existe`);
       return false;
     }
     if (!session?.isReady) {
-      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está listo (isReady=false). Intentando enviar de todas formas...`);
+      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está lista (isReady=false). Intentando enviar de todas formas...`);
     }
 
     try {
       await antiBanDelay();
-      
-      // Sanitizar el destinatario
-      let chatId = to;
-      if (!to.includes('@')) {
-        const cleanPhone = to.replace(/\D/g, ''); 
-        chatId = `${cleanPhone}@c.us`;
-      }
-      // Los @lid se usan tal cual — no intentar obtener chat object para evitar timeouts
-
-      // ── Simular escritura (3 puntos) ──
-      let chat = null;
-      try {
-        chat = await client.getChatById(chatId);
-        await chat.sendStateTyping();
-      } catch (e) {
-        // Si no se puede obtener el chat, solo continuar con delay normal
-      }
-
-      const typingMs = Math.min(text.length * 30, 2500);
-      await new Promise(resolve => setTimeout(resolve, typingMs));
-
-      if (chat) {
-        try { await chat.clearState(); } catch (e) { /* ignorar */ }
-      }
+      const jid = this._normalizeJid(to);
 
       // --- Lógica de División de Mensajes Largos ---
       const maxLength = 450;
@@ -291,12 +299,7 @@ class WhatsAppService {
         if (remaining) parts.push(remaining);
 
         for (let i = 0; i < parts.length; i++) {
-          // Mostrar escritura antes de cada parte
-          if (chat) {
-            try { await chat.sendStateTyping(); } catch (e) { /* ignorar */ }
-          }
-          await new Promise(resolve => setTimeout(resolve, 800));
-          await client.sendMessage(chatId, parts[i]);
+          await sock.sendMessage(jid, { text: parts[i] });
           if (i < parts.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 1200));
           }
@@ -305,8 +308,8 @@ class WhatsAppService {
       }
 
       // --- Envío Normal ---
-      await client.sendMessage(chatId, text);
-      logger.debug(`📤 Mensaje enviado desde sucursal ${branchId} a ${chatId}`);
+      await sock.sendMessage(jid, { text });
+      logger.debug(`📤 Mensaje enviado desde sucursal ${branchId} a ${jid}`);
       return true;
     } catch (error) {
       logger.error(`❌ Error enviando mensaje desde sucursal ${branchId} a ${to}:`, error);
@@ -316,37 +319,28 @@ class WhatsAppService {
 
   /**
    * Envía una imagen/media desde una sucursal específica
-   * @param {string} branchId - ID de la sucursal
-   * @param {string} to - Destinatario
-   * @param {string} mediaSource - URL o Path local
-   * @param {object} options - { caption, isAudio }
    */
   async sendMedia(branchId, to, mediaSource, options = {}) {
     const masterBranchId = 1;
-    const client = this.clients.get(masterBranchId);
+    const sock = this.clients.get(masterBranchId);
     const session = this.sessions.get(masterBranchId);
 
-    if (!client) {
+    if (!sock) {
       logger.warn(`WhatsApp Central (Branch ${masterBranchId}): cliente no existe para enviar media`);
       return false;
     }
     if (!session?.isReady) {
-      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está listo para media (isReady=false). Intentando enviar...`);
+      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está lista para media (isReady=false). Intentando enviar...`);
     }
 
     try {
       await antiBanDelay();
-      
-      let chatId = to;
-      if (!to.includes('@')) {
-        const cleanPhone = to.replace(/\D/g, '');
-        chatId = `${cleanPhone}@c.us`;
-      }
+      const jid = this._normalizeJid(to);
 
-      logger.info(`🖼️ Preparando envío de media para ${chatId} desde branch ${branchId}`);
-      
-      // Verificar que la URL sea accesible antes de descargar
+      logger.info(`🖼️ Preparando envío de media para ${jid} desde branch ${branchId}`);
+
       if (mediaSource.startsWith('http')) {
+        // Verificar accesibilidad
         try {
           const headResp = await axios.head(mediaSource, { timeout: 5000 });
           if (headResp.status !== 200) {
@@ -357,27 +351,47 @@ class WhatsAppService {
           logger.warn(`⚠️ Media URL no responde: ${mediaSource} — ${headErr.message}`);
           return false;
         }
-      }
 
-      let media;
-      if (mediaSource.startsWith('http')) {
         const response = await axios.get(mediaSource, { responseType: 'arraybuffer', timeout: 15000 });
-        const base64 = Buffer.from(response.data).toString('base64');
+        const buffer = Buffer.from(response.data);
         const mimetype = response.headers['content-type'] || 'image/png';
-        media = new MessageMedia(mimetype, base64, mediaSource.split('/').pop());
+
+        if (options.isAudio) {
+          await sock.sendMessage(jid, { 
+            audio: buffer, 
+            mimetype: 'audio/mp4',
+            ptt: true 
+          });
+        } else if (mimetype.startsWith('image/')) {
+          await sock.sendMessage(jid, { 
+            image: buffer, 
+            caption: options.caption || '',
+            mimetype 
+          });
+        } else if (mimetype.startsWith('video/')) {
+          await sock.sendMessage(jid, { 
+            video: buffer, 
+            caption: options.caption || '',
+            mimetype 
+          });
+        } else {
+          await sock.sendMessage(jid, { 
+            document: buffer, 
+            caption: options.caption || '',
+            mimetype,
+            fileName: mediaSource.split('/').pop() 
+          });
+        }
       } else {
-        media = MessageMedia.fromFilePath(mediaSource);
+        // Archivo local
+        const buffer = fs.readFileSync(mediaSource);
+        await sock.sendMessage(jid, { 
+          image: buffer, 
+          caption: options.caption || '' 
+        });
       }
 
-      const sendOptions = {};
-      if (options.caption) sendOptions.caption = options.caption;
-      if (options.isAudio) {
-        sendOptions.sendAudioAsVoice = true;
-      }
-
-      await client.sendMessage(chatId, media, sendOptions);
-      
-      logger.info(`📤 Media enviado exitosamente a ${chatId}`);
+      logger.info(`📤 Media enviado exitosamente a ${jid}`);
       return true;
     } catch (error) {
       logger.warn(`⚠️ Error enviando media (Source: ${mediaSource}) a ${to}: ${error.message}`);
@@ -400,50 +414,7 @@ class WhatsAppService {
   }
 
   /**
-   * Envía un mensaje a un grupo específico de la sucursal (por ejemplo, para despacho)
-   * NOTA: Este es ahora el método SECUNDARIO. Usar notifyPhone como principal.
-   */
-  async notifyGroup(branchId, message) {
-    // Intentar usar el cliente de la sucursal específica, o el maestro (1) como fallback
-    let client = this.clients.get(branchId);
-    if (!client || !this.getBranchStatus(branchId).isReady) {
-      client = this.clients.get(1);
-    }
-    
-    if (!client) return false;
-
-    try {
-      const branch = await prisma.branch.findUnique({
-        where: { id: branchId },
-        select: { notificationGroupName: true }
-      });
-
-      if (!branch || !branch.notificationGroupName) {
-        logger.warn(`Sucursal ${branchId} no tiene grupo de notificación configurado`);
-        return false;
-      }
-
-      const chats = await client.getChats();
-      const targetName = branch.notificationGroupName.trim().toLowerCase();
-      const group = chats.find(c => c.isGroup && c.name.trim().toLowerCase() === targetName);
-
-      if (group) {
-        await client.sendMessage(group.id._serialized, message);
-        logger.info(`📢 Notificación enviada al grupo "${branch.notificationGroupName}" para sucursal ${branchId}`);
-        return true;
-      } else {
-        logger.warn(`Grupo "${branch.notificationGroupName}" no encontrado en WhatsApp para sucursal ${branchId}`);
-        return false;
-      }
-    } catch (error) {
-      logger.error(`Error notificando al grupo para sucursal ${branchId}:`, error);
-      return false;
-    }
-  }
-
-  /**
-   * PRINCIPAL: Envía notificación directa a un número de teléfono configurado en la sucursal.
-   * Si no hay teléfono configurado, cae al grupo como fallback.
+   * Envía notificación directa a un número de teléfono configurado en la sucursal.
    */
   async notifyPhone(branchId, message) {
     try {
@@ -452,49 +423,35 @@ class WhatsAppService {
         select: { notificationPhone: true, notificationGroupName: true }
       });
 
-      // PRIORIDAD 1: Enviar al teléfono directo
       if (branch?.notificationPhone) {
         const phone = branch.notificationPhone.replace(/[^0-9]/g, '');
-        const chatId = `${phone}@c.us`;
+        const chatId = `${phone}@s.whatsapp.net`;
         const sent = await this.sendMessage(branchId, chatId, message);
         if (!sent) {
           logger.warn(`⚠️ Falló envío de notificación al teléfono ${phone} de sucursal ${branchId}`);
         } else {
-          logger.info(`📱 Notificación de venta enviada al teléfono ${phone} para sucursal ${branchId}`);
-        }
-        
-        // PRIORIDAD 2 (adicional): También enviar al grupo si existe
-        if (branch.notificationGroupName) {
-          await this.notifyGroup(branchId, message);
+          logger.info(`📱 Notificación enviada al teléfono ${phone} para sucursal ${branchId}`);
         }
         return sent;
       }
 
-      // FALLBACK: Si no hay teléfono, intentar con el grupo
-      if (branch?.notificationGroupName) {
-        logger.info(`📢 Sin teléfono de notificación, usando grupo como fallback para sucursal ${branchId}`);
-        return await this.notifyGroup(branchId, message);
-      }
-
-      logger.warn(`⚠️ Sucursal ${branchId} no tiene ni teléfono ni grupo de notificación configurado. Configura notificationPhone en la sucursal.`);
+      logger.warn(`⚠️ Sucursal ${branchId} no tiene teléfono de notificación configurado.`);
       return false;
     } catch (error) {
       logger.error(`Error en notifyPhone para sucursal ${branchId}:`, error);
-      try {
-        return await this.notifyGroup(branchId, message);
-      } catch (groupError) {
-        logger.error(`Error también en fallback de grupo:`, groupError);
-        return false;
-      }
+      return false;
     }
   }
 
   /**
+   * Envía notificación a grupo (mantenido por compatibilidad, usa notifyPhone)
+   */
+  async notifyGroup(branchId, message) {
+    return this.notifyPhone(branchId, message);
+  }
+
+  /**
    * Envía múltiples mensajes (Campaña) con control de delay
-   * @param {number} branchId - ID de la sucursal emisora
-   * @param {Array} contacts - Lista de objetos Contact
-   * @param {string} message - Texto del mensaje
-   * @param {number} delayMs - Retraso entre envíos (default 8000ms)
    */
   async sendBulkMessages(branchId, contacts, message, delayMs = 8000) {
     const results = [];
@@ -502,14 +459,13 @@ class WhatsAppService {
 
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
-      const chatId = `${contact.phone}@c.us`;
+      const chatId = `${contact.phone}@s.whatsapp.net`;
 
       try {
-        // Delay incremental para evitar detección de ráfagas
         const jitter = Math.floor(Math.random() * 2000);
         await new Promise(resolve => setTimeout(resolve, delayMs + jitter));
 
-        const sent = await this.sendMessage(1, chatId, message); // Siempre por el 1
+        const sent = await this.sendMessage(1, chatId, message);
         results.push({ phone: contact.phone, sent });
 
         if ((i + 1) % 5 === 0) {
@@ -528,51 +484,45 @@ class WhatsAppService {
    * Cierra la sesión de una sucursal
    */
   async destroyBranch(branchId) {
-    const client = this.clients.get(branchId);
-    if (client) {
+    const sock = this.clients.get(branchId);
+    if (sock) {
       logger.info(`🗑️ Destruyendo instancia de WhatsApp para sucursal ${branchId}...`);
-      
-      // Marcar como cierre MANUAL para que el evento 'disconnected' NO reconecte
       this.manualLogout.add(branchId);
 
       try {
-        // Intentar logout con un timeout para que no se quede colgado si la sesión está rota
-        const logoutPromise = client.logout();
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout en logout')), 10000)
-        );
-
-        await Promise.race([logoutPromise, timeoutPromise]);
+        await sock.logout();
         logger.info(`✅ Logout exitoso para sucursal ${branchId}`);
       } catch (e) {
-        logger.warn(`⚠️ No se pudo hacer logout limpio (o timeout) de sucursal ${branchId}:`, e.message);
+        logger.warn(`⚠️ No se pudo hacer logout limpio de sucursal ${branchId}:`, e.message);
       }
 
+      // Limpiar archivos de auth
+      const authDir = path.join(this.authDir, `branch_${branchId}`);
       try {
-        await client.destroy();
-        logger.info(`💨 Cliente de sucursal ${branchId} destruido correctamente.`);
+        if (fs.existsSync(authDir)) {
+          fs.rmSync(authDir, { recursive: true });
+        }
       } catch (e) {
-        logger.error(`❌ Error destruyendo cliente de sucursal ${branchId}:`, e.message);
+        logger.warn(`No se pudo limpiar auth dir de sucursal ${branchId}`);
       }
 
       this.clients.delete(branchId);
       this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
       return true;
     }
-    
-    // Si no hay cliente en memoria, pero el usuario quiere "limpiar", aseguramos el estado
+
     this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
     return false;
   }
 
   /**
-   * Cierra todas las sesiones activas (Limpieza total)
+   * Cierra todas las sesiones activas
    */
   async destroyAll() {
     logger.info('🛑 Cerrando todas las instancias de WhatsApp...');
-    for (const [branchId, client] of this.clients.entries()) {
+    for (const [branchId] of this.clients.entries()) {
       try {
-        await client.destroy();
+        await this.destroyBranch(branchId);
         logger.info(`💨 Cliente sucursal ${branchId} destruido`);
       } catch (e) {
         // Ignorar errores en el cierre masivo
