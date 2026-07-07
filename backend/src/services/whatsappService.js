@@ -75,6 +75,8 @@ class WhatsAppService {
     this.pendingInits.add(branchId);
 
     logger.info(`🚀 [WA-INIT] Iniciando instancia para sucursal: ${branchId}`);
+    console.log(`🔧 [WA-INIT] Chromium path: ${process.env.PUPPETEER_EXECUTABLE_PATH || 'auto-detect'}`);
+    console.log(`🔧 [WA-INIT] CWD: ${process.cwd()}`);
     
     // Limpieza de candados de sesión (Locks) — Crítico para Railway/Docker
     const possibleLockPaths = [
@@ -209,17 +211,18 @@ class WhatsAppService {
       logger.info(`✅ [WA-READY] WhatsApp sucursal ${branchId} listo en ${(endTime - startTime)/1000}s`);
       this.pendingInits.delete(branchId);
     }).catch(err => {
+      console.error(`❌ [WHATSAPP-ERROR] Sucursal ${branchId}:`, err.message || err);
       logger.error(`❌ Error crítico iniciando sucursal ${branchId}:`, err);
       this.sessions.set(branchId, { ...this.sessions.get(branchId), status: 'ERROR' });
       this.clients.delete(branchId);
       this.pendingInits.delete(branchId);
-      // Auto-recovery: reintentar en 10 segundos
-      logger.info(`🔄 Auto-recovery: reintentando sucursal ${branchId} en 10s...`);
+      // Auto-recovery: reintentar en 30 segundos
+      logger.info(`🔄 Auto-recovery: reintentando sucursal ${branchId} en 30s...`);
       setTimeout(() => {
         this.initializeBranch(branchId).catch(e => 
           logger.error(`❌ Auto-recovery falló para sucursal ${branchId}:`, e)
         );
-      }, 10000);
+      }, 30000);
     });
 
     return client;

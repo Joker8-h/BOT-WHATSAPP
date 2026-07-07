@@ -13,23 +13,6 @@ const logger = winston.createLogger({
   ),
   defaultMeta: { service: 'fantasias-chatbot' },
   transports: [
-    new winston.transports.File({
-      filename: path.join(__dirname, '../../logs/error.log'),
-      level: 'error',
-      maxsize: 5242880, // 5MB
-      maxFiles: 5,
-    }),
-    new winston.transports.File({
-      filename: path.join(__dirname, '../../logs/combined.log'),
-      maxsize: 10485760, // 10MB
-      maxFiles: 10,
-    }),
-  ],
-});
-
-// Consola colorida en desarrollo
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(
     new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
@@ -40,8 +23,19 @@ if (process.env.NODE_ENV !== 'production') {
           return `${timestamp} ${level}: ${message}${metaStr}`;
         })
       ),
-    })
-  );
-}
+    }),
+    new winston.transports.File({
+      filename: path.join(__dirname, '../../logs/error.log'),
+      level: 'error',
+      maxsize: 5242880,
+      maxFiles: 5,
+    }),
+    new winston.transports.File({
+      filename: path.join(__dirname, '../../logs/combined.log'),
+      maxsize: 10485760,
+      maxFiles: 10,
+    }),
+  ],
+});
 
 module.exports = logger;
