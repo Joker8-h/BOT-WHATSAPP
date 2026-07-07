@@ -107,8 +107,7 @@ class WhatsAppService {
     const startTime = Date.now();
 
     // Eliminar variables de entorno que Railway inyecta y obligan a usar el Chromium del OS
-    delete process.env.PUPPETEER_EXECUTABLE_PATH;
-    delete process.env.PUPPETEER_SKIP_CHROMIUM_DOWNLOAD;
+    // Utilizar las variables de entorno inyectadas por Railway (PUPPETEER_EXECUTABLE_PATH)
 
     const client = new Client({
       authStrategy: new LocalAuth({
