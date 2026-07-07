@@ -16,6 +16,6 @@ node seed.js
 echo "🏪 Poblando sedes y empleados..."
 node scripts/seedSedes.js
 
-# 3. Iniciar la aplicación
+# 3. Iniciar la aplicación (con --expose-gc para liberar memoria RAM durante sync de imágenes)
 echo "🚀 Iniciando servidor..."
-node server.js
+node --expose-gc server.js

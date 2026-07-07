@@ -135,54 +135,72 @@ async function parseExcel(filePath) {
         stock,
         price,
         category,
-        imageUrl: null,
-        imageBuffer: null 
+        imageUrl: null
       });
     });
 
-    // 3. Extraer imágenes incrustadas (Lógica de Precisión Espacial)
+    // 3. Extraer imágenes incrustadas — PROCESAMIENTO LAZY (una a una, sin acumular buffers)
     const images = sheet.getImages();
     logger.info(`🔍 [IMG] Procesando ${images.length} imágenes encontradas en el libro.`);
     
+    // Mapear imágenes a filas PRIMERO (sin cargar buffers)
+    const imageMapping = [];
     for (const image of images) {
       try {
         const media = workbook.model.media.find(m => m.index === image.imageId);
         if (!media || !media.buffer) continue;
 
-        // Calculamos la fila "centro" de la imagen para mayor precisión
-        // nativeRow es 0-indexed, sumamos 1 para comparar con rowNumber
         const startRow = image.range.tl.nativeRow + 1;
         const endRow = image.range.br ? image.range.br.nativeRow + 1 : startRow;
         const centerRow = (startRow + endRow) / 2;
-
-        // También verificamos la columna (Col A es 0)
         const imgCol = image.range.tl.nativeCol + 1;
 
-        // Buscamos la fila de datos que esté más cerca del centro de esta imagen
-        // Solo buscamos en filas que estén en un rango razonable (+/- 1.5 filas)
         let bestMatch = null;
         let minDistance = 1.5;
 
         for (const row of rowsData) {
           const distance = Math.abs(row.rowNumber - centerRow);
           if (distance < minDistance) {
-            // Verificamos que la imagen esté en la columna de imágenes (o cerca)
             const colDistance = Math.abs(imgCol - colMapping.image);
-            if (colDistance <= 1) { // Tolerancia de 1 columna
+            if (colDistance <= 1) {
               minDistance = distance;
               bestMatch = row;
             }
           }
         }
 
-        if (bestMatch && !bestMatch.imageBuffer) {
-          logger.info(`📎 [IMG] Imagen detectada para "${bestMatch.name}" (Fila: ${Math.round(centerRow)}). Buffer guardado para subida posterior.`);
-          bestMatch.imageBuffer = media.buffer;
+        if (bestMatch && !bestMatch.imageUrl) {
+          imageMapping.push({ row: bestMatch, buffer: media.buffer, name: bestMatch.name, rowNum: Math.round(centerRow) });
+          // Liberar el buffer del workbook inmediatamente
+          media.buffer = null;
         }
       } catch (err) {
-        logger.error('❌ Error procesando imagen individual:', err);
+        logger.error('❌ Error mapeando imagen individual:', err);
       }
     }
+
+    // Subir imágenes UNA A UNA y liberar cada buffer después de subir
+    for (const img of imageMapping) {
+      try {
+        logger.info(`📎 [IMG] Subiendo imagen para "${img.name}" (Fila: ${img.rowNum})...`);
+        const url = await uploadBufferToCloudinary(img.buffer);
+        if (url) {
+          img.row.imageUrl = url;
+          logger.info(`✅ [IMG] Imagen subida: ${img.name}`);
+        }
+        // Liberar buffer inmediatamente después de subir
+        img.buffer = null;
+        // Forzar GC si está disponible
+        if (global.gc) global.gc();
+      } catch (err) {
+        logger.error(`❌ Error subiendo imagen para "${img.name}":`, err);
+        img.buffer = null;
+        if (global.gc) global.gc();
+      }
+    }
+
+    // Forzar limpieza de memoria del workbook
+    workbook.model.media = [];
 
     logger.info(`📊 Excel parseado: ${rowsData.length} filas procesadas de "${absolutePath}"`);
     return { rows: rowsData, colMapping };

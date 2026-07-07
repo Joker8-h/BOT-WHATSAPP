@@ -2,7 +2,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { prisma } = require('../config/database');
-const { parseExcel, mapCategory, uploadBufferToCloudinary } = require('../utils/excelParser');
+const { parseExcel, mapCategory } = require('../utils/excelParser');
 const catalogService = require('./catalogService');
 const logger = require('../utils/logger');
 
@@ -111,19 +111,19 @@ class SyncService {
           excelRef: `DRIVE-${source.id}-${row.rowNumber}`
         };
 
-        if (existing && existing.imageUrl) {
+        // La imagen ya se subió en parseExcel (imageUrl viene en row)
+        if (existing && existing.imageUrl && !row.imageUrl) {
           const isBroken = await isImageUrlBroken(existing.imageUrl);
-          if (isBroken && row.imageBuffer) {
-            logger.warn(`🔄 Re-subiendo imagen para "${existing.name}" — URL anterior no accesible`);
-            productData.imageUrl = await uploadBufferToCloudinary(row.imageBuffer);
-          } else if (isBroken) {
-            logger.warn(`⚠️ "${existing.name}" tiene imagen rota pero no hay buffer en Excel para re-subirla`);
+          if (isBroken) {
+            logger.warn(`⚠️ "${existing.name}" tiene imagen rota y no hay nueva en Excel`);
             productData.imageUrl = null;
           } else {
             productData.imageUrl = existing.imageUrl;
           }
-        } else if (row.imageBuffer) {
-          productData.imageUrl = await uploadBufferToCloudinary(row.imageBuffer);
+        } else if (existing && existing.imageUrl && row.imageUrl) {
+          productData.imageUrl = existing.imageUrl;
+        } else if (row.imageUrl) {
+          productData.imageUrl = row.imageUrl;
         }
 
         let savedProduct;
