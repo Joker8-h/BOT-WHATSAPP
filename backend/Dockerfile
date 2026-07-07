@@ -10,18 +10,14 @@ RUN npm run build
 FROM node:20-bookworm
 WORKDIR /app
 
-# Instalar Chromium y TODAS sus dependencias de sistema
+# Variables para que puppeteer descargue su propio Chromium empaquetado
+ENV PUPPETEER_CACHE_DIR=/app/.cache/puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false
+
+# Dependencias del sistema requeridas por el Chromium de puppeteer
 RUN apt-get update && apt-get install -y \
-    chromium \
-    chromium-sandbox \
+    ca-certificates \
     fonts-liberation \
-    fonts-ipafont-gothic \
-    fonts-wqy-zenhei \
-    fonts-thai-tlwg \
-    fonts-kacst \
-    fonts-freefont-ttf \
-    libxss1 \
-    libappindicator3-1 \
     libasound2 \
     libatk-bridge2.0-0 \
     libatk1.0-0 \
@@ -59,7 +55,7 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Instalar dependencias del backend
+# Instalar dependencias del backend (puppeteer descargará su Chrome aquí)
 COPY backend/package*.json ./
 RUN npm install --omit=dev
 
@@ -74,7 +70,7 @@ COPY backend/ .
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Asegurar permisos y directorios
-RUN mkdir -p /app/.wwebjs_auth /app/logs /app/data && \
+RUN mkdir -p /app/.wwebjs_auth /app/logs /app/data /app/.cache/puppeteer && \
     chmod +x ./scripts/docker-start.sh
 
 EXPOSE 5000
