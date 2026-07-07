@@ -18,19 +18,13 @@ async function fixLocks() {
     
     for (const session of sessions) {
         if (session.startsWith('session-')) {
-            const lockPath = path.join(authDir, session, 'Default', 'SingletonLock');
-            const rootLockPath = path.join(authDir, session, 'SingletonLock');
-            
-            [lockPath, rootLockPath].forEach(lp => {
-                if (fs.existsSync(lp)) {
-                    try {
-                        fs.unlinkSync(lp);
-                        console.log(`✅ Candado eliminado: ${lp}`);
-                    } catch (err) {
-                        console.error(`❌ No se pudo eliminar ${lp}: ${err.message}`);
-                    }
-                }
-            });
+            const sessionPath = path.join(authDir, session);
+            try {
+                fs.rmSync(sessionPath, { recursive: true, force: true });
+                console.log(`✅ Sesión completamente eliminada para forzar reinicio limpio: ${session}`);
+            } catch (err) {
+                console.error(`❌ No se pudo eliminar la sesión ${session}: ${err.message}`);
+            }
         }
     }
 }
