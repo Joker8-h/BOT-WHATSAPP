@@ -191,7 +191,10 @@ class WhatsAppService {
         }
 
         if (connection === 'open') {
-          logger.info(`✅ WhatsApp sucursal ${branchId} conectado!`);
+          const botJid = sock?.authState?.creds?.me?.id || 'desconocido';
+          const botLid = sock?.authState?.creds?.me?.lid || 'desconocido';
+          logger.info(`✅ WhatsApp sucursal ${branchId} conectado! (Yo soy: ${botJid}, LID: ${botLid})`);
+          this.sessions.set(branchId, { isReady: true, qr: null, status: 'READY' });
           this.sessions.set(branchId, { isReady: true, qr: null, status: 'READY' });
           this.pendingInits.delete(branchId);
 
