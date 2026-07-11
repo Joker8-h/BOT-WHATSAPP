@@ -70,7 +70,7 @@ class MessageController {
         return phone && phone === cleanPhone;
       });
 
-      // Check 2: LID match
+      // Check 2: LID match (phone JID resuelto)
       if (!matchedAdmin) {
         matchedAdmin = allBranches.find(b => {
           try {
@@ -78,6 +78,20 @@ class MessageController {
             return lids.some(e => {
               const lid = typeof e === 'string' ? e : e.lid;
               return lid === cleanPhone;
+            });
+          } catch { return false; }
+        });
+      }
+
+      // Check 2b: LID match contra LID original (antes de resolución a teléfono)
+      if (!matchedAdmin && msg._originalLid) {
+        const originalClean = msg._originalLid.split('@')[0];
+        matchedAdmin = allBranches.find(b => {
+          try {
+            const lids = JSON.parse(b.adminLids || '[]');
+            return lids.some(e => {
+              const lid = typeof e === 'string' ? e : e.lid;
+              return lid === originalClean;
             });
           } catch { return false; }
         });

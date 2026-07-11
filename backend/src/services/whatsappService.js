@@ -40,6 +40,7 @@ class WhatsAppService {
     this.manualLogout = new Set();
     this.initCooldown = new Map();
     this.maxPerMinute = parseInt(process.env.MAX_MESSAGES_PER_MINUTE) || 20;
+    this.store = null;
 
     // Directorio para guardar sesiones (auth)
     this.authDir = path.join(process.cwd(), '.baileys_auth');
@@ -131,6 +132,10 @@ class WhatsAppService {
 
       this.clients.set(branchId, sock);
 
+      // Vincular store para resolver contactos (LID -> phone JID)
+      this.store = makeInMemoryStore({ logger: baileysLogger });
+      this.store.bind(sock);
+
       // ── Evento: QR Code ──
       sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -205,34 +210,50 @@ class WhatsAppService {
         if (type !== 'notify') return;
         
         for (const msg of messages) {
-          if (msg.key.fromMe) continue; // Ignorar mensajes propios
+          if (msg.key.fromMe) continue;
           
           const from = msg.key.remoteJid;
+          if (!from || from === 'status@broadcast' || from.includes('@g.us')) continue;
+
+          // Resolver LID a phone JID usando el store de Baileys
+          // Los LID son identificadores de dispositivo y NO funcionan para enviar mensajes de vuelta
+          let resolvedFrom = from;
+          if (from.endsWith('@lid') && this.store) {
+            try {
+              const contact = this.store.contacts.get(from);
+              if (contact?.id && contact.id.endsWith('@s.whatsapp.net')) {
+                resolvedFrom = contact.id;
+                logger.info(`📞 [LID-RESOLVE] ${from} -> ${resolvedFrom}`);
+              }
+            } catch (e) {
+              logger.warn(`⚠️ [LID-RESOLVE] Error: ${e.message}`);
+            }
+          }
+
           const body = msg.message?.conversation 
             || msg.message?.extendedTextMessage?.text 
             || msg.message?.imageMessage?.caption
             || msg.message?.videoMessage?.caption
             || '';
 
-          logger.info(`📩 [WA-RAW] Mensaje de ${from}: ${body?.substring(0, 20)}...`);
+          logger.info(`📩 [WA-RAW] Mensaje de ${from} (resuelto: ${resolvedFrom}): ${body?.substring(0, 20)}...`);
 
           if (this.messageHandler) {
-            // Adaptar formato de Baileys al formato que espera el messageHandler
             const msgId = msg.key.id || `${from}-${Date.now()}`;
             const adaptedMsg = {
-              from,
+              from: resolvedFrom,
               body,
               fromMe: msg.key.fromMe || false,
+              _originalLid: from.endsWith('@lid') ? from : undefined,
               hasMedia: !!(msg.message?.imageMessage || msg.message?.videoMessage || msg.message?.documentMessage || msg.message?.audioMessage),
               timestamp: msg.messageTimestamp || Math.floor(Date.now() / 1000),
               id: {
                 _serialized: msgId,
                 id: msgId,
               },
-              _baileysMsg: msg, // Guardar referencia original
-              // Simular interface de whatsapp-web.js
+              _baileysMsg: msg,
               reply: async (text) => {
-                await this.sendMessage(branchId, from, text);
+                await this.sendMessage(branchId, resolvedFrom, text);
               }
             };
 
