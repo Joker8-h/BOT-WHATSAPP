@@ -38,6 +38,7 @@ class WhatsAppService {
     
     this.messageHandler = null;
     this.manualLogout = new Set();
+    this.initCooldown = new Map();
     this.maxPerMinute = parseInt(process.env.MAX_MESSAGES_PER_MINUTE) || 20;
 
     // Directorio para guardar sesiones (auth)
@@ -89,6 +90,14 @@ class WhatsAppService {
       logger.info(`⏳ Sucursal ${branchId} ya se está inicializando. Ignorando petición duplicada.`);
       return null;
     }
+
+    // Cooldown anti-loop: no reinicializar más de una vez cada 10 segundos
+    const lastInit = this.initCooldown.get(branchId) || 0;
+    if (Date.now() - lastInit < 10000) {
+      logger.info(`⏳ Cooldown activo para sucursal ${branchId}. Esperando...`);
+      return null;
+    }
+    this.initCooldown.set(branchId, Date.now());
 
     this.pendingInits.add(branchId);
     logger.info(`🚀 [WA-INIT] Iniciando instancia Baileys para sucursal: ${branchId}`);
@@ -158,7 +167,26 @@ class WhatsAppService {
               );
             }, 5000);
           } else {
-            logger.warn(`⚠️ Sesión cerrada (logout). Necesita escanear QR nuevamente.`);
+            logger.warn(`⚠️ Sesión cerrada (logout). Limpiando auth y regenerando QR...`);
+
+            // Fix 1: Limpiar archivos de auth para forzar QR fresco
+            const authDir = path.join(this.authDir, `branch_${branchId}`);
+            try {
+              if (fs.existsSync(authDir)) {
+                fs.rmSync(authDir, { recursive: true });
+                logger.info(`🗑️ Auth state eliminado para sucursal ${branchId}`);
+              }
+            } catch (e) {
+              logger.warn(`⚠️ No se pudo limpiar auth de sucursal ${branchId}:`, e.message);
+            }
+
+            // Fix 3: Re-intentar después de 15 segundos (dar tiempo para ver QR)
+            setTimeout(() => {
+              logger.info(`🔄 Reintentando sucursal ${branchId} tras limpiar auth...`);
+              this.initializeBranch(branchId).catch(err =>
+                logger.error(`Error re-inicializando sucursal ${branchId}:`, err)
+              );
+            }, 15000);
           }
         }
 
