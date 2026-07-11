@@ -402,17 +402,22 @@ class MessageController {
         aiResponseToSend = null;
       }
 
+      logger.info(`📤 [MSG-DEBUG] aiResponseToSend: ${aiResponseToSend ? 'SÍ tiene respuesta' : 'NULL — sin respuesta'}, shouldContraEntrega=${actions.shouldCreateContraEntrega}, shouldCloseSale=${actions.shouldCloseSale}, missingAddress=${missingAddress}, missingCity=${missingCity}`);
+
       if (aiResponseToSend) {
         // Separar mensaje largo en 2 envíos naturales (por párrafo, sin cortar palabras)
         const responseParts = this.splitMessageNaturally(aiResponseToSend);
         
+        logger.info(`📤 [MSG-SEND] Preparando envío de ${responseParts.length} partes a ${chatId} (branch ${branchId})`);
         for (let i = 0; i < responseParts.length; i++) {
+          logger.info(`📤 [MSG-SEND] Enviando parte ${i + 1}/${responseParts.length} (${responseParts[i].length} chars) a ${chatId}`);
           await whatsappService.sendMessage(branchId, chatId, responseParts[i]);
           // Pequeña pausa entre mensajes para simular escritura humana
           if (i < responseParts.length - 1) {
             await new Promise(r => setTimeout(r, 1200));
           }
         }
+        logger.info(`✅ [MSG-SEND] Envío completado para ${chatId}`);
         await crmService.saveMessage(conversation.id, 'ASSISTANT', aiResponseToSend, null, aiResult.tokensUsed);
       } else {
         await crmService.saveMessage(conversation.id, 'ASSISTANT', '[Mensaje suprimido por validación de backend]', null, aiResult.tokensUsed);

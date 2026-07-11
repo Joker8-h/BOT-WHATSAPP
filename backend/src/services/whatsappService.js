@@ -289,16 +289,28 @@ class WhatsAppService {
     const session = this.sessions.get(masterBranchId);
 
     if (!sock) {
-      logger.warn(`WhatsApp Central (Branch ${masterBranchId}): cliente no existe`);
+      logger.error(`❌ [SEND] WhatsApp Central (Branch ${masterBranchId}): cliente NO EXISTE — no se puede enviar a ${to}`);
       return false;
     }
     if (!session?.isReady) {
-      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está lista (isReady=false). Intentando enviar de todas formas...`);
+      logger.warn(`⚠️ [SEND] WhatsApp sucursal ${masterBranchId} aún no está lista (isReady=false). Intentando enviar de todas formas...`);
     }
 
     try {
+      logger.info(`📤 [SEND-INICIO] Enviando a ${to} (branch ${branchId}, texto ${text.length} chars)`);
       await antiBanDelay();
+      logger.info(`📤 [SEND-POST-DELAY] Delay completado, preparando envío a ${to}`);
       const jid = this._normalizeJid(to);
+      logger.info(`📤 [SEND-JID] JID normalizado: ${jid}`);
+
+      const sendWithTimeout = async (jid, content, timeoutMs = 30000) => {
+        return Promise.race([
+          sock.sendMessage(jid, content),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Timeout ${timeoutMs}ms al enviar a ${jid}`)), timeoutMs)
+          )
+        ]);
+      };
 
       // --- Lógica de División de Mensajes Largos ---
       const maxLength = 450;
@@ -315,21 +327,25 @@ class WhatsAppService {
         }
         if (remaining) parts.push(remaining);
 
+        logger.info(`📤 [SEND-SPLIT] Mensaje dividido en ${parts.length} partes`);
         for (let i = 0; i < parts.length; i++) {
-          await sock.sendMessage(jid, { text: parts[i] });
+          logger.info(`📤 [SEND-PART ${i + 1}/${parts.length}] Enviando parte ${i + 1} (${parts[i].length} chars) a ${jid}`);
+          await sendWithTimeout(jid, { text: parts[i] });
+          logger.info(`📤 [SEND-PART ${i + 1}/${parts.length}] Parte ${i + 1} enviada OK`);
           if (i < parts.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 1200));
           }
         }
+        logger.info(`✅ [SEND-COMPLETO] Todos los ${parts.length} partes enviadas a ${to}`);
         return true;
       }
 
       // --- Envío Normal ---
-      await sock.sendMessage(jid, { text });
-      logger.debug(`📤 Mensaje enviado desde sucursal ${branchId} a ${jid}`);
+      await sendWithTimeout(jid, { text });
+      logger.info(`✅ [SEND-OK] Mensaje enviado desde sucursal ${branchId} a ${jid} (${text.length} chars)`);
       return true;
     } catch (error) {
-      logger.error(`❌ Error enviando mensaje desde sucursal ${branchId} a ${to}:`, error);
+      logger.error(`❌ [SEND-ERROR] Error enviando mensaje desde sucursal ${branchId} a ${to} (JID: ${this._normalizeJid(to)}):`, error.message || error);
       return false;
     }
   }
