@@ -7,7 +7,6 @@ const {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
-  makeInMemoryStore,
   jidNormalizedUser,
   proto,
   downloadContentFromMessage,
@@ -40,7 +39,7 @@ class WhatsAppService {
     this.manualLogout = new Set();
     this.initCooldown = new Map();
     this.maxPerMinute = parseInt(process.env.MAX_MESSAGES_PER_MINUTE) || 20;
-    this.store = null;
+    this.lidToPhoneMap = new Map();
 
     // Directorio para guardar sesiones (auth)
     this.authDir = path.join(process.cwd(), '.baileys_auth');
@@ -132,10 +131,6 @@ class WhatsAppService {
 
       this.clients.set(branchId, sock);
 
-      // Vincular store para resolver contactos (LID -> phone JID)
-      this.store = makeInMemoryStore({ logger: baileysLogger });
-      this.store.bind(sock);
-
       // ── Evento: QR Code ──
       sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -199,11 +194,25 @@ class WhatsAppService {
           logger.info(`✅ WhatsApp sucursal ${branchId} conectado!`);
           this.sessions.set(branchId, { isReady: true, qr: null, status: 'READY' });
           this.pendingInits.delete(branchId);
+
+          // Construir mapa LID -> phone JID para los teléfonos conocidos
+          this._buildLidMap(sock).catch(err =>
+            logger.warn(`⚠️ No se pudo construir mapa LID: ${err.message}`)
+          );
         }
       });
 
       // ── Guardar credenciales cuando cambian ──
       sock.ev.on('creds.update', saveCreds);
+
+      // ── Escuchar contactos nuevos para poblar mapa LID -> phone ──
+      sock.ev.on('contacts.upsert', (contacts) => {
+        for (const c of contacts) {
+          if (c.id) {
+            this.lidToPhoneMap.set(c.id, c);
+          }
+        }
+      });
 
       // ── Handler de mensajes entrantes ──
       sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -215,18 +224,14 @@ class WhatsAppService {
           const from = msg.key.remoteJid;
           if (!from || from === 'status@broadcast' || from.includes('@g.us')) continue;
 
-          // Resolver LID a phone JID usando el store de Baileys
+          // Resolver LID a phone JID usando mapa construido con onWhatsApp + contacts.upsert
           // Los LID son identificadores de dispositivo y NO funcionan para enviar mensajes de vuelta
           let resolvedFrom = from;
-          if (from.endsWith('@lid') && this.store) {
-            try {
-              const contact = this.store.contacts.get(from);
-              if (contact?.id && contact.id.endsWith('@s.whatsapp.net')) {
-                resolvedFrom = contact.id;
-                logger.info(`📞 [LID-RESOLVE] ${from} -> ${resolvedFrom}`);
-              }
-            } catch (e) {
-              logger.warn(`⚠️ [LID-RESOLVE] Error: ${e.message}`);
+          if (from.endsWith('@lid') && this.lidToPhoneMap) {
+            const contact = this.lidToPhoneMap.get(from);
+            if (contact?.id && contact.id.endsWith('@s.whatsapp.net')) {
+              resolvedFrom = contact.id;
+              logger.info(`📞 [LID-RESOLVE] ${from} -> ${resolvedFrom}`);
             }
           }
 
@@ -299,6 +304,38 @@ class WhatsAppService {
     if (to.includes('@')) return to;
     const clean = to.replace(/\D/g, '');
     return `${clean}@s.whatsapp.net`;
+  }
+
+  /**
+   * Construye mapa LID -> phone JID consultando números conocidos en WhatsApp
+   */
+  async _buildLidMap(sock) {
+    try {
+      const branches = await prisma.branch.findMany({
+        select: { notificationPhone: true }
+      });
+      const phones = [
+        ...new Set(
+          branches
+            .map(b => b.notificationPhone?.replace(/[^0-9]/g, ''))
+            .filter(Boolean)
+        )
+      ];
+      if (phones.length === 0) return;
+
+      logger.info(`🔍 Consultando LIDs para ${phones.length} teléfonos conocidos...`);
+      const results = await sock.onWhatsApp(...phones);
+      let resolved = 0;
+      for (const r of results) {
+        if (r.exists && r.lid && r.jid) {
+          this.lidToPhoneMap.set(r.lid, { id: r.jid });
+          resolved++;
+        }
+      }
+      logger.info(`📞 [LID-MAP] Mapa construido: ${resolved} LIDs resueltos de ${phones.length} teléfonos`);
+    } catch (err) {
+      logger.warn(`⚠️ [LID-MAP] Error construyendo mapa: ${err.message}`);
+    }
   }
 
   /**
