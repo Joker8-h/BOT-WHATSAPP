@@ -7,19 +7,36 @@ COPY frontend/ ./
 RUN npm run build
 
 # ─── ETAPA 2: Backend y Ejecución ───
-# Baileys usa WebSocket puro — NO necesita Chromium/Puppeteer
-FROM node:20-bookworm-slim
+# whatsapp-web.js usa Puppeteer + Chromium para WhatsApp Web
+FROM node:20-bookworm
 WORKDIR /app
 
-# Solo necesitamos dependencias mínimas para Node.js, crypto y git (requerido por Baileys en npm install)
+# Instalar Chromium y dependencias para Puppeteer
 RUN apt-get update && apt-get install -y \
+    chromium \
+    chromium-sandbox \
+    libcups2 \
+    libnss3 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
     ca-certificates \
-    libssl3 \
+    fonts-liberation \
+    fonts-open-sans \
+    fonts-freefont-ttf \
     git \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Instalar dependencias del backend (incluye @whiskeysockets/baileys)
+# Variables de entorno para Puppeteer (usar Chromium del sistema)
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV CHROMIUM_PATH=/usr/bin/chromium
+
+# Instalar dependencias del backend (incluye whatsapp-web.js + puppeteer)
 COPY backend/package*.json ./
 RUN npm install --omit=dev
 
@@ -34,7 +51,7 @@ COPY backend/ .
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Asegurar permisos y directorios de sesión
-RUN mkdir -p /app/.baileys_auth /app/logs /app/data && \
+RUN mkdir -p /app/.wwebjs_auth /app/logs /app/data && \
     chmod +x ./scripts/docker-start.sh
 
 EXPOSE 5000

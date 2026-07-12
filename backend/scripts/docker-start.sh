@@ -16,10 +16,6 @@ node seed.js
 echo "🏪 Poblando sedes y empleados..."
 node scripts/seedSedes.js
 
-# 3. Limpiar sesiones antiguas de WhatsApp Web (ya no las usamos)
-echo "🧹 Limpiando sesiones antiguas..."
-rm -rf /app/.wwebjs_auth/*
-
-# 4. Iniciar la aplicación
-echo "🚀 Iniciando servidor (Baileys - Sin Chromium)..."
+# 3. Iniciar la aplicación
+echo "🚀 Iniciando servidor (whatsapp-web.js + Chromium)..."
 node --expose-gc server.js
