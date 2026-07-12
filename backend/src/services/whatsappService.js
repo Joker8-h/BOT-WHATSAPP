@@ -208,6 +208,16 @@ class WhatsAppService {
       // ── Guardar credenciales cuando cambian ──
       sock.ev.on('creds.update', saveCreds);
 
+      // ── Escuchar ACK de mensajes enviados ──
+      sock.ev.on('messages.update', (updates) => {
+        for (const u of updates) {
+          if (u.key && u.status !== undefined) {
+            // status: 1=SERVER_ACK, 2=DELIVERY_ACK, 3=READ
+            logger.info(`📨 [ACK] ID=${u.key.id} status=${u.status} jid=${u.key.remoteJid}${u.status >= 2 ? ' ✅' : ' 📡'}`);
+          }
+        }
+      });
+
       // ── Escuchar contactos nuevos para poblar mapa LID -> phone ──
       sock.ev.on('contacts.upsert', (contacts) => {
         for (const c of contacts) {
@@ -366,7 +376,11 @@ class WhatsAppService {
 
       const sendWithTimeout = async (jid, content, timeoutMs = 30000) => {
         return Promise.race([
-          sock.sendMessage(jid, content),
+          sock.sendMessage(jid, content, {
+            additionalAttributes: {
+              push_priority: 'high_force'
+            }
+          }),
           new Promise((_, reject) =>
             setTimeout(() => reject(new Error(`Timeout ${timeoutMs}ms al enviar a ${jid}`)), timeoutMs)
           )
