@@ -204,16 +204,19 @@ class WhatsAppService {
 
       return client;
     } catch (err) {
-      logger.error(`❌ Error crítico iniciando sucursal ${branchId}:`, err.message || err);
+      const errMsg = err?.message || (typeof err === 'string' ? err : JSON.stringify(err)) || 'Error desconocido';
+      logger.error(`❌ Error crítico iniciando sucursal ${branchId}: ${errMsg}`);
+      if (err?.stack) logger.error(`📋 Stack: ${err.stack}`);
       this.sessions.set(branchId, { isReady: false, qr: null, status: 'ERROR' });
       this.clients.delete(branchId);
       this.pendingInits.delete(branchId);
 
       logger.info(`🔄 Auto-recovery: reintentando sucursal ${branchId} en 30s...`);
       setTimeout(() => {
-        this.initializeBranch(branchId).catch(e =>
-          logger.error(`❌ Auto-recovery falló para sucursal ${branchId}:`, e)
-        );
+        this.initializeBranch(branchId).catch(e => {
+          const eMsg = e?.message || (typeof e === 'string' ? e : JSON.stringify(e)) || 'Error desconocido';
+          logger.error(`❌ Auto-recovery falló para sucursal ${branchId}: ${eMsg}`);
+        });
       }, 30000);
 
       return null;

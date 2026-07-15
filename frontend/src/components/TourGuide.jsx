@@ -1,149 +1,392 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Joyride, ACTIONS, STATUS } from 'react-joyride';
 import { useAuth } from '../context/AuthContext';
 
 const TOUR_KEY = 'fantasias_tour_completed';
 
+const ALL_CHAPTERS = [
+  {
+    path: '/',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '👋 Bienvenido al panel de control. Aquí ves un resumen rápido de todo tu negocio.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.metrics-grid',
+        content: '📊 Estas tarjetas muestran indicadores clave: estado de WhatsApp, contactos activos, chats del día y ventas de hoy.',
+        placement: 'bottom',
+      },
+      {
+        target: '.dashboard-grid .card:first-child',
+        content: '🛒 Aquí aparecen los productos más vendidos del día con sus cantidades e ingresos.',
+        placement: 'bottom',
+      },
+      {
+        target: '.dashboard-grid .card:nth-child(2)',
+        content: '⚠️ Alertas de inventario: productos con stock bajo o agotado que requieren atención.',
+        placement: 'bottom',
+      },
+      {
+        target: '.dashboard-grid .card.full-width',
+        content: '📋 Últimas transacciones del día: clientes que han comprado, montos y horarios.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/products',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '📦 Catálogo de productos. Aquí administras todo tu inventario: precios, stock e imágenes.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.toolbar',
+        content: '🔍 Barra de herramientas: busca productos, filtra por categoría, importa desde Excel o crea un producto nuevo.',
+        placement: 'bottom',
+      },
+      {
+        target: '.products-grid',
+        content: '🃏 Cada tarjeta es un producto con su imagen, nombre, precio, stock disponible y acciones. Los productos con stock bajo se marcan en rojo.',
+        placement: 'top',
+      },
+      {
+        target: '.prod-actions',
+        content: '✏️ Desde aquí puedes editar, ajustar stock, activar/desactivar o eliminar cada producto.',
+        placement: 'left',
+      },
+    ],
+  },
+  {
+    path: '/contacts',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '👥 Tus contactos. Clientes que han escrito al negocio desde WhatsApp.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.toolbar',
+        content: '🔎 Busca contactos por nombre o teléfono, y filtra por tipo de cliente (todos, nuevos, recurrentes, VIP).',
+        placement: 'bottom',
+      },
+      {
+        target: '.data-table',
+        content: '📋 Tabla completa con nombre, teléfono, tipo de cliente, nivel de confianza, etapa de compra, ciudad y última interacción.',
+        placement: 'top',
+      },
+      {
+        target: '.pagination',
+        content: '📄 Navega entre páginas para ver todos tus contactos.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/conversations',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '💬 Conversaciones de WhatsApp. El corazón del sistema: aquí chateas con tus clientes.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.chat-list',
+        content: '📱 Lista de conversaciones activas. Cada una muestra el nombre del cliente, el último mensaje, la hora y si tiene mensajes sin leer.',
+        placement: 'right',
+      },
+      {
+        target: '.chat-panel',
+        content: '💭 Al seleccionar una conversación, ves el historial completo de mensajes y puedes responder directamente.',
+        placement: 'left',
+      },
+      {
+        target: '.chat-input',
+        content: '⌨️ Escribe tu respuesta aquí y presiona Enviar. El mensaje llegará al cliente por WhatsApp.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/orders',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '📋 Gestión de pedidos. Aquí ves y administras todas las órdenes recibidas.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.mini-metrics',
+        content: '💰 Resumen rápido: pedidos pagados, total cobrado, enviados y pendientes.',
+        placement: 'bottom',
+      },
+      {
+        target: '.toolbar',
+        content: '🔽 Filtra pedidos por estado: Pendiente, Pagado, Enviado, Entregado, Cancelado.',
+        placement: 'bottom',
+      },
+      {
+        target: '.data-table',
+        content: '📊 Tabla de pedidos con cliente, productos, ciudad, monto, estado y fecha. Puedes cambiar el estado de cada pedido directamente desde aquí.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/employee-access',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '🔐 Personal autorizado para usar el WhatsApp de la sede.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.toolbar',
+        content: '➕ Botón "Autorizar Nuevo" para agregar empleados que puedan atender WhatsApp desde el panel.',
+        placement: 'bottom',
+      },
+      {
+        target: '.dashboard-grid',
+        content: '👤 Cada tarjeta muestra un empleado autorizado: nombre, teléfono y fecha de autorización.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/campaigns',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '📢 Campañas de marketing automatizadas. Envía mensajes masivos a tus clientes.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.toolbar',
+        content: '➕ Crea una nueva campaña: define el mensaje y selecciona los destinatarios.',
+        placement: 'bottom',
+      },
+      {
+        target: '.campaigns-grid',
+        content: '📊 Cada campaña muestra el mensaje, estado (activa/inactiva), estadísticas de envío y botón para ejecutar.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/settings',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '⚙️ Configuración general del sistema.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.settings-grid .card:first-child',
+        content: '📱 Conexión WhatsApp: aquí ves el código QR para conectar tu número, el estado actual y puedes desvincular la sesión.',
+        placement: 'bottom',
+      },
+      {
+        target: '.settings-grid .card:nth-child(2)',
+        content: '💳 Configuración de Wompi (pasarela de pagos): credenciales para recibir pagos con Nequi, Daviplata y tarjetas.',
+        placement: 'bottom',
+      },
+      {
+        target: '.settings-grid .card:last-child',
+        content: '🔄 Sincronización con Google Drive: aquí agregas fuentes para importar tu catálogo desde Excel.',
+        placement: 'top',
+      },
+    ],
+  },
+];
+
+const ADMIN_CHAPTERS = [
+  {
+    path: '/branches/management',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '🏪 Gestión de sedes. Administra todas las sucursales del negocio.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.table-wrap',
+        content: '📋 Tabla de sedes con nombre, ciudad, estado, empleados asignados y acciones para editar o desactivar.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/branches/map',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '🗺️ Mapa de sedes. Visualiza todas tus sucursales en un mapa interactivo.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.leaflet-container',
+        content: '📍 Cada marcador representa una sede. Haz clic para ver información de la sucursal.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/employees',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '👥 Empleados del sistema. Gestiona quién tiene acceso al panel administrativo.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.table-wrap',
+        content: '📋 Lista de empleados con usuario, nombre, sede, rol y acciones.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/inventory/global',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '🌐 Stock global. Consulta el inventario de todas las sedes en un solo lugar.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.search-input',
+        content: '🔍 Busca productos por nombre en todas las sedes simultáneamente.',
+        placement: 'bottom',
+      },
+      {
+        target: '.products-grid',
+        content: '📊 Cada producto muestra el stock disponible por sede, permitiendo comparar inventarios.',
+        placement: 'top',
+      },
+    ],
+  },
+  {
+    path: '/system-settings',
+    steps: [
+      {
+        target: 'h1.page-title',
+        content: '⚙️ Horario global. Configura el horario de atención para todo el sistema.',
+        disableBeacon: true,
+        placement: 'bottom',
+      },
+      {
+        target: '.settings-grid',
+        content: '🕐 Define horarios de apertura, cierre y almuerzo que aplican a todas las sedes. El bot respeta estos horarios para responder automáticamente.',
+        placement: 'top',
+      },
+    ],
+  },
+];
+
 export default function TourGuide() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const isAdmin = user?.role === 'ADMIN';
+
+  const chapters = isAdmin ? [...ALL_CHAPTERS, ...ADMIN_CHAPTERS] : ALL_CHAPTERS;
+
+  const [chapterIdx, setChapterIdx] = useState(-1);
   const [run, setRun] = useState(false);
+  const [currentSteps, setCurrentSteps] = useState([]);
+  const [restartKey, setRestartKey] = useState(0);
+  const chapterRef = useRef(-1);
 
   useEffect(() => {
     const completed = localStorage.getItem(TOUR_KEY);
     if (!completed) {
-      const timer = setTimeout(() => setRun(true), 800);
-      return () => clearTimeout(timer);
+      const t = setTimeout(() => setChapterIdx(0), 500);
+      return () => clearTimeout(t);
     }
   }, []);
 
-  const steps = [
-    {
-      target: 'body',
-      placement: 'center',
-      title: '🌟 Bienvenido a Fantasías',
-      content: 'Este panel te permite administrar tu negocio: productos, pedidos, campañas y más. Te haremos un recorrido rápido por las secciones principales.',
-      disableBeacon: true,
-    },
-    {
-      target: '[data-tour="nav-dashboard"]',
-      content: 'Aquí ves un resumen general del negocio: ventas del día, pedidos pendientes, productos bajos en stock y estado de WhatsApp.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-products"]',
-      content: 'Gestiona tu catálogo de productos: precios, stock, imágenes y disponibilidad por sede.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-contacts"]',
-      content: 'Consulta el historial de clientes que han escrito al WhatsApp.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-chats"]',
-      content: 'Revisa las conversaciones activas con clientes desde WhatsApp.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-orders"]',
-      content: 'Administra los pedidos recibidos: pendientes, pagados, despachados y entregados.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-employee-access"]',
-      content: 'Controla qué empleados tienen acceso al WhatsApp de la sede.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-campaigns"]',
-      content: 'Crea campañas de marketing automatizadas para tus clientes.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-settings"]',
-      content: 'Configura tu perfil y preferencias personales.',
-      placement: 'right',
-    },
-  ];
-
-  const adminSteps = isAdmin ? [
-    {
-      target: isAdmin ? '[data-tour="nav-branch-management"]' : 'body',
-      content: 'Administra las sedes: crea, edita o desactiva sucursales.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-branch-map"]',
-      content: 'Visualiza todas las sedes en un mapa interactivo.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-employees"]',
-      content: 'Gestiona los empleados del sistema y sus permisos.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-global-inventory"]',
-      content: 'Consulta el stock global de todas las sedes en un solo lugar.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="nav-system-settings"]',
-      content: 'Configura el horario global del sistema para todas las sedes.',
-      placement: 'right',
-    },
-  ] : [];
-
-  const allSteps = [
-    ...steps,
-    ...adminSteps,
-    {
-      target: '[data-tour="whatsapp-status"]',
-      content: 'Este indicador te muestra si el WhatsApp está conectado. Debe estar verde para recibir mensajes.',
-      placement: 'right',
-    },
-    {
-      target: '[data-tour="logout-btn"]',
-      content: 'Aquí puedes cerrar sesión cuando termines.',
-      placement: 'right',
-    },
-    {
-      target: 'body',
-      placement: 'center',
-      title: '🎉 ¡Listo!',
-      content: 'Ya conoces las secciones principales. Puedes reiniciar este tour cuando quieras desde el botón en la barra lateral. ¡A trabajar!',
-    },
-  ];
-
-  const handleJoyrideCallback = (data) => {
-    const { action, status, type } = data;
-    if (action === ACTIONS.CLOSE || action === ACTIONS.SKIP) {
-      localStorage.setItem(TOUR_KEY, 'true');
+  useEffect(() => {
+    if (chapterIdx === -1 || chapterIdx >= chapters.length) {
       setRun(false);
+      setCurrentSteps([]);
+      return;
     }
-    if ([STATUS.FINISHED, STATUS.SKIPPED].includes(status)) {
-      localStorage.setItem(TOUR_KEY, 'true');
+    const chapter = chapters[chapterIdx];
+    if (location.pathname === chapter.path) {
+      const t = setTimeout(() => {
+        setCurrentSteps(chapter.steps);
+        setRun(true);
+      }, 700);
+      return () => clearTimeout(t);
+    } else {
       setRun(false);
+      setCurrentSteps([]);
+    }
+  }, [chapterIdx, location.pathname, restartKey]);
+
+  const goToNextChapter = () => {
+    const next = chapterRef.current + 1;
+    if (next < chapters.length) {
+      setChapterIdx(next);
+      chapterRef.current = next;
+      navigate(chapters[next].path);
+    } else {
+      localStorage.setItem(TOUR_KEY, 'true');
+      setChapterIdx(-1);
+      chapterRef.current = -1;
+    }
+  };
+
+  const handleCallback = (data) => {
+    if (data.status === STATUS.FINISHED) {
+      setRun(false);
+      goToNextChapter();
+    }
+    if (data.action === ACTIONS.SKIP || data.action === ACTIONS.CLOSE) {
+      setRun(false);
+      localStorage.setItem(TOUR_KEY, 'true');
+      setChapterIdx(-1);
+      chapterRef.current = -1;
     }
   };
 
   const restartTour = () => {
     localStorage.removeItem(TOUR_KEY);
-    setRun(true);
+    chapterRef.current = 0;
+    setChapterIdx(0);
+    setRestartKey(k => k + 1);
+    navigate(chapters[0].path);
   };
 
   window.__restartTour = restartTour;
 
+  if (chapterIdx === -1 || !currentSteps.length) return null;
+
   return (
     <Joyride
-      steps={allSteps}
+      key={chapterIdx}
+      steps={currentSteps}
       run={run}
       continuous
       showProgress
       showSkipButton
       disableScrolling
-      scrollToFirstStep
       hideCloseButton
       styles={{
         options: {
@@ -158,32 +401,24 @@ export default function TourGuide() {
           padding: '1.2rem',
           fontSize: '0.95rem',
         },
-        tooltipTitle: {
-          fontSize: '1.1rem',
-          fontWeight: 700,
-        },
+        tooltipTitle: { fontSize: '1.1rem', fontWeight: 700 },
         buttonNext: {
           backgroundColor: '#e91e63',
           borderRadius: 8,
           padding: '0.5rem 1.2rem',
           fontSize: '0.85rem',
         },
-        buttonBack: {
-          color: '#666',
-          marginRight: 8,
-        },
-        buttonSkip: {
-          color: '#999',
-        },
+        buttonBack: { color: '#666', marginRight: 8 },
+        buttonSkip: { color: '#999' },
       }}
       locale={{
         back: 'Atrás',
         close: 'Cerrar',
-        last: '¡Entendido!',
+        last: 'Finalizar',
         next: 'Siguiente',
-        skip: 'Saltar',
+        skip: 'Saltar tour',
       }}
-      callback={handleJoyrideCallback}
+      callback={handleCallback}
     />
   );
 }
