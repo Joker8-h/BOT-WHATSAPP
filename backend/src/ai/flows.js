@@ -139,9 +139,10 @@ function getFlowInstructions(flow) {
 - **PRIMERO VERIFICA**: ¿Tienes la DIRECCIÓN del cliente capturada con [CAPTURAR_DIRECCION] y la CIUDAD con [CAPTURAR_CIUDAD]? Si falta alguno, PÍDELO ANTES de continuar. NO cierres la venta sin dirección.
 - Confirma el producto que quiere
 - Da el precio claro en COP
+- **PRIORIDAD DEL MÉTODO DE PAGO**: Si el cliente menciona explícitamente 'nequi', 'daviplata', 'transferencia', 'tarjeta' o cualquier pago electrónico: USA [CERRAR_VENTA] para generar link Wompi. IGNORA la regla de ciudad. El método de pago elegido por el cliente tiene prioridad.
 - **CIERRE AUTOMÁTICO**: Cuando el cliente confirme que quiere comprar (ej: "sí", "de acuerdo", "dale", "lo llevo", "añádelo", "en efectivo", "confirmo"):
-  * Si la CIUDAD del cliente es Pitalito, Florencia, Popayán o Yopal: usa INMEDIATAMENTE [PEDIDO_CONTRAENTREGA:nombre_exacto_del_producto]. NO esperes que el cliente diga la palabra "contraentrega". Si está en esas ciudades, el pedido siempre es contraentrega por defecto.
-  * Si NO está en esas ciudades: usa [CERRAR_VENTA:nombre_del_producto] para generar el link de pago Wompi.
+  * Si el cliente NO mencionó un método de pago específico Y la CIUDAD es Pitalito, Florencia, Popayán o Yopal: usa INMEDIATAMENTE [PEDIDO_CONTRAENTREGA:nombre_exacto_del_producto]. NO esperes que el cliente diga la palabra "contraentrega".
+  * Si el cliente mencionó nequi/daviplata/transferencia/tarjeta O la ciudad NO está en la lista: usa [CERRAR_VENTA:nombre_del_producto] para generar el link de pago Wompi.
 - **CUANDO EL CLIENTE DIGA QUE SÍ QUIERE COMPRAR** (ej: "sí quiero", "envíamelo", "dale", "lo llevo", "confirmo", "quiero pagar en efectivo"), DEBES usar [CERRAR_VENTA] o [PEDIDO_CONTRAENTREGA] INMEDIATAMENTE. NO preguntes más, NO des más información, CIERRA la venta.
 - NO presiones, pero facilita el camino
 - **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA]. Pide la dirección primero.

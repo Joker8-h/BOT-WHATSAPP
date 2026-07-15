@@ -244,7 +244,8 @@ class MessageController {
         const isWompiPayment = (
           aiText.includes('link') || aiText.includes('wompi') || 
           aiText.includes('transferencia') || aiText.includes('pago online') ||
-          aiText.includes('pago seguro') || aiText.includes('link de pago')
+          aiText.includes('pago seguro') || aiText.includes('link de pago') ||
+          aiText.includes('nequi') || aiText.includes('daviplata')
         );
 
         const impliesContraentrega = !isWompiPayment && (
