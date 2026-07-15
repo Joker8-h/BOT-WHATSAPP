@@ -470,7 +470,9 @@ class WhatsAppService {
       try {
         await this.destroyBranch(branchId);
         logger.info(`💨 Cliente sucursal ${branchId} destruido`);
-      } catch (e) { }
+      } catch (e) {
+        logger.warn(`⚠️ Error destruyendo sesión de sucursal ${branchId}: ${e.message}`);
+      }
     }
     this.clients.clear();
     this.sessions.clear();

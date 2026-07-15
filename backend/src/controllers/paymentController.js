@@ -1,110 +1,6 @@
-// ─────────────────────────────────────────────────────────
-//  CONTROLLER: Pagos Wompi — Webhooks
-// ─────────────────────────────────────────────────────────
-const { prisma } = require('../config/database');
-const whatsappService = require('../services/whatsappService');
-const { formatCOP } = require('../utils/helpers');
 const logger = require('../utils/logger');
 
 class PaymentController {
-  /**
-   * Webhook de Wompi — procesa eventos de pago exitosos
-   */
-  async handleWebhook(req, res) {
-    try {
-      const { data, event, signature, timestamp } = req.body;
-      
-      if (event !== 'transaction.updated') {
-        return res.json({ received: true });
-      }
-
-      const transaction = data.transaction;
-      const { reference, status, amount_in_cents, id: transactionId } = transaction;
-
-      if (status !== 'APPROVED') {
-        logger.info(`Transacción Wompi ${transactionId} con estado: ${status}`);
-        return res.json({ received: true });
-      }
-
-      // 1. Buscar la orden por referencia
-      const order = await prisma.order.findUnique({
-        where: { id: reference },
-        include: { 
-          branch: true, 
-          contact: true,
-          items: { include: { product: true } }
-        }
-      });
-
-      if (!order) {
-        logger.error(`Orden no encontrada para referencia Wompi: ${reference}`);
-        return res.status(404).json({ error: 'Order not found' });
-      }
-
-      // 2. Evitar doble procesamiento
-      if (order.status === 'PAID') {
-        return res.json({ success: true, message: 'Already processed' });
-      }
-
-      // 3. PROCESAR VENTA EXITOSA
-      await prisma.$transaction(async (tx) => {
-        // Actualizar Orden
-        await tx.order.update({
-          where: { id: order.id },
-          data: { 
-            status: 'PAID', 
-            wompiTransactionId: transactionId,
-            paidAt: new Date()
-          }
-        });
-
-        // RESTAR STOCK AUTOMÁTICAMENTE
-        for (const item of order.items) {
-          if (item.product) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { stock: { decrement: item.quantity } }
-            });
-            logger.info(`📉 Stock descontado: ${item.product.name} (-${item.quantity}) en sede ${order.branchId}`);
-          }
-        }
-      });
-
-      // 4. NOTIFICACIONES
-      
-      // A. Al Cliente
-      const productsList = order.items.map(i => `- ${i.product.name} (x${i.quantity})`).join('\n');
-      const confirmMsg = `✅ *¡Pago Recibido Exitosamente!*\n\nGracias por tu compra en *Fantasías*.\n\n📦 *Pedido:*\n${productsList}\n\n💰 Total: ${formatCOP(order.amount)}\n🚚 Prepararemos tu envío discreto de inmediato.\n\n¡Gracias por confiar en nosotros! 🔥`;
-      await whatsappService.sendMessage(order.branchId, order.contact.phone + '@c.us', confirmMsg);
-
-      // B. NOTIFICAR: PRIMERO al teléfono directo, LUEGO al grupo como respaldo
-      const hasAddr = order.contact.address && order.contact.address !== 'Por confirmar';
-      const hasCity = order.contact.city && order.contact.city !== 'Por confirmar';
-      const addrWarning = (!hasAddr || !hasCity)
-        ? `\n⚠️ *DIRECCIÓN PENDIENTE DE CONFIRMACIÓN — CONTACTAR AL CLIENTE PARA OBTENER DIRECCIÓN COMPLETA*\n`
-        : '';
-      const groupMsg = `🚨 *¡NUEVA VENTA REALIZADA!* 🚨\n\n` +
-        `Sede: *${order.branch.name}*\n` +
-        `Cliente: ${order.contact.name} (${order.contact.phone})\n` +
-        `Productos:\n${productsList}\n` +
-        `Total: ${formatCOP(order.amount)}\n\n` +
-        `📍 *DIRECCIÓN DE ENVÍO:*\n${hasAddr ? order.contact.address : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
-        `🏙️ *CIUDAD:* ${hasCity ? order.contact.city : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
-        `${addrWarning}` +
-        `⚠️ *Acción:* Preparar despacho de inmediato.`;
-      
-      await whatsappService.notifyPhone(order.branchId, groupMsg);
-
-      res.json({ success: true });
-    } catch (error) {
-      logger.error('Error procesando webhook de Wompi:', error);
-      res.status(500).json({ error: error.message });
-    }
-  }
-
-  /**
-   * Página de éxito de pago
-   */
   async paymentSuccess(req, res) {
     res.send(`
       <!DOCTYPE html>
@@ -122,9 +18,6 @@ class PaymentController {
     `);
   }
 
-  /**
-   * Página de pago cancelado
-   */
   async paymentCancel(req, res) {
     res.send(`
       <!DOCTYPE html>

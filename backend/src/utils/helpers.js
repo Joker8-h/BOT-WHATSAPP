@@ -2,6 +2,8 @@
 //  UTILS: Helpers
 // ─────────────────────────────────────────────────────────
 
+const logger = require('./logger');
+
 /**
  * Delay aleatorio para simular comportamiento humano (anti-ban)
  */
@@ -79,7 +81,9 @@ async function isWorkingHours(branchId = null) {
           lunchEnd: branchSchedule.lunchEnd,
         };
       }
-    } catch (e) {}
+    } catch (e) {
+      logger.warn(`⚠️ Error obteniendo horario de sede ${branchId}: ${e.message}`);
+    }
   }
 
   const now = new Date();

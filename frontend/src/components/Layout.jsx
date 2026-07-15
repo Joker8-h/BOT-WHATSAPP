@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { getWhatsAppStatus } from '../api';
 import { useAuth } from '../context/AuthContext';
+import TourGuide from './TourGuide';
 import {
   IconDashboard, IconProducts, IconContacts, IconChat,
   IconOrders, IconCampaigns, IconSettings, IconBranches,
@@ -35,26 +36,28 @@ export default function Layout() {
   };
 
   const navItems = [
-    { path: '/', icon: <IconDashboard />, label: 'Dashboard', end: true },
-    { path: '/products', icon: <IconProducts />, label: 'Productos' },
-    { path: '/contacts', icon: <IconContacts />, label: 'Contactos' },
-    { path: '/conversations', icon: <IconChat />, label: 'Chats' },
-    { path: '/orders', icon: <IconOrders />, label: 'Pedidos' },
-    { path: '/employee-access', icon: <IconEmployees />, label: 'Empleados Acceso' },
-    { path: '/campaigns', icon: <IconCampaigns />, label: 'Campañas' },
-    { path: '/settings', icon: <IconSettings />, label: 'Configuración' },
+    { path: '/', icon: <IconDashboard />, label: 'Dashboard', end: true, tour: 'nav-dashboard' },
+    { path: '/products', icon: <IconProducts />, label: 'Productos', tour: 'nav-products' },
+    { path: '/contacts', icon: <IconContacts />, label: 'Contactos', tour: 'nav-contacts' },
+    { path: '/conversations', icon: <IconChat />, label: 'Chats', tour: 'nav-chats' },
+    { path: '/orders', icon: <IconOrders />, label: 'Pedidos', tour: 'nav-orders' },
+    { path: '/employee-access', icon: <IconEmployees />, label: 'Empleados Acceso', tour: 'nav-employee-access' },
+    { path: '/campaigns', icon: <IconCampaigns />, label: 'Campañas', tour: 'nav-campaigns' },
+    { path: '/settings', icon: <IconSettings />, label: 'Configuración', tour: 'nav-settings' },
   ];
 
   const adminItems = [
-    { path: '/branches/management', icon: <IconBranches />, label: 'Gestión de Sedes' },
-    { path: '/branches/map', icon: <IconMap />, label: 'Mapa de Sedes' },
-    { path: '/employees', icon: <IconEmployees />, label: 'Empleados' },
-    { path: '/inventory/global', icon: <IconGlobe />, label: 'Stock Global' },
-    { path: '/system-settings', icon: <IconSettings />, label: 'Horario Global' },
+    { path: '/branches/management', icon: <IconBranches />, label: 'Gestión de Sedes', tour: 'nav-branch-management' },
+    { path: '/branches/map', icon: <IconMap />, label: 'Mapa de Sedes', tour: 'nav-branch-map' },
+    { path: '/employees', icon: <IconEmployees />, label: 'Empleados', tour: 'nav-employees' },
+    { path: '/inventory/global', icon: <IconGlobe />, label: 'Stock Global', tour: 'nav-global-inventory' },
+    { path: '/system-settings', icon: <IconSettings />, label: 'Horario Global', tour: 'nav-system-settings' },
   ];
 
   return (
-    <div className="app-layout">
+    <>
+      <TourGuide />
+      <div className="app-layout">
       <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.7rem' }}>
@@ -67,6 +70,7 @@ export default function Layout() {
           <div className="nav-section-label">PRINCIPAL</div>
           {navItems.map(item => (
             <NavLink key={item.path} to={item.path} end={item.end}
+              data-tour={item.tour}
               className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
               <span className="nav-icon">{item.icon}</span>
               <span>{item.label}</span>
@@ -78,6 +82,7 @@ export default function Layout() {
               <div className="nav-section-label" style={{ marginTop: '1.8rem' }}>INFRAESTRUCTURA</div>
               {adminItems.map(item => (
                 <NavLink key={item.path} to={item.path}
+                  data-tour={item.tour}
                   className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
                   <span className="nav-icon">{item.icon}</span>
                   <span>{item.label}</span>
@@ -88,7 +93,7 @@ export default function Layout() {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="sidebar-status">
+          <div className="sidebar-status" data-tour="whatsapp-status">
             <span className={`status-dot ${waStatus ? 'online' : ''}`}></span>
             <span className="status-text">{waStatus ? 'WhatsApp activo' : 'WhatsApp inactivo'}</span>
           </div>
@@ -96,8 +101,11 @@ export default function Layout() {
             <p className="user-name">{user?.username}</p>
             <p className="user-branch">{user?.branchName || user?.branch?.city || 'Administrador'}</p>
           </div>
-          <button className="btn-logout" onClick={handleLogout}>
+          <button className="btn-logout" onClick={handleLogout} data-tour="logout-btn">
             <IconLogout /> Cerrar sesión
+          </button>
+          <button className="btn-restart-tour" onClick={() => window.__restartTour?.()} title="Reiniciar tour">
+            🎓 Ayuda
           </button>
         </div>
       </aside>
@@ -198,7 +206,25 @@ export default function Layout() {
           border-color: rgba(220,38,38,0.2);
           color: var(--red);
         }
+        .btn-restart-tour {
+          background: none;
+          border: 1px dashed rgba(255,255,255,0.15);
+          color: rgba(255,255,255,0.35);
+          padding: 0.35rem 0.7rem;
+          border-radius: 8px;
+          cursor: pointer;
+          font-size: 0.7rem;
+          margin: 0 0.75rem 0.75rem;
+          font-family: var(--font);
+          transition: all 0.2s;
+          width: calc(100% - 1.5rem);
+        }
+        .btn-restart-tour:hover {
+          border-color: rgba(255,255,255,0.4);
+          color: rgba(255,255,255,0.7);
+        }
       `}</style>
-    </div>
+      </div>
+    </>
   );
 }

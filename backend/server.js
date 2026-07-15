@@ -6,20 +6,8 @@
 require('dotenv').config();
 
 const express = require('express');
-const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-
-// 🛡️ INICIALIZAR DIRECTORIO DE SESIONES BAILEYS
-try {
-  const baileysDir = path.join(process.cwd(), '.baileys_auth');
-  if (!fs.existsSync(baileysDir)) {
-    fs.mkdirSync(baileysDir, { recursive: true });
-    console.log('📁 [INIT] Directorio de sesiones Baileys creado.');
-  }
-} catch (e) {
-  console.warn('⚠️ [INIT] No se pudo crear directorio de sesiones.');
-}
 
 
 const cors = require('cors');
@@ -50,7 +38,9 @@ app.use(helmet({
 app.use(cors({
   origin: process.env.NODE_ENV === 'development'
     ? ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000']
-    : true,
+    : process.env.CORS_ORIGIN
+      ? process.env.CORS_ORIGIN.split(',').map(s => s.trim())
+      : false,
   credentials: true,
 }));
 

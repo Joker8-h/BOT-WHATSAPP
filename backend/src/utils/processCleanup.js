@@ -4,7 +4,7 @@
  * Útil para mantenimiento preventivo antes de iniciar el servidor en producción.
  */
 const { exec } = require('child_process');
-const logger = require('./src/utils/logger');
+const logger = require('./logger');
 
 function cleanupPuppeteer() {
   if (process.platform !== 'win32') return;
