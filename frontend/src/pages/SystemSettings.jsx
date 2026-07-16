@@ -139,7 +139,7 @@ export default function SystemSettings() {
       </div>
 
       {/* Preview Card */}
-      <div style={{ background: 'linear-gradient(135deg, var(--purple) 0%, var(--purple-d) 100%)', borderRadius: 'var(--r-lg)', padding: '1.5rem 2rem', marginBottom: '1.5rem', color: '#fff' }}>
+      <div data-tour="schedule-preview" style={{ background: 'linear-gradient(135deg, var(--purple) 0%, var(--purple-d) 100%)', borderRadius: 'var(--r-lg)', padding: '1.5rem 2rem', marginBottom: '1.5rem', color: '#fff' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
           <div style={{ width: '56px', height: '56px', background: 'rgba(255,255,255,0.15)', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.6rem' }}>
             🕐
@@ -272,7 +272,7 @@ export default function SystemSettings() {
         </div>
 
         {/* Sección: Festivos */}
-        <div style={cardStyle}>
+        <div data-tour="holidays-section" style={cardStyle}>
           <div style={cardHeaderStyle}>
             <span style={cardIconStyle}>🎉</span>
             <div style={{ flex: 1 }}>
@@ -322,7 +322,7 @@ export default function SystemSettings() {
         </div>
 
         {/* Sección: Mensaje */}
-        <div style={cardStyle}>
+        <div data-tour="auto-reply-section" style={cardStyle}>
           <div style={cardHeaderStyle}>
             <span style={cardIconStyle}>💬</span>
             <div>
@@ -337,7 +337,7 @@ export default function SystemSettings() {
         </div>
 
         {/* Botón Guardar */}
-        <div style={{ position: 'sticky', bottom: '1.5rem', marginTop: '1rem', zIndex: 10 }}>
+        <div data-tour="save-settings" style={{ position: 'sticky', bottom: '1.5rem', marginTop: '1rem', zIndex: 10 }}>
           <button type="submit" disabled={saving}
             style={{
               width: '100%', padding: '1rem', borderRadius: 'var(--r-lg)', border: 'none',

@@ -170,7 +170,7 @@ export default function Settings() {
       <div className="settings-grid" style={{ marginBottom: '2rem' }}>
         {/* WhatsApp Connection Card - SOLO MASTER */}
         {isMasterBranch && (
-          <div className="card" style={{ gridColumn: '1 / -1' }}>
+          <div className="card" data-tour="whatsapp-card" style={{ gridColumn: '1 / -1' }}>
           <div className="card-title" style={{ justifyContent: 'space-between' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
               <IconPhone /> Canal de Ventas WhatsApp
@@ -184,7 +184,7 @@ export default function Settings() {
             {!waStatus?.isReady ? (
               <div>
                 {waStatus?.qr ? (
-                  <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                    <div data-tour="qr-container" style={{ textAlign: 'center', padding: '2rem 0' }}>
                     <p style={{ color: 'var(--text-2)', fontWeight: '600', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
                       Escanea este código con tu WhatsApp Business corporativo:
                     </p>
@@ -245,7 +245,7 @@ export default function Settings() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.2rem', marginBottom: '2rem' }}>
         {/* Wompi Config Card */}
-        <div className="card" style={{ borderTop: '3px solid var(--purple)' }}>
+        <div className="card" data-tour="wompi-card" style={{ borderTop: '3px solid var(--purple)' }}>
             <div className="card-title" style={{ justifyContent: 'space-between' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <IconShield /> Pasarela Wompi
@@ -306,7 +306,7 @@ export default function Settings() {
                   </div>
                 )}
 
-                <div style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '2px solid var(--purple)', marginBottom: '1.5rem' }}>
+                <div data-tour="notification-phone" style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '2px solid var(--purple)', marginBottom: '1.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem', color: 'var(--purple)' }}>
                         <IconPhone />
                         <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1px' }}>📱 Teléfono de Notificación (Principal)</span>
@@ -325,7 +325,7 @@ export default function Settings() {
                     </p>
                 </div>
 
-                <div style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
+                <div data-tour="notification-group" style={{ padding: '1rem', background: 'var(--bg-1)', borderRadius: '12px', border: '1px solid var(--border)', marginBottom: '1.5rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.8rem', color: 'var(--text-2)' }}>
                         <IconPhone />
                         <span style={{ fontSize: '0.7rem', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '1px' }}>Grupo de Notificación WhatsApp (Respaldo)</span>
@@ -344,7 +344,7 @@ export default function Settings() {
                     </p>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '1rem' }}>
+                <div data-tour="save-config" style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '1rem' }}>
                     <button 
                         type="submit" 
                         className="btn-primary" 
@@ -362,7 +362,7 @@ export default function Settings() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
 
           {isAdmin && (
-            <div className="card" style={{ borderLeft: '3px solid var(--purple)', flex: 1 }}>
+            <div className="card" data-tour="audit-table" style={{ borderLeft: '3px solid var(--purple)', flex: 1 }}>
               <div className="card-title"><IconClipboard /> Auditoría</div>
               <div className="card-body">
                 {audit.length > 0 ? (
@@ -395,7 +395,7 @@ export default function Settings() {
         </div>
 
         {/* ── SECCIÓN: GOOGLE DRIVE SYNC ── */}
-        <div className="card" style={{ gridColumn: '1 / -1', marginTop: '1.5rem', borderTop: '4px solid var(--purple)' }}>
+        <div className="card" data-tour="drive-sync" style={{ gridColumn: '1 / -1', marginTop: '1.5rem', borderTop: '4px solid var(--purple)' }}>
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <IconClipboard /> 
             <div>

@@ -55,7 +55,7 @@ export default function Dashboard() {
         </div>
         
         {isAdmin && (
-          <div className="branch-selector-wrap">
+          <div className="branch-selector-wrap" data-tour="branch-filter">
             <label style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-3)', textTransform: 'uppercase', display: 'block', marginBottom: '0.4rem' }}>
               Filtrar por Sede
             </label>
