@@ -73,6 +73,16 @@ class WhatsAppService {
         fs.mkdirSync(sessionDir, { recursive: true });
       }
 
+      // 🧹 Eliminar archivos de lock de Chromium que persisten en el volumen
+      // (Chromium los crea en userDataDir que LocalAuth asigna = sessionDir)
+      const locks = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+      for (const lock of locks) {
+        const lockPath = path.join(sessionDir, lock);
+        try {
+          if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+        } catch (_) {}
+      }
+
       this.sessions.set(branchId, { isReady: false, qr: null, status: 'INITIALIZING' });
 
       const client = new Client({

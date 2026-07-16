@@ -36,7 +36,27 @@ function cleanupPuppeteer() {
     if (cleaned > 0) logger.info(`🗑️ ${cleaned} perfil(es) temporal(es) de Chromium eliminados.`);
   } catch (_) {}
 
-  // 3. Limpiar posibles SingletonLock/SingletonSocket en el HOME
+  // 3. Limpiar SingletonLock de .wwebjs_auth (LocalAuth asigna userDataDir aquí)
+  const wwebjsDir = path.join(process.cwd(), '.wwebjs_auth');
+  try {
+    if (fs.existsSync(wwebjsDir)) {
+      const branches = fs.readdirSync(wwebjsDir);
+      for (const branch of branches) {
+        const branchDir = path.join(wwebjsDir, branch);
+        if (fs.statSync(branchDir).isDirectory()) {
+          const locks = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+          for (const lock of locks) {
+            const lockPath = path.join(branchDir, lock);
+            try {
+              if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+            } catch (_) {}
+          }
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 4. Limpiar posibles SingletonLock/SingletonSocket en el HOME
   const chromeConfigDir = path.join(os.homedir(), '.config', 'chromium');
   try {
     if (fs.existsSync(chromeConfigDir)) {
