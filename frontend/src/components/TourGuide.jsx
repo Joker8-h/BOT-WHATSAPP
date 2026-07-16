@@ -780,8 +780,7 @@ export default function TourGuide() {
     if (data.status === STATUS.FINISHED) {
       setRun(false);
       goToNextChapter();
-    }
-    if (data.action === ACTIONS.SKIP || data.action === ACTIONS.CLOSE) {
+    } else if (data.action === ACTIONS.SKIP || data.action === ACTIONS.CLOSE) {
       setRun(false);
       localStorage.setItem(TOUR_KEY, 'true');
       setChapterIdx(-1);
