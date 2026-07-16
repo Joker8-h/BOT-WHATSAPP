@@ -36,7 +36,7 @@ function cleanupPuppeteer() {
     if (cleaned > 0) logger.info(`🗑️ ${cleaned} perfil(es) temporal(es) de Chromium eliminados.`);
   } catch (_) {}
 
-  // 3. Limpiar SingletonLock de .wwebjs_auth (LocalAuth asigna userDataDir aquí)
+  // 3. Limpiar SingletonLock de .wwebjs_auth (LocalAuth asigna userDataDir = <dataPath>/session-<clientId>)
   const wwebjsDir = path.join(process.cwd(), '.wwebjs_auth');
   try {
     if (fs.existsSync(wwebjsDir)) {
@@ -44,12 +44,13 @@ function cleanupPuppeteer() {
       for (const branch of branches) {
         const branchDir = path.join(wwebjsDir, branch);
         if (fs.statSync(branchDir).isDirectory()) {
-          const locks = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
-          for (const lock of locks) {
-            const lockPath = path.join(branchDir, lock);
-            try {
-              if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-            } catch (_) {}
+          const sessionDir = path.join(branchDir, `session-${branch}`);
+          if (fs.existsSync(sessionDir)) {
+            const locks = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+            for (const lock of locks) {
+              const lockPath = path.join(sessionDir, lock);
+              try { if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath); } catch (_) {}
+            }
           }
         }
       }

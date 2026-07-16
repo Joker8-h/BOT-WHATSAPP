@@ -73,11 +73,12 @@ class WhatsAppService {
         fs.mkdirSync(sessionDir, { recursive: true });
       }
 
-      // 🧹 Eliminar archivos de lock de Chromium que persisten en el volumen
-      // (Chromium los crea en userDataDir que LocalAuth asigna = sessionDir)
+      // 🧹 Limpiar SingletonLock que Chromium dejó en el perfil anterior
+      // LocalAuth asigna userDataDir = <dataPath>/session-<clientId>
+      const chromiumProfileDir = path.join(sessionDir, `session-branch_${branchId}`);
       const locks = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
       for (const lock of locks) {
-        const lockPath = path.join(sessionDir, lock);
+        const lockPath = path.join(chromiumProfileDir, lock);
         try {
           if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
         } catch (_) {}
