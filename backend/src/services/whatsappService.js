@@ -88,6 +88,7 @@ class WhatsAppService {
         }),
         puppeteer: {
           headless: true,
+          userDataDir: profileDir,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -96,8 +97,7 @@ class WhatsAppService {
             '--no-first-run',
             '--no-zygote',
             '--single-process',
-            '--disable-gpu',
-            `--user-data-dir=${profileDir}`
+            '--disable-gpu'
           ],
           executablePath: process.env.CHROMIUM_PATH || undefined
         }

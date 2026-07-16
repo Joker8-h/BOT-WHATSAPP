@@ -125,6 +125,10 @@ async function startServer() {
   `);
 
   try {
+    // 0. Limpiar cualquier perfil Chromium huérfano
+    const { cleanupPuppeteer } = require('./src/utils/processCleanup');
+    cleanupPuppeteer();
+
     // 1. Conectar base de datos
     logger.info('📦 Conectando a MySQL...');
     await connectDatabase();
