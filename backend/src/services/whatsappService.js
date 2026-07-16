@@ -4,7 +4,6 @@ const { antiBanDelay } = require('../utils/helpers');
 const { prisma } = require('../config/database');
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const axios = require('axios');
 
 class WhatsAppService {
@@ -76,11 +75,6 @@ class WhatsAppService {
 
       this.sessions.set(branchId, { isReady: false, qr: null, status: 'INITIALIZING' });
 
-      const profileDir = path.join(os.tmpdir(), `chromium_branch_${branchId}`);
-      if (fs.existsSync(profileDir)) {
-        fs.rmSync(profileDir, { recursive: true, force: true });
-      }
-
       const client = new Client({
         authStrategy: new LocalAuth({
           dataPath: sessionDir,
@@ -88,7 +82,6 @@ class WhatsAppService {
         }),
         puppeteer: {
           headless: true,
-          userDataDir: profileDir,
           args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -96,7 +89,6 @@ class WhatsAppService {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--single-process',
             '--disable-gpu'
           ],
           executablePath: process.env.CHROMIUM_PATH || undefined
@@ -463,16 +455,6 @@ class WhatsAppService {
         }
       } catch (e) {
         logger.warn(`No se pudo limpiar sesión de sucursal ${branchId}`);
-      }
-
-      // Limpiar perfil temporal de Chromium
-      const chromiumDir = path.join(os.tmpdir(), `chromium_branch_${branchId}`);
-      try {
-        if (fs.existsSync(chromiumDir)) {
-          fs.rmSync(chromiumDir, { recursive: true });
-        }
-      } catch (e) {
-        logger.warn(`No se pudo limpiar perfil Chromium de sucursal ${branchId}`);
       }
 
       this.clients.delete(branchId);
