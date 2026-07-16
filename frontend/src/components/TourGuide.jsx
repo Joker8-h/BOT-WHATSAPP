@@ -844,7 +844,7 @@ export default function TourGuide() {
         next: 'Siguiente',
         skip: 'Saltar tour',
       }}
-      callback={handleCallback}
+      onEvent={handleCallback}
     />
   );
 }
