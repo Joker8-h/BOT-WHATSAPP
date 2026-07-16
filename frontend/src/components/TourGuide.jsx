@@ -738,7 +738,10 @@ export default function TourGuide() {
   useEffect(() => {
     const completed = localStorage.getItem(TOUR_KEY);
     if (!completed) {
-      const t = setTimeout(() => setChapterIdx(0), 500);
+      const t = setTimeout(() => {
+        chapterRef.current = 0;
+        setChapterIdx(0);
+      }, 500);
       return () => clearTimeout(t);
     }
   }, []);
