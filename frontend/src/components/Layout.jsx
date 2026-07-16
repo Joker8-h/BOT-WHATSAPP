@@ -104,9 +104,6 @@ export default function Layout() {
           <button className="btn-logout" onClick={handleLogout} data-tour="logout-btn">
             <IconLogout /> Cerrar sesión
           </button>
-          <button className="btn-restart-tour" onClick={() => window.__restartTour?.()} title="Reiniciar tour">
-            🎓 Ayuda
-          </button>
         </div>
       </aside>
 
@@ -131,6 +128,10 @@ export default function Layout() {
         <div className="page-content">
           <Outlet />
         </div>
+
+        <button className="fab-help" onClick={() => window.__restartTour?.()} title="Reiniciar tour guiado">
+          🎓
+        </button>
       </main>
 
       <style>{`
@@ -222,6 +223,29 @@ export default function Layout() {
         .btn-restart-tour:hover {
           border-color: rgba(255,255,255,0.4);
           color: rgba(255,255,255,0.7);
+        }
+        .fab-help {
+          position: fixed;
+          bottom: 1.5rem;
+          right: 1.5rem;
+          width: 48px;
+          height: 48px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #e91e63, #9c27b0);
+          color: white;
+          border: none;
+          font-size: 1.3rem;
+          cursor: pointer;
+          box-shadow: 0 4px 15px rgba(233,30,99,0.4);
+          z-index: 9999;
+          transition: all 0.2s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .fab-help:hover {
+          transform: scale(1.1);
+          box-shadow: 0 6px 20px rgba(233,30,99,0.6);
         }
       `}</style>
       </div>
