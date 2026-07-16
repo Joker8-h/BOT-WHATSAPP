@@ -747,7 +747,9 @@ export default function TourGuide() {
   }, []);
 
   useEffect(() => {
+    console.log('[TourGuide] chapter effect', { chapterIdx, pathname: location.pathname, run, restartKey });
     if (chapterIdx === -1 || chapterIdx >= chapters.length) {
+      console.log('[TourGuide] chapter out of range', chapterIdx);
       setRun(false);
       setCurrentSteps([]);
       return;
@@ -755,12 +757,15 @@ export default function TourGuide() {
     const chapter = chapters[chapterIdx];
     const matchFn = chapter.matchFn || ((p) => p === chapter.path);
     if (matchFn(location.pathname)) {
+      console.log('[TourGuide] path matched, scheduling start in 700ms', chapter.path);
       const t = setTimeout(() => {
+        console.log('[TourGuide] starting chapter', chapterIdx, chapter.path);
         setCurrentSteps(chapter.steps);
         setRun(true);
       }, 700);
       return () => clearTimeout(t);
     } else {
+      console.log('[TourGuide] path NOT matched', { expected: chapter.path, actual: location.pathname });
       setRun(false);
       setCurrentSteps([]);
     }
@@ -768,7 +773,9 @@ export default function TourGuide() {
 
   const goToNextChapter = () => {
     const next = chapterRef.current + 1;
+    console.log('[TourGuide] goToNextChapter', { chapterRefCurrent: chapterRef.current, next, totalChapters: chapters.length });
     if (next < chapters.length) {
+      console.log('[TourGuide] navigating to', chapters[next].path);
       setChapterIdx(next);
       chapterRef.current = next;
       navigate(chapters[next].path);
@@ -780,10 +787,13 @@ export default function TourGuide() {
   };
 
   const handleCallback = (data) => {
+    console.log('[TourGuide] handleCallback', JSON.stringify({ status: data.status, action: data.action, index: data.index, lifecycle: data.lifecycle }));
     if (data.status === STATUS.FINISHED) {
+      console.log('[TourGuide] STATUS.FINISHED fired, calling goToNextChapter');
       setRun(false);
       goToNextChapter();
     } else if (data.action === ACTIONS.SKIP || data.action === ACTIONS.CLOSE) {
+      console.log('[TourGuide] SKIP/CLOSE fired, exiting');
       setRun(false);
       localStorage.setItem(TOUR_KEY, 'true');
       setChapterIdx(-1);
