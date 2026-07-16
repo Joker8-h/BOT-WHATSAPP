@@ -161,7 +161,7 @@ export default function BranchSettings() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+      <div data-tour="branch-tabs" style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
         <button onClick={() => setActiveTab('info')} style={tabStyle(activeTab === 'info')}>
           🏪 Información General
         </button>
@@ -222,7 +222,7 @@ export default function BranchSettings() {
             </div>
           </div>
 
-          <button type="submit" disabled={saving}
+          <button type="submit" disabled={saving} data-tour="branch-save-info"
             style={{
               width: '100%', padding: '1rem', borderRadius: 'var(--r-lg)', border: 'none',
               background: saving ? 'var(--text-3)' : 'var(--purple)', color: '#fff',
@@ -240,7 +240,7 @@ export default function BranchSettings() {
       {activeTab === 'schedule' && (
         <div>
           {/* Toggle Card */}
-          <div style={{ ...cardStyle, background: scheduleForm.useGlobalSchedule ? 'var(--green-bg)' : 'var(--bg-card)', borderColor: scheduleForm.useGlobalSchedule ? 'rgba(45,138,92,0.2)' : 'var(--border)' }}>
+          <div data-tour="branch-schedule-global" style={{ ...cardStyle, background: scheduleForm.useGlobalSchedule ? 'var(--green-bg)' : 'var(--bg-card)', borderColor: scheduleForm.useGlobalSchedule ? 'rgba(45,138,92,0.2)' : 'var(--border)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <span style={{ ...cardIconStyle, background: scheduleForm.useGlobalSchedule ? 'rgba(45,138,92,0.15)' : 'var(--purple-bg)' }}>
@@ -395,7 +395,7 @@ export default function BranchSettings() {
               </div>
             </div>
 
-            <div style={{ marginTop: '1rem' }}>
+            <div data-tour="branch-admin-form" style={{ marginTop: '1rem' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
                 <div>
                   <label style={labelStyle}>LID de WhatsApp</label>
