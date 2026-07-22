@@ -46,8 +46,21 @@ class MessageController {
 
       logger.info(`📨 [MSG-IN] ${chatId}: "${body.substring(0, 30)}..."`);
 
-      // ── 1. ¿ES EMPLEADO? ────────────────────────────────────
       const cleanPhone = chatId.split('@')[0];
+
+      // ── 0. ¿NÚMERO BLOQUEADO? ────────────────────────────────
+      const BLOCKED = ['3126279506', '3106124802'];
+      const normalized = cleanPhone.replace(/\D/g, '');
+      const isBlocked = BLOCKED.some(n => {
+        const cleanN = n.replace(/\D/g, '');
+        return normalized === cleanN || normalized === '57' + cleanN || (cleanN.length >= 10 && normalized.endsWith(cleanN));
+      });
+
+      if (isBlocked) {
+        logger.info(`🚫 [BLOCKED] Mensaje ignorado de ${cleanPhone}`);
+        this.processingChats.delete(chatId);
+        return;
+      }
       const employee = await prisma.employeeAccess.findFirst({
         where: { phone: cleanPhone }
       });
