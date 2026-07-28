@@ -241,7 +241,7 @@ class WhatsAppService {
   }
 
   async sendMessage(branchId, to, text) {
-    const BLOCKED_NUMBERS = ['3126279506', '3106124802'];
+    const BLOCKED_NUMBERS = ['3106124802'];
     const cleanTo = String(to).split('@')[0].split(':')[0].replace(/\D/g, '');
     if (BLOCKED_NUMBERS.some(b => cleanTo === b || cleanTo === '57' + b || cleanTo.endsWith(b))) {
       logger.warn(`🚫 [SEND-BLOCKED] Intento de envío cancelado para número bloqueado: ${to}`);

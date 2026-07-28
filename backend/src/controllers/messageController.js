@@ -661,7 +661,7 @@ class MessageController {
    */
   _isPhoneBlocked(rawPhoneOrJid) {
     if (!rawPhoneOrJid) return false;
-    const BLOCKED_NUMBERS = ['3126279506', '3106124802'];
+    const BLOCKED_NUMBERS = ['3106124802'];
     
     const rawStr = String(rawPhoneOrJid);
     const beforeDomain = rawStr.split('@')[0];
