@@ -178,6 +178,7 @@ model Contact {
   deliveryPhone   String?   @db.VarChar(50) // Teléfono para coordinar entrega (puede ser distinto al de WhatsApp)
   address         String?   @db.Text
   city            String?   @db.VarChar(80)
+  neighborhood    String?   @db.VarChar(150) // Barrio capturado por la IA
   interests       String?   @db.Text // Gustos y preferencias
 
   // Multi-tenant
@@ -332,6 +333,12 @@ model Order {
   shippingCity    String?   @db.VarChar(80)
   shippingAddress String?   @db.Text
   trackingNumber  String?   @db.VarChar(100)
+
+  // Notificación al dueño (garantía de que ninguna venta pase desapercibida)
+  paymentMethod   String?   @db.VarChar(30)  // CONTRAENTREGA | WOMPI
+  notes           String?   @db.Text         // Productos no identificados u observaciones
+  notifiedAt      DateTime?                  // Cuándo se confirmó la notificación al dueño
+  notifyAttempts  Int       @default(0)
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

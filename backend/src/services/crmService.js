@@ -45,23 +45,41 @@ class CRMService {
   }
 
   /**
-   * Actualiza información específica del contacto capturada por la IA
+   * Actualiza información específica del contacto capturada por la IA.
+   * Si un campo falla (columna inexistente, valor inválido), se reintenta campo por
+   * campo para NO perder los demás datos del cliente (dirección, ciudad, nombre...).
    */
   async updateContactInfo(contactId, data) {
+    const ALLOWED = ['name', 'fullName', 'city', 'address', 'neighborhood', 'interests', 'deliveryPhone'];
+
+    const payload = {};
+    for (const field of ALLOWED) {
+      const value = data[field];
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        payload[field] = String(value).trim();
+      }
+    }
+
+    if (Object.keys(payload).length === 0) return null;
+
     try {
-      return await prisma.contact.update({
-        where: { id: contactId },
-        data: {
-          name: data.name || undefined,
-          city: data.city || undefined,
-          address: data.address || undefined,
-          neighborhood: data.neighborhood || undefined,
-          interests: data.interests || undefined,
-          deliveryPhone: data.deliveryPhone || undefined,
-        },
-      });
+      const updated = await prisma.contact.update({ where: { id: contactId }, data: payload });
+      logger.info(`💾 [CRM] Datos guardados para contacto ${contactId}: ${Object.keys(payload).join(', ')}`);
+      return updated;
     } catch (error) {
-      logger.error('Error actualizando información de contacto:', error);
+      logger.error(`Error actualizando contacto ${contactId} (${Object.keys(payload).join(', ')}). Reintentando campo por campo:`, error.message);
+
+      // Fallback: guardar campo por campo para que un solo campo problemático
+      // no arrastre consigo la dirección o la ciudad del pedido.
+      let lastOk = null;
+      for (const [field, value] of Object.entries(payload)) {
+        try {
+          lastOk = await prisma.contact.update({ where: { id: contactId }, data: { [field]: value } });
+        } catch (fieldError) {
+          logger.error(`❌ [CRM] No se pudo guardar "${field}" del contacto ${contactId}: ${fieldError.message}`);
+        }
+      }
+      return lastOk;
     }
   }
 
@@ -107,11 +125,20 @@ class CRMService {
       if (conversation) conversation.messages = conversation.messages.reverse();
 
       if (!conversation) {
+        // Recuperar el contexto de la última conversación cerrada del cliente
+        // para no arrancar de cero (pedido en curso, datos ya capturados).
+        const previous = await prisma.conversation.findFirst({
+          where: { contactId, branchId },
+          orderBy: { updatedAt: 'desc' },
+          select: { context: true },
+        });
+
         conversation = await prisma.conversation.create({
           data: {
             contactId,
             branchId,
             status: 'ACTIVE',
+            context: this._carryOverContext(previous?.context),
           },
           include: {
             messages: true,
@@ -124,14 +151,17 @@ class CRMService {
       if (lastMessage) {
         const hoursSinceLastMsg = (Date.now() - new Date(lastMessage.createdAt).getTime()) / (1000 * 60 * 60);
         if (hoursSinceLastMsg > 24) {
+          const carriedContext = this._carryOverContext(conversation.context);
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: { status: 'CLOSED', endedAt: new Date() },
           });
           conversation = await prisma.conversation.create({
-            data: { contactId, branchId, status: 'ACTIVE' },
+            // El pedido en curso viaja a la nueva conversación: el bot NUNCA olvida qué pidió.
+            data: { contactId, branchId, status: 'ACTIVE', context: carriedContext },
             include: { messages: true },
           });
+          logger.info(`🔄 [CRM] Nueva conversación ${conversation.id} para contacto ${contactId} — pedido en curso conservado.`);
         }
       }
 
@@ -140,6 +170,111 @@ class CRMService {
       logger.error(`Error en getActiveConversation (Branch ${branchId}):`, error);
       throw error;
     }
+  }
+
+  /**
+   * Conserva únicamente la memoria de venta al rotar de conversación.
+   * Se descartan datos volátiles (carritos Wompi ya emitidos, banderas de horario).
+   */
+  _carryOverContext(context) {
+    if (!context || typeof context !== 'object') return undefined;
+    const carried = {};
+    if (context.pedido) carried.pedido = context.pedido;
+    if (context.pendingCarts && Object.keys(context.pendingCarts).length > 0) {
+      carried.pendingCarts = context.pendingCarts;
+    }
+    return Object.keys(carried).length > 0 ? carried : undefined;
+  }
+
+  /**
+   * Guarda/actualiza el "pedido en curso" del cliente dentro del contexto de la
+   * conversación. Es la memoria que impide que el bot olvide qué se acordó.
+   */
+  async saveOrderDraft(conversationId, draft) {
+    try {
+      if (!draft || Object.keys(draft).length === 0) return null;
+
+      const conversation = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { context: true },
+      });
+
+      const context = (conversation?.context && typeof conversation.context === 'object') ? conversation.context : {};
+      const previous = context.pedido || {};
+
+      const pedido = {
+        ...previous,
+        ...Object.fromEntries(Object.entries(draft).filter(([, v]) => v !== undefined && v !== null && v !== '')),
+        actualizadoEn: new Date().toISOString(),
+      };
+
+      // Los productos se acumulan sin duplicados: si el cliente añadió algo antes,
+      // sigue en el pedido aunque el último mensaje no lo mencione.
+      if (draft.productos?.length) {
+        const merged = [...(previous.productos || []), ...draft.productos]
+          .map(p => String(p).trim())
+          .filter(Boolean);
+        pedido.productos = [...new Map(merged.map(p => [p.toLowerCase(), p])).values()];
+      }
+
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { context: { ...context, pedido } },
+      });
+
+      return pedido;
+    } catch (error) {
+      logger.error(`Error guardando pedido en curso (conv ${conversationId}):`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Reúne todo lo que el sistema sabe del pedido del cliente: borrador en curso,
+   * pedidos pendientes en BD y última compra. Se inyecta en el prompt de la IA.
+   */
+  async buildOrderMemory(contactId, conversation) {
+    const memory = { draft: null, pendingOrders: [], lastPaidOrder: null };
+
+    try {
+      const context = (conversation?.context && typeof conversation.context === 'object') ? conversation.context : {};
+      if (context.pedido) memory.draft = context.pedido;
+
+      const orders = await prisma.order.findMany({
+        where: { contactId },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+        include: { items: { include: { product: { select: { name: true } } } } },
+      });
+
+      memory.pendingOrders = orders
+        .filter(o => ['PENDING', 'PAYMENT_SENT'].includes(o.status))
+        .map(o => ({
+          id: o.id,
+          amount: parseFloat(o.amount),
+          status: o.status,
+          createdAt: o.createdAt,
+          products: o.items.map(i => `${i.product?.name || 'Producto'} x${i.quantity}`),
+          address: o.shippingAddress,
+          city: o.shippingCity,
+        }));
+
+      const paid = orders.find(o => ['PAID', 'SHIPPED', 'DELIVERED'].includes(o.status));
+      if (paid) {
+        memory.lastPaidOrder = {
+          id: paid.id,
+          amount: parseFloat(paid.amount),
+          createdAt: paid.createdAt,
+          products: paid.items.map(i => `${i.product?.name || 'Producto'} x${i.quantity}`),
+          address: paid.shippingAddress,
+          city: paid.shippingCity,
+        };
+      }
+    } catch (error) {
+      logger.error(`Error construyendo memoria de pedido (contacto ${contactId}):`, error.message);
+    }
+
+    return memory;
   }
 
   /**
@@ -258,7 +393,7 @@ class CRMService {
   /**
    * Crea una orden en la DB
    */
-  async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress, status = 'PENDING' }) {
+  async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress, status = 'PENDING', paymentMethod = null, notes = null }) {
     try {
       return await prisma.order.create({
         data: {
@@ -268,6 +403,8 @@ class CRMService {
           status,
           shippingCity,
           shippingAddress,
+          paymentMethod,
+          notes,
           items: {
             create: items.map(item => ({
               productId: item.productId,
