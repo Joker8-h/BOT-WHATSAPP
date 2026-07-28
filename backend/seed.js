@@ -45,7 +45,19 @@ async function main() {
       branchId: mainBranch.id
     }
   });
-  console.log('✅ Administrador Master configurado:', adminUser.username);
+  // 3. Bloquear contactos no deseados en DB
+  const blockedNumbers = ['3126279506', '3106124802'];
+  for (const bNum of blockedNumbers) {
+    await prisma.contact.updateMany({
+      where: {
+        phone: { contains: bNum }
+      },
+      data: {
+        isBlocked: true
+      }
+    });
+  }
+  console.log('🚫 Contactos bloqueados sincronizados en DB.');
 
   console.log('✨ Semilla completada con éxito.');
 }

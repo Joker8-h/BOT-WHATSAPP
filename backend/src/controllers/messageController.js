@@ -49,15 +49,14 @@ class MessageController {
       const cleanPhone = chatId.split('@')[0];
 
       // ── 0. ¿NÚMERO BLOQUEADO? ────────────────────────────────
-      const BLOCKED = ['3126279506', '3106124802'];
-      const normalized = cleanPhone.replace(/\D/g, '');
-      const isBlocked = BLOCKED.some(n => {
-        const cleanN = n.replace(/\D/g, '');
-        return normalized === cleanN || normalized === '57' + cleanN || (cleanN.length >= 10 && normalized.endsWith(cleanN));
-      });
-
-      if (isBlocked) {
-        logger.info(`🚫 [BLOCKED] Mensaje ignorado de ${cleanPhone}`);
+      if (
+        this._isPhoneBlocked(chatId) ||
+        this._isPhoneBlocked(msg.from) ||
+        this._isPhoneBlocked(msg.author) ||
+        this._isPhoneBlocked(msg._data?.from) ||
+        this._isPhoneBlocked(msg._data?.author)
+      ) {
+        logger.info(`🚫 [BLOCKED] Mensaje ignorado de ${chatId}`);
         this.processingChats.delete(chatId);
         return;
       }
@@ -157,6 +156,11 @@ class MessageController {
 
       // ── 2. CRM Y CONVERSACIÓN ────────────────────────────────
       let contact = await crmService.findOrCreateContact(chatId, branchId);
+      if (contact?.isBlocked || this._isPhoneBlocked(contact?.phone)) {
+        logger.info(`🚫 [BLOCKED-CRM] Contacto en CRM bloqueado: ${contact?.phone || chatId}`);
+        this.processingChats.delete(chatId);
+        return;
+      }
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
 
       // Capturar nombre push de WhatsApp automáticamente si el contacto no tiene nombre
@@ -651,6 +655,31 @@ class MessageController {
       this.processingChats.delete(chatId);
     }
   }
+  /**
+   * Verifica si un JID, número o string pertenece a un número bloqueado.
+   * Maneja sufijos de dispositivo (:45), dominios (@c.us) y prefijo de país (57).
+   */
+  _isPhoneBlocked(rawPhoneOrJid) {
+    if (!rawPhoneOrJid) return false;
+    const BLOCKED_NUMBERS = ['3126279506', '3106124802'];
+    
+    const rawStr = String(rawPhoneOrJid);
+    const beforeDomain = rawStr.split('@')[0];
+    const beforeDevice = beforeDomain.split(':')[0];
+    const digitsOnly = beforeDevice.replace(/\D/g, '');
+
+    return BLOCKED_NUMBERS.some(blocked => {
+      const bDigits = String(blocked).replace(/\D/g, '');
+      if (!bDigits) return false;
+      return (
+        digitsOnly === bDigits ||
+        digitsOnly === '57' + bDigits ||
+        (bDigits.length >= 10 && digitsOnly.endsWith(bDigits)) ||
+        rawStr.includes(bDigits)
+      );
+    });
+  }
+
   /**
    * Divide un mensaje largo en 2 partes naturales, cortando por párrafo (\n\n)
    * sin cortar palabras ni frases. Mensajes cortos se dejan como están.
