@@ -1,4 +1,4 @@
-const { openai, MODEL } = require('../config/openai');
+const { openai, MODEL, MODEL_CHAIN } = require('../config/openai');
 const { buildSystemPrompt, buildEmployeePrompt, buildAdminPrompt } = require('../ai/personality');
 const { detectFlow, getFlowInstructions } = require('../ai/flows');
 const { classifyClient, getRecommendedCategories, getProductLimit } = require('../ai/decisionEngine');
@@ -7,6 +7,227 @@ const catalogService = require('./catalogService');
 const logger = require('../utils/logger');
 const fs = require('fs');
 const path = require('path');
+
+// ─────────────────────────────────────────────────────────
+//  HELPERS: Rate-limit / fallback / streaming
+// ─────────────────────────────────────────────────────────
+
+class SofiaAIError extends Error {
+  constructor(message, code = 'AI_ERROR', status = 500) {
+    super(message);
+    this.name = 'SofiaAIError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRateLimitError(err) {
+  if (!err) return false;
+  const status = err.status || err.statusCode || err?.error?.status || err?.response?.status;
+  if (status === 429) return true;
+  const code = err.code || err.error?.code || err.type;
+  if (code === 'RATE_LIMIT' || code === 'rate_limit_exceeded' || code === 'insufficient_quota') return true;
+  const msg = (err.message || err.error?.message || '').toLowerCase();
+  return msg.includes('429') || msg.includes('rate limit') || msg.includes('too many requests') || msg.includes('quota exceeded') || msg.includes('rate_limit');
+}
+
+function getRetryAfterMs(err, attempt) {
+  const header = err?.headers?.['retry-after'] || err?.response?.headers?.['retry-after'] || err?.error?.headers?.['retry-after'];
+  if (header) {
+    const secs = parseInt(header, 10);
+    if (!isNaN(secs)) return secs * 1000;
+  }
+  // backoff exponencial + jitter: 800ms, 1800ms, 4000ms
+  const base = Math.min(800 * Math.pow(2, attempt), 5000);
+  return base + Math.floor(Math.random() * 400);
+}
+
+function wrapOpenRouterError(err) {
+  if (isRateLimitError(err)) {
+    const wrapped = new SofiaAIError(
+      'Sofia esta muy solicitada en este momento. Espera unos segundos e intenta de nuevo.',
+      'RATE_LIMIT',
+      429
+    );
+    wrapped.cause = err;
+    wrapped.retryable = true;
+    return wrapped;
+  }
+  // Otros errores de proveedor: marcarlos para log pero no exponer stack crudo al cliente
+  const wrapped = new SofiaAIError(err.message || 'Error del proveedor IA', err.code || 'PROVIDER_ERROR', err.status || 500);
+  wrapped.cause = err;
+  wrapped.retryable = err.status >= 500 || err.status === 408;
+  return wrapped;
+}
+
+function getFallbackTemplate(type = 'chat') {
+  if (type === 'fantasy') {
+    return (
+      '✨ *Mientras Sofía retoma la inspiración...* ✨\n\n' +
+      'Imagina una noche donde cada detalle está pensado para ustedes dos: luz tenue, aroma suave y un toque de sorpresa. 🌹\n\n' +
+      'En *Fantasías: más allá de tu imaginación* tenemos el complemento perfecto para ese momento — cuéntame qué te provoca más curiosidad (¿algo suave y romántico o una experiencia más intensa?) y te recomiendo 1 opción ideal en segundos.\n\n' +
+      '_Sofía está volviendo en unos instantes — ¿me cuentas qué te gustaría explorar?_ 💫'
+    );
+  }
+  // plantilla general de respaldo para chat
+  return (
+    '¡Hola! Soy Sofía de *Fantasías* 🌹 Un instante — estoy con alta demanda y vuelvo contigo en segundos.\n\n' +
+    'Mientras tanto cuéntame: ¿buscas algo para *disfrutar en pareja*, *sorprender* o *explorar algo nuevo*? Así te recomiendo la mejor opción en cuanto me reconecte. ✨'
+  );
+}
+
+/**
+ * Llama a openai.chat.completions.create con fallback de modelos y retry con backoff.
+ * - Prueba MODEL_CHAIN en orden (gpt-4o -> gpt-4o-mini -> etc)
+ * - En 429 hace backoff y pasa al siguiente modelo
+ * - En 5xx/timeout reintenta mismo modelo 1 vez antes de cambiar
+ */
+async function callChatWithFallback(messages, opts = {}) {
+  const { temperature = 0.7, max_tokens = 600, response_format } = opts;
+  let lastError = null;
+
+  for (let mIdx = 0; mIdx < MODEL_CHAIN.length; mIdx++) {
+    const model = MODEL_CHAIN[mIdx];
+    const maxRetriesForModel = 2; // intentos por modelo
+
+    for (let attempt = 0; attempt < maxRetriesForModel; attempt++) {
+      try {
+        if (mIdx > 0 && attempt === 0) {
+          logger.warn(`🔄 [FALLBACK] Modelo ${MODEL} agotado. Probando siguiente modelo: ${model} (intento ${mIdx + 1}/${MODEL_CHAIN.length})`);
+        }
+        const completionPromise = openai.chat.completions.create({
+          model,
+          messages,
+          temperature,
+          max_tokens,
+          ...(response_format ? { response_format } : {}),
+        });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('OpenAI timeout: la respuesta tardó más de 30 segundos')), 30000)
+        );
+        const completion = await Promise.race([completionPromise, timeoutPromise]);
+        if (mIdx > 0) logger.info(`✅ [FALLBACK-OK] Modelo ${model} respondió correctamente`);
+        return completion;
+      } catch (err) {
+        lastError = err;
+        const rateLimited = isRateLimitError(err);
+        const isTimeout = err.message && err.message.includes('timeout');
+
+        if (rateLimited) {
+          logger.warn(`⚠️ [RATE_LIMIT] ${model} rate-limited (intento ${attempt + 1}/${maxRetriesForModel}): ${err.message?.substring(0, 120)}`);
+          // Si es rate-limit, esperar y pasar al siguiente modelo directamente (no reintentar mismo modelo mucho)
+          if (attempt < maxRetriesForModel - 1) {
+            await sleep(getRetryAfterMs(err, attempt));
+            continue;
+          } else {
+            // Agotados los intentos de este modelo -> siguiente modelo
+            await sleep(getRetryAfterMs(err, attempt));
+            break;
+          }
+        }
+
+        if (isTimeout || err.status >= 500) {
+          logger.warn(`⚠️ [RETRY] ${model} error transitorio (${err.message?.substring(0, 80)}), reintentando ${attempt + 1}/${maxRetriesForModel}`);
+          if (attempt < maxRetriesForModel - 1) {
+            await sleep(getRetryAfterMs(err, attempt));
+            continue;
+          }
+          break;
+        }
+
+        // Error no recuperable -> no reintentar, probar siguiente modelo solo si es 429-like
+        throw wrapOpenRouterError(err);
+      }
+    }
+  }
+
+  // Todos los modelos agotados
+  throw wrapOpenRouterError(lastError || new Error('Todos los modelos IA agotados'));
+}
+
+/**
+ * Streaming con fallback: intenta stream con MODEL_CHAIN. Si falla con rate-limit, prueba siguiente modelo.
+ * Llama a onChunk(textDelta) por cada delta.
+ * Retorna { fullText, modelUsed, usage }
+ */
+async function streamFantasyStory(messages, onChunk, opts = {}) {
+  const { temperature = 0.8, max_tokens = 800 } = opts;
+  let lastError = null;
+
+  for (let mIdx = 0; mIdx < MODEL_CHAIN.length; mIdx++) {
+    const model = MODEL_CHAIN[mIdx];
+    try {
+      if (mIdx > 0) logger.warn(`🔄 [STREAM-FALLBACK] Probando ${model} (stream ${mIdx + 1}/${MODEL_CHAIN.length})`);
+
+      const stream = await openai.chat.completions.create({
+        model,
+        messages,
+        temperature,
+        max_tokens,
+        stream: true,
+      });
+
+      let fullText = '';
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta?.content || '';
+        if (delta) {
+          fullText += delta;
+          if (typeof onChunk === 'function') {
+            try { await onChunk(delta, fullText); } catch (_) {}
+          }
+        }
+      }
+      if (!fullText.trim()) throw new Error('Stream vacío');
+      return { fullText, modelUsed: model, usage: null };
+    } catch (err) {
+      lastError = err;
+      if (isRateLimitError(err)) {
+        logger.warn(`⚠️ [STREAM RATE_LIMIT] ${model}: ${err.message?.substring(0, 100)} — probando siguiente modelo`);
+        await sleep(getRetryAfterMs(err, mIdx));
+        continue; // siguiente modelo
+      }
+      // timeout / 5xx -> reintentar siguiente modelo también
+      if (err.status >= 500 || (err.message && err.message.includes('timeout'))) {
+        logger.warn(`⚠️ [STREAM RETRY] ${model} error transitorio: ${err.message}`);
+        await sleep(600);
+        continue;
+      }
+      throw wrapOpenRouterError(err);
+    }
+  }
+
+  throw wrapOpenRouterError(lastError || new Error('IA no disponible en stream de descubrimiento'));
+}
+
+/**
+ * Wrapper validado para historias/fantasías usado por chat.controller.js#streamValidatedStoryFlow
+ * Nunca lanza RATE_LIMIT al cliente: si todos los modelos fallan, retorna plantilla de respaldo.
+ */
+async function streamValidatedStoryFlow({ messages, onChunk, fallbackType = 'fantasy', temperature, max_tokens }) {
+  try {
+    return await streamFantasyStory(messages, onChunk, { temperature, max_tokens });
+  } catch (err) {
+    const wrapped = isRateLimitError(err) || err.code === 'RATE_LIMIT' ? err : wrapOpenRouterError(err);
+    if (wrapped.code === 'RATE_LIMIT' || wrapped.retryable) {
+      logger.warn(`⚠️ [STREAM-FALLBACK-TEMPLATE] Usando plantilla de respaldo tras agotar modelos: ${wrapped.message}`);
+      const template = getFallbackTemplate(fallbackType);
+      // Simular streaming de la plantilla para que el front no vea corte
+      if (typeof onChunk === 'function') {
+        // Enviar en 2 chunks para parecer stream
+        const mid = Math.floor(template.length / 2);
+        await onChunk(template.substring(0, mid), template.substring(0, mid));
+        await sleep(300);
+        await onChunk(template.substring(mid), template);
+      }
+      return { fullText: template, modelUsed: 'fallback-template', usage: null, isFallback: true };
+    }
+    throw wrapped;
+  }
+}
 
 class AIService {
   /**
@@ -31,6 +252,13 @@ class AIService {
       return null;
     }
   }
+
+  // Exponer helpers para compatibilidad con código que importaba desde /dist/services/ai/aiService.js
+  wrapOpenRouterError(err) { return wrapOpenRouterError(err); }
+  async streamFantasyStory(messages, onChunk, opts) { return streamFantasyStory(messages, onChunk, opts); }
+  async streamValidatedStoryFlow(args) { return streamValidatedStoryFlow(args); }
+  getFallbackTemplate(type) { return getFallbackTemplate(type); }
+
   /**
    * Genera una respuesta de la IA para un mensaje del cliente
    */
@@ -42,11 +270,14 @@ class AIService {
         clientType: contact?.clientType,
       });
 
-      // ... [rest of classification and product retrieval remains same, but using userMessage safely]
       // 2. Clasificar cliente
       let classification = null;
       if (messageHistory.length >= 2) {
-        classification = await classifyClient(messageHistory);
+        try {
+          classification = await classifyClient(messageHistory);
+        } catch (e) {
+          logger.warn('⚠️ classifyClient falló, usando fallback:', e.message);
+        }
       }
 
       // 3. Obtener productos y SUCURSALES cercanas
@@ -103,7 +334,7 @@ class AIService {
           products = [...fallbackProducts, ...products];
       }
 
-      // 4-6. Info sucursal, proximidad, lastOrder, systemPrompt (ya estaba bien)
+      // 4-6. Info sucursal, proximidad, lastOrder, systemPrompt
       const currentBranch = branchId ? await prisma.branch.findUnique({ where: { id: branchId } }) : null;
       const branches = await prisma.branch.findMany({
         where: { isAuthorized: true, isActive: true }
@@ -184,17 +415,27 @@ class AIService {
         messages.push({ role: 'user', content: userMessage });
       }
 
-      // 9. Llamar a OpenAI
-      const completionPromise = openai.chat.completions.create({
-        model: MODEL,
-        messages,
-        temperature: 0.7,
-        max_tokens: 600,
-      });
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('OpenAI timeout: la respuesta tardó más de 30 segundos')), 30000)
-      );
-      const completion = await Promise.race([completionPromise, timeoutPromise]);
+      // 9. Llamar a OpenAI con fallback + retry
+      let completion;
+      try {
+        completion = await callChatWithFallback(messages, { temperature: 0.7, max_tokens: 600 });
+      } catch (err) {
+        const wrapped = err.code === 'RATE_LIMIT' ? err : wrapOpenRouterError(err);
+        if (wrapped.code === 'RATE_LIMIT') {
+          logger.warn(`⚠️ [RATE_LIMIT] Todos los modelos agotados para ${contact?.phone}. Usando plantilla de respaldo.`);
+          // En lugar de lanzar SofiaAIError al controller, retornar respuesta de respaldo amable
+          // El controller NO verá un throw; verá una respuesta normal con flujo FALLBACK
+          return {
+            response: getFallbackTemplate('chat'),
+            flow: 'FALLBACK_RATE_LIMIT',
+            actions: {},
+            tokensUsed: 0,
+            closestBranchId: closestBranch?.id,
+            isFallback: true,
+          };
+        }
+        throw wrapped;
+      }
 
       const aiResponse = completion.choices[0].message.content.trim();
       const tokensUsed = completion.usage?.total_tokens || 0;
@@ -202,7 +443,6 @@ class AIService {
       const actions = this.parseActions(aiResponse);
       const cleanResponse = this.cleanResponse(aiResponse);
 
-      // INFO: Si no hay productos en la sede, la IA puede seguir conversando normalmente
       if (products.length === 0) {
         logger.warn(`⚠️ Catálogo vacío para branch ${effectiveBranchId}. La IA responderá sin catálogo.`);
       }
@@ -217,6 +457,16 @@ class AIService {
         closestBranchId: closestBranch?.id
       };
     } catch (error) {
+      // Si es RATE_LIMIT que escapó, convertir en fallback en vez de mensaje técnico
+      if (isRateLimitError(error) || error.code === 'RATE_LIMIT') {
+        logger.warn('⚠️ RATE_LIMIT en generateResponse catch final — devolviendo plantilla respaldo');
+        return {
+          response: getFallbackTemplate('chat'),
+          flow: 'FALLBACK_RATE_LIMIT',
+          actions: {},
+          tokensUsed: 0,
+        };
+      }
       logger.error('Error generando respuesta IA:', error);
       return {
         response: '¡Hola! Disculpa, tuve un pequeño inconveniente técnico. 😅 ¿Podrías repetirme tu mensaje? Ya estoy lista para atenderte.',
@@ -232,19 +482,25 @@ class AIService {
    */
   async generateEmployeeResponse(userMessage, branchId = null) {
     try {
-      // Obtenemos TODO el catálogo de la sucursal (o global si no hay ID)
       const allProducts = await catalogService.getAllProducts(branchId);
       
       const systemPrompt = buildEmployeePrompt({ branchId }, allProducts);
 
-      const completion = await openai.chat.completions.create({
-        model: MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0.3, // Más preciso, menos creativo
-      });
+      let completion;
+      try {
+        completion = await callChatWithFallback(
+          [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage }
+          ],
+          { temperature: 0.3, max_tokens: 600 }
+        );
+      } catch (err) {
+        if (isRateLimitError(err) || err.code === 'RATE_LIMIT') {
+          return { response: '🛠️ *MODO ASISTENTE INTERNO*\n\n' + getFallbackTemplate('chat'), actions: {}, tokensUsed: 0, isFallback: true };
+        }
+        throw err;
+      }
 
       const aiResponse = completion.choices[0].message.content.trim();
       const actions = this.parseActions(aiResponse);
@@ -256,6 +512,9 @@ class AIService {
         tokensUsed: completion.usage?.total_tokens || 0
       };
     } catch (error) {
+      if (isRateLimitError(error) || error.code === 'RATE_LIMIT') {
+        return { response: '🛠️ *MODO ASISTENTE INTERNO*\n\n' + getFallbackTemplate('chat'), actions: {}, tokensUsed: 0, isFallback: true };
+      }
       logger.error('Error en generateEmployeeResponse:', error);
       return { response: '❌ Error consultando inventario interno.' };
     }
@@ -265,20 +524,17 @@ class AIService {
     try {
       const allProducts = await catalogService.getAllProducts(branchId);
 
-      // ── Consultar datos reales del negocio ──
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
       const whereBranch = branchId ? { branchId } : {};
 
-      // Ventas de hoy
       const todaySales = await prisma.order.aggregate({
         where: { ...whereBranch, status: 'PAID', createdAt: { gte: today } },
         _sum: { amount: true },
         _count: true,
       });
 
-      // Pedidos pendientes
       const pendingOrders = await prisma.order.findMany({
         where: { ...whereBranch, status: 'PENDING' },
         include: { contact: { select: { name: true, phone: true } }, items: { include: { product: { select: { name: true } } } } },
@@ -286,7 +542,6 @@ class AIService {
         take: 10,
       });
 
-      // Pedidos pagados recientes (hoy)
       const paidOrdersToday = await prisma.order.findMany({
         where: { ...whereBranch, status: 'PAID', createdAt: { gte: today } },
         include: { contact: { select: { name: true, phone: true } }, items: { include: { product: { select: { name: true } } } } },
@@ -294,22 +549,18 @@ class AIService {
         take: 10,
       });
 
-      // Conversaciones activas
       const activeConversations = await prisma.conversation.count({
         where: { ...whereBranch, status: 'ACTIVE' },
       });
 
-      // Conversaciones escaladas (esperando humano)
       const escalatedConversations = await prisma.conversation.count({
         where: { ...whereBranch, status: 'ESCALATED' },
       });
 
-      // Clientes nuevos hoy
       const newContactsToday = await prisma.contact.count({
         where: { ...whereBranch, createdAt: { gte: today } },
       });
 
-      // Stock bajo (≤10)
       const lowStockProducts = await prisma.product.findMany({
         where: { ...whereBranch, isAvailable: true, stock: { lte: 10 } },
         select: { name: true, stock: true, category: true },
@@ -317,14 +568,12 @@ class AIService {
         take: 15,
       });
 
-      // Revenue total histórico
       const totalRevenue = await prisma.order.aggregate({
         where: { ...whereBranch, status: 'PAID' },
         _sum: { amount: true },
         _count: true,
       });
 
-      // ── Armar datos para el prompt ──
       const businessData = {
         todayRevenue: todaySales._sum.amount ? parseFloat(todaySales._sum.amount) : 0,
         todayOrdersCount: todaySales._count || 0,
@@ -353,14 +602,21 @@ class AIService {
 
       const systemPrompt = buildAdminPrompt({ branchId }, allProducts, businessData);
 
-      const completion = await openai.chat.completions.create({
-        model: MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0.3,
-      });
+      let completion;
+      try {
+        completion = await callChatWithFallback(
+          [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userMessage }
+          ],
+          { temperature: 0.3, max_tokens: 800 }
+        );
+      } catch (err) {
+        if (isRateLimitError(err) || err.code === 'RATE_LIMIT') {
+          return { response: '👑 *MODO ADMIN*\n\n' + getFallbackTemplate('chat'), actions: {}, tokensUsed: 0, isFallback: true };
+        }
+        throw err;
+      }
 
       const aiResponse = completion.choices[0].message.content.trim();
       const actions = this.parseActions(aiResponse);
@@ -372,6 +628,9 @@ class AIService {
         tokensUsed: completion.usage?.total_tokens || 0
       };
     } catch (error) {
+      if (isRateLimitError(error) || error.code === 'RATE_LIMIT') {
+        return { response: '👑 *MODO ADMIN*\n\n' + getFallbackTemplate('chat'), actions: {}, tokensUsed: 0, isFallback: true };
+      }
       logger.error('Error en generateAdminResponse:', error);
       return { response: '❌ Error consultando información.' };
     }
@@ -443,7 +702,6 @@ class AIService {
       actions.productsToSell = contraMatch[1].split(',').map(p => p.trim());
     }
 
-    // Extraer imágenes
     const imageMatches = response.match(/\[IMAGEN:(.+?)\]/g);
     if (imageMatches) {
       actions.images = imageMatches.map(m => m.match(/\[IMAGEN:(.+?)\]/)[1].trim());
@@ -454,28 +712,25 @@ class AIService {
 
   cleanResponse(response) {
     return response
-      // Limpieza genérica: elimina CUALQUIER etiqueta con corchetes [TAG] o [TAG:valor]
       .replace(/\[([A-ZÁÉÍÓÚÑ_]+)(:[^\]]*?)?\]/gi, '')
-      // Convertir doble asterisco (**texto**) a simple (*texto*) para WhatsApp
       .replace(/\*\*(.+?)\*\*/g, '*$1*')
-      // Eliminar asteriscos sueltos que no forman par (ej: "algo * texto")
       .replace(/(?<!\*)\*(?!\*)/g, (match, offset, str) => {
-        // Contar asteriscos en el string para ver si hay un par
-        const before = str.substring(0, offset);
-        const after = str.substring(offset + 1);
-        const hasOpenBefore = (before.match(/\*/g) || []).length % 2 === 0;
-        return match; // Mantener si forma par válido
+        return match;
       })
-      // Limpiar espacios múltiples que quedan tras eliminar etiquetas
       .replace(/  +/g, ' ')
-      // Limpiar líneas vacías que quedan
       .replace(/\n\s*\n\s*\n/g, '\n\n')
-      // Eliminar URLs de Cloudinary que queden sueltas en el texto
       .replace(/https?:\/\/(res\.cloudinary\.com|[a-zA-Z0-9-]+\.cloudinary\.com)\/[^\s)]+/gi, '')
-      // Eliminar "Media: " suelto que pueda quedar
       .replace(/\bMedia:\s*/gi, '')
       .trim();
   }
 }
 
 module.exports = new AIService();
+// Exportar también helpers para tests y para compatibilidad con dist/services/ai/aiService.js
+module.exports.SofiaAIError = SofiaAIError;
+module.exports.wrapOpenRouterError = wrapOpenRouterError;
+module.exports.streamFantasyStory = streamFantasyStory;
+module.exports.streamValidatedStoryFlow = streamValidatedStoryFlow;
+module.exports.getFallbackTemplate = getFallbackTemplate;
+module.exports.callChatWithFallback = callChatWithFallback;
+module.exports.isRateLimitError = isRateLimitError;
