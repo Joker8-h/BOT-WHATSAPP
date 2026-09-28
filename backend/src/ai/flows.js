@@ -1,108 +1,78 @@
 // ─────────────────────────────────────────────────────────
 //  AI: Flujos Conversacionales
 // ─────────────────────────────────────────────────────────
+const { normalizeText, containsPhrase, detectProductTypes } = require('./salesKnowledge');
+
+// Todas las palabras se comparan normalizadas (sin tildes, minúsculas) y como
+// palabras/frases completas: "eso" ya no coincide con "beso", ni "av" con "nuevo".
+const KEYWORDS = {
+  polla: ['polla', 'polla mundialista', 'mundial', 'futbol', 'mundialista', 'champions', 'apostar', 'apuesta', 'copa del mundo', 'copa mundial'],
+  help: ['humano', 'hablar con alguien', 'hablar con una persona', 'persona real', 'administrador', 'reclamo', 'queja', 'jefe', 'gerente', 'quejarme', 'supervisor'],
+  replyToContact: ['escribiste', 'vi tu mensaje', 'vi el mensaje', 'veo tu mensaje', 'recien veo', 'no te habia visto', 'me mandaste', 'me enviaste', 'te respondo'],
+  objection: [
+    'caro', 'cara', 'costoso', 'costosa', 'muy caro', 'no tengo plata', 'no me alcanza', 'mas barato', 'mas barata', 'mas economico', 'mas economica', 'algo barato', 'barato', 'barata',
+    'lo pienso', 'lo voy a pensar', 'voy a pensar', 'dejame pensarlo', 'dejeme pensarlo', 'despues te escribo', 'despues te aviso', 'luego te escribo', 'luego te aviso', 'otro dia', 'mas adelante',
+    'no se si le guste', 'no se si le va a gustar', 'no estoy seguro', 'no estoy segura', 'no conozco', 'me da pena', 'me da verguenza', 'es discreto', 'discreto', 'discreta', 'discrecion',
+    'si funciona', 'funciona de verdad', 'si sirve', 'es bueno',
+  ],
+  payment: ['pago', 'pagar', 'tarjeta', 'transferencia', 'nequi', 'daviplata', 'contraentrega', 'contra entrega', 'efectivo', 'link de pago'],
+  confirmSale: [
+    'si quiero', 'lo quiero', 'los quiero', 'la quiero', 'lo llevo', 'si lo llevo', 'me lo llevo', 'los llevo', 'enviamelo', 'enviamelos', 'mandamelo', 'mandamelos',
+    'dale', 'confirmo', 'de acuerdo', 'deacuerdo', 'ok compra', 'hagamos el pedido', 'quiero pedir', 'quiero comprar', 'lo compro', 'los compro', 'con el complemento', 'con los dos',
+  ],
+  price: ['precio', 'precios', 'cuanto', 'cuesta', 'valor', 'costo', 'costos'],
+  shipping: ['envio', 'envios', 'domicilio', 'despacho', 'entregan', 'hacen envios', 'cuanto tarda', 'cuanto se demora', 'llega'],
+  catalog: ['catalogo', 'productos', 'que tienen', 'que venden', 'que manejan'],
+  store: ['tienda fisica', 'donde quedan', 'ubicacion', 'sucursal', 'donde estan', 'local fisico', 'tienen tienda', 'tienen local', 'direccion de la tienda'],
+  gift: ['regalo', 'regalar', 'sorpresa', 'sorprender', 'aniversario', 'cumpleanos', 'san valentin', 'amor y amistad'],
+  couple: ['pareja', 'novio', 'novia', 'esposo', 'esposa', 'mi relacion'],
+  thanks: ['gracias', 'muchas gracias', 'thank you', 'bendiciones', 'chao', 'hasta luego'],
+  greeting: ['hola', 'holi', 'holaa', 'buenas', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches', 'que tal', 'hey'],
+  addressWords: ['calle', 'carrera', 'cra', 'cl', 'kr', 'avenida', 'diagonal', 'transversal', 'barrio', 'torre', 'apto', 'apartamento', 'manzana', 'mz', 'casa', 'conjunto'],
+};
+
+function hasAny(msg, list) {
+  return list.some(k => containsPhrase(msg, k));
+}
 
 /**
  * Detecta el flujo actual basado en el contenido del mensaje y el contexto
  */
-function detectFlow(message, context) {
-  const msg = message.toLowerCase().trim();
-  const messageCount = context?.messageCount || 0;
+function detectFlow(message, context = {}) {
+  const msg = normalizeText(message);
+  const messageCount = context.messageCount || 0;
+  const sale = context.sale || {};
 
-  // Palabras clave de activación
-  const keywords = {
-    greeting: ['hola', 'buenas', 'hi', 'hey', 'ola', 'buen dia', 'buenos dias', 'buenas tardes', 'buenas noches', 'que tal'],
-    price: ['precio', 'cuanto', 'cuánto', 'vale', 'cuesta', 'valor', 'costos', 'costo'],
-    shipping: ['envio', 'envío', 'llega', 'domicilio', 'despacho', 'entregan'],
-    payment: ['pago', 'pagar', 'tarjeta', 'transferencia', 'nequi', 'daviplata'],
-    confirmSale: ['enviamelo', 'enviamelos', 'envíamelo', 'envíamelos', 'sí quiero', 'si quiero', 'dale', 'ok compra', 'lo quiero', 'sí lo llevo', 'si lo llevo', 'confirmo', 'correcto', 'afirmativo', 'eso', 'sale', 'deacuerdo', 'de acuerdo', 'ok mande', 'ok envíe', 'ok enviame'],
-    catalog: ['catalogo', 'catálogo', 'productos', 'que tienen', 'qué tienen', 'que venden'],
-    help: ['ayuda', 'asesor', 'asesora', 'humano', 'persona', 'hablar con alguien', 'administrador', 'reclamo', 'queja', 'jefe', 'gerente', 'quejarme'],
-    thanks: ['gracias', 'gracia', 'thank', 'perfecto', 'listo', 'vale gracias'],
-    gift: ['regalo', 'sorpresa', 'aniversario', 'cumpleaños', 'especial'],
-    couple: ['pareja', 'novio', 'novia', 'esposo', 'esposa', 'relación'],
-    replyToContact: ['escribiste', 'atendiendo', 'vi tu mensaje', 'vi el mensaje', 'veo tu mensaje', 'hace rato', 'recién veo', 'no te había visto', 'me mandaste', 'me enviaste', 'te respondo'],
-    store: ['tienda física', 'donde quedan', 'ubicación', 'sucursal', 'donde están', 'popayán', 'florencia', 'yopal', 'local fisico'],
-    address: ['calle', 'carrera', 'cra', 'avenida', 'av', 'diagonal', 'transversal', 'barrio', 'torre', 'apto', 'apartamento', 'manzana', 'lote'],
-    polla: ['polla', 'mundial', 'futbol', 'fútbol', 'copa', 'mundialista', 'champions', 'liga', 'partido', 'apostar', 'apuesta'],
-  };
+  if (hasAny(msg, KEYWORDS.polla)) return 'POLL';
+  if (hasAny(msg, KEYWORDS.help)) return 'ESCALATION';
+  if (hasAny(msg, KEYWORDS.replyToContact)) return 'CONTACT_REPLY';
 
-  // Detectar polla mundialista (PRIORIDAD MÁXIMA — antes de cualquier otro flujo)
-  if (keywords.polla.some(k => msg.includes(k))) {
-    return 'POLL';
-  }
+  const looksLikeAddress = hasAny(msg, KEYWORDS.addressWords) && /\d/.test(msg);
+  if (looksLikeAddress) return 'CLOSING';
 
-  // Detectar escalamiento
-  if (keywords.help.some(k => msg.includes(k))) {
-    return 'ESCALATION';
-  }
+  if (hasAny(msg, KEYWORDS.confirmSale)) return 'CLOSING';
+  if (hasAny(msg, KEYWORDS.payment)) return 'CLOSING';
 
-  // Respondiendo a un mensaje previo (follow-up)
-  if (keywords.replyToContact.some(k => msg.includes(k))) {
-    return 'CONTACT_REPLY';
-  }
+  if (hasAny(msg, KEYWORDS.objection)) return 'OBJECTION';
 
-  // Detectar cierre
-  if (keywords.payment.some(k => msg.includes(k))) {
-    return 'CLOSING';
-  }
+  if (hasAny(msg, KEYWORDS.price)) return 'STRATEGIC_DIRECTION';
+  if (hasAny(msg, KEYWORDS.shipping)) return 'SHIPPING_INFO';
+  if (hasAny(msg, KEYWORDS.store)) return 'PHYSICAL_STORE';
 
-  // Detectar confirmación de compra (el cliente dice que sí, que lo envíen, etc.)
-  if (keywords.confirmSale.some(k => msg.includes(k))) {
-    return 'CLOSING';
-  }
+  // Cliente directo: menciona un tipo de producto concreto → recomendar ya
+  if (detectProductTypes(msg).length > 0) return 'RECOMMEND';
 
-  // Detectar interés en precios (dirección al cierre)
-  if (keywords.price.some(k => msg.includes(k))) {
-    return 'STRATEGIC_DIRECTION';
-  }
+  if (hasAny(msg, KEYWORDS.gift) || hasAny(msg, KEYWORDS.couple)) return 'GUIDED_FANTASY';
 
-  // Detectar preguntas de envío
-  if (keywords.shipping.some(k => msg.includes(k))) {
-    return 'CLOSING';
-  }
+  const isShortGreeting = hasAny(msg, KEYWORDS.greeting) && msg.length < 30;
+  if (messageCount === 0 || (isShortGreeting && messageCount < 4)) return 'WELCOME';
 
-  // Detectar dirección del cliente (cuando responde con su dirección después de que se la pedimos)
-  const hasAddressKeyword = keywords.address.some(k => msg.includes(k));
-  const hasNumberAndHash = /\d+\s*[-#]\s*\d+/.test(msg);
-  if (hasAddressKeyword && (hasNumberAndHash || msg.length > 10)) {
-    return 'CLOSING';
-  }
+  if (hasAny(msg, KEYWORDS.catalog)) return 'DISCOVERY';
+  if (hasAny(msg, KEYWORDS.thanks) && msg.length < 40) return 'FAREWELL';
 
-  // Primera interacción
-  if (messageCount === 0 || keywords.greeting.some(k => msg.includes(k))) {
-    return 'WELCOME';
-  }
-
-  // Busca catálogo completo
-  if (keywords.catalog.some(k => msg.includes(k))) {
-    return 'DISCOVERY';
-  }
-
-  // Pregunta por locales físicos
-  if (keywords.store.some(k => msg.includes(k))) {
-    return 'PHYSICAL_STORE';
-  }
-
-  // Menciona regalo o sorpresa
-  if (keywords.gift.some(k => msg.includes(k))) {
-    return 'GUIDED_FANTASY';
-  }
-
-  // Menciona pareja
-  if (keywords.couple.some(k => msg.includes(k))) {
-    return 'GUIDED_FANTASY';
-  }
-
-  // Agradecimiento / despedida
-  if (keywords.thanks.some(k => msg.includes(k))) {
-    return 'FAREWELL';
-  }
-
-  // Por defecto según la etapa de la conversación
+  if (sale.interestProducts?.length && messageCount >= 6) return 'STRATEGIC_DIRECTION';
   if (messageCount < 3) return 'DISCOVERY';
-  if (messageCount < 8) return 'GUIDED_FANTASY';
-  return 'STRATEGIC_DIRECTION';
+  return 'RECOMMEND';
 }
 
 /**
@@ -110,56 +80,69 @@ function detectFlow(message, context) {
  */
 function getFlowInstructions(flow) {
   const instructions = {
-    WELCOME: `FLUJO ACTUAL: BIENVENIDA
-- Saluda de forma cálida y personalizada
-- Si es cliente nuevo: preséntate brevemente como asesor de Fantasías  
-- Rompe el hielo con algo como "¿buscas algo especial para ti o para sorprender a alguien?"
-- NO ofrezcas productos aún, primero conecta`,
+    WELCOME: `FLUJO ACTUAL: BIENVENIDA (Etapa 1 · Conectar)
+- Saluda con calidez y preséntate brevemente como Sofía, asesora de Fantasías con asistencia en sexología.
+- Termina con UNA pregunta de intención: "¿Buscas algo para ti o para sorprender a alguien?" o "¿Ya tienes algo en mente o prefieres que te asesore?".
+- Si el cliente ya pidió un producto en su primer mensaje, NO esperes: salúdalo y pasa directo a recomendar (Etapa 3).
+- Si no conoces su nombre, puedes preguntarlo con naturalidad ("¿Con quién tengo el gusto?"), pero no lo conviertas en un requisito.`,
 
-    DISCOVERY: `FLUJO ACTUAL: DESCUBRIMIENTO
-- Haz 1-2 preguntas suaves para entender qué busca
-- Ejemplos: "¿Es para ti o para regalar?", "¿Buscas algo para una ocasión especial?"
-- NO muestres catálogo, identifica la necesidad primero
-- Sé empático si notas timidez`,
+    DISCOVERY: `FLUJO ACTUAL: DESCUBRIMIENTO (Etapa 2 · Descarte)
+- Haz UNA sola pregunta de descarte que acerque a la recomendación.
+- Si pide "catálogo" o "qué tienen": NO mandes lista. Menciona 3 o 4 líneas de producto en una frase (juguetes, lubricantes, lencería, retardantes, feromonas...) y pregunta qué le llama más la atención o si es para él/ella o para regalar.
+- Sé empático si notas timidez: "Tranquilo 💜 aquí todo es con total discreción".`,
 
-    GUIDED_FANTASY: `FLUJO ACTUAL: FANTASÍA GUIADA
-- Presenta los productos como EXPERIENCIAS, no como objetos
-- Crea un escenario emocional: "Imagina una noche donde..."
-- Recomienda hasta 5 productos (o más si el cliente los pide) basándote en lo que ha dicho
-- Usa la descripción emocional del producto, no la técnica`,
+    RECOMMEND: `FLUJO ACTUAL: RECOMENDACIÓN (Etapas 3 y 4)
+- El cliente ya dio pistas de lo que busca. Si falta un dato clave, haz UNA pregunta de descarte; si no, RECOMIENDA YA.
+- Recomienda máximo 1 o 2 productos del catálogo con la fórmula: producto + beneficio + sensación + pregunta. Incluye su [IMAGEN:url] si tiene.
+- Si ya mostró interés en un producto, ofrece su complemento (ver COMPLEMENTOS SUGERIDOS) y pregunta: "¿Lo llevas solo o con el complemento?".
+- Registra con [INTERES_PRODUCTO: ...] el producto que le guste y con [COMPLEMENTO_OFRECIDO: ...] lo que ofreces.`,
 
-    STRATEGIC_DIRECTION: `FLUJO ACTUAL: DIRECCIÓN ESTRATÉGICA
-- El cliente muestra interés real
-- Empuja el producto estrella de la categoría relevante
-- Menciona beneficios emocionales
-- Si pregunta precio, dilo con confianza y agrega el valor de la experiencia
-- Prepárate para el cierre`,
+    GUIDED_FANTASY: `FLUJO ACTUAL: FANTASÍA GUIADA (regalo / pareja)
+- Primero entiende la ocasión y cómo es la otra persona (¿abierta o más reservada?), con UNA pregunta a la vez.
+- Si ya tienes el contexto, crea una fantasía POR PARTES (Ambiente → Emoción → Contacto → Producto), 2-3 líneas por parte, y valida: "¿Hasta ahí te gusta la idea?".
+- Al final ofrece el combo de productos que hace realidad la fantasía (máximo 3-4 productos, del catálogo, complementos más baratos que el principal).
+- Incluye siempre una frase de consentimiento y comodidad para ambos.
+- Registra [CAPTURAR_INTENCION: regalo] o [CAPTURAR_INTENCION: pareja].`,
 
-    CLOSING: `FLUJO ACTUAL: CIERRE DE VENTA
-- **PRIMERO VERIFICA**: ¿Tienes la DIRECCIÓN del cliente capturada con [CAPTURAR_DIRECCION] y la CIUDAD con [CAPTURAR_CIUDAD]? Si falta alguno, PÍDELO ANTES de continuar. NO cierres la venta sin dirección.
-- Confirma el producto que quiere
-- Da el precio claro en COP
-- **PRIORIDAD DEL MÉTODO DE PAGO**: Si el cliente menciona explícitamente 'nequi', 'daviplata', 'transferencia', 'tarjeta' o cualquier pago electrónico: USA [CERRAR_VENTA] para generar link Wompi. IGNORA la regla de ciudad. El método de pago elegido por el cliente tiene prioridad.
-- **CIERRE AUTOMÁTICO**: Cuando el cliente confirme que quiere comprar (ej: "sí", "de acuerdo", "dale", "lo llevo", "añádelo", "en efectivo", "confirmo"):
-  * Si el cliente NO mencionó un método de pago específico Y la CIUDAD es Pitalito, Florencia, Popayán o Yopal: usa INMEDIATAMENTE [PEDIDO_CONTRAENTREGA:nombre_exacto_del_producto]. NO esperes que el cliente diga la palabra "contraentrega".
-  * Si el cliente mencionó nequi/daviplata/transferencia/tarjeta O la ciudad NO está en la lista: usa [CERRAR_VENTA:nombre_del_producto] para generar el link de pago Wompi.
-- **CUANDO EL CLIENTE DIGA QUE SÍ QUIERE COMPRAR** (ej: "sí quiero", "envíamelo", "dale", "lo llevo", "confirmo", "quiero pagar en efectivo"), DEBES usar [CERRAR_VENTA] o [PEDIDO_CONTRAENTREGA] INMEDIATAMENTE. NO preguntes más, NO des más información, CIERRA la venta.
-- NO presiones, pero facilita el camino
-- **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA]. Pide la dirección primero.
-- **RECUERDA**: Después de usar la etiqueta, NO digas "Pedido registrado" ni confirmes como exitoso. Solo di "Perfecto, procederé a registrar tu pedido..." y el sistema se encarga del resto.`,
+    STRATEGIC_DIRECTION: `FLUJO ACTUAL: DIRECCIÓN AL CIERRE
+- El cliente muestra interés real (pregunta precio o ya lleva rato hablando de un producto).
+- Da el precio con seguridad, acompañado del valor: "Tiene un valor de *$X* y está diseñado para...".
+- Si no hay complemento ofrecido aún, ofrécelo ahora.
+- Termina con una pregunta de cierre alternativa: "¿Lo llevas solo o con el complemento?" o "¿Prefieres contra entrega o link de pago?".`,
+
+    OBJECTION: `FLUJO ACTUAL: MANEJO DE OBJECIÓN (Etapa 5)
+- El cliente puso un freno (precio, pensarlo, duda, vergüenza, discreción). NO te rindas y NO presiones.
+- Valida su sentimiento en una línea ("Te entiendo 💜") y responde con el guion de objeción correspondiente del método.
+- Precio: ofrece la alternativa más económica del mismo tipo que exista en el catálogo o deja solo lo esencial del combo.
+- "Lo voy a pensar": ancla la recomendación con nombre y precio y ofrece dejarla apartada hoy.
+- Termina con una pregunta fácil de responder que mantenga viva la venta.
+- Registra [OBJECION: tipo].`,
+
+    SHIPPING_INFO: `FLUJO ACTUAL: INFORMACIÓN DE ENVÍO
+- Responde clara y brevemente con la INFORMACIÓN LOGÍSTICA (envío discreto, contraentrega solo en Popayán, Pitalito, Florencia y Yopal dentro de la ciudad, resto por transportadora con link de pago).
+- Si no sabes su ciudad, pregúntala: "¿Desde qué ciudad nos escribes?".
+- Después de responder, retoma la venta: si ya hay producto de interés, pregunta si se lo dejas listo; si no, pregunta qué está buscando.`,
+
+    CLOSING: `FLUJO ACTUAL: CIERRE DE VENTA (Etapa 7)
+- **PRIMERO VERIFICA**: ¿Tienes DIRECCIÓN ([CAPTURAR_DIRECCION]) y CIUDAD ([CAPTURAR_CIUDAD])? Si falta algo, pídelo con naturalidad (un dato por mensaje) antes de usar etiquetas de cierre.
+- Confirma el/los producto(s) y el total en COP en un resumen corto.
+- Si aún no ofreciste complemento y el cliente no lo rechazó, ofrécelo UNA vez en una línea antes de cerrar ("¿Te lo agrego?").
+- **PRIORIDAD DEL MÉTODO DE PAGO**: Si el cliente menciona 'nequi', 'daviplata', 'transferencia', 'tarjeta' o pago electrónico: usa [CERRAR_VENTA] (link Wompi), sin importar la ciudad.
+- **CIERRE AUTOMÁTICO** cuando el cliente confirme la compra y ya tengas dirección y ciudad:
+  * Si NO mencionó pago electrónico Y su ciudad es Pitalito, Florencia, Popayán o Yopal: usa [PEDIDO_CONTRAENTREGA:nombre_exacto_del_producto].
+  * Si mencionó pago electrónico O su ciudad NO está en la lista: usa [CERRAR_VENTA:nombre_del_producto].
+- Después de la etiqueta, NO digas "Pedido registrado". Di "Perfecto, procedo a registrar tu pedido..." o "Voy a generar tu link de pago..." y el sistema hace el resto.
+- **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA].`,
 
     CONTACT_REPLY: `FLUJO ACTUAL: RESPUESTA A CONTACTO
-- El cliente está respondiendo a un mensaje previo que le enviaste
-- Recíbelo natural: "Holaa, claro, por cierto agrégame a tus contactos como Sofía y así tenemos el contacto directo"
-- Hazlo sonar como un comentario casual, no como pregunta
-- Luego transiciona suavemente al flujo de venta: pregúntale qué necesita o si quiere que le muestres productos`,
+- El cliente responde a un mensaje previo que le enviaste.
+- Recíbelo natural y, como comentario casual, invítalo a guardarte como "Sofía — Fantasías".
+- Retoma la venta donde quedó: si había un producto de interés, recuérdalo con nombre y pregunta si se lo dejas listo.`,
 
     PHYSICAL_STORE: `FLUJO ACTUAL: INFORMACIÓN DE LOCALES
-- El cliente pregunta por tiendas físicas
-- Usa la información de los locales disponible en el sistema (## LOCALES FÍSICOS)
-- Proporciona los datos con amabilidad: dirección, puntos de referencia, fachada si aplica
-- IMPORTANTE: Si está Yopal en los locales, menciona que está disponible solo por ahora esta semana y que avisamos si hay cambios
-- Luego de informar, pregúntale si necesita algo más o si quiere ver productos`,
+- El cliente pregunta por tiendas físicas: usa la sección ## LOCALES FÍSICOS (dirección, referencias, fachada).
+- IMPORTANTE: Si está Yopal en los locales, menciona que está disponible solo por ahora esta semana y que avisamos si hay cambios.
+- Luego ofrece dejarle el producto listo o enviárselo a domicilio con total discreción.`,
 
     ESCALATION: `FLUJO ACTUAL: ESCALAMIENTO A HUMANO
 - El cliente quiere hablar con una persona o administrador, o está molesto.
@@ -168,21 +151,18 @@ function getFlowInstructions(flow) {
 - Responde con [ESCALAR] al final de tu mensaje`,
 
     POLL: `FLUJO ACTUAL: POLLA MUNDIALISTA
-- El cliente pregunta por la polla mundialista, fútbol, copa, mundial, o cualquier tema relacionado
-- Responde con entusiasmo y calidez
-- SIEMPRE incluye el link: https://polla.fantasias.com.co
-- Sé breve y directo: NO vendas productos en este momento
-- Ejemplo de respuesta: "¡Claro que sí! 🏆 Participa en nuestra polla mundialista y compite con otros fans. Entra aquí 👉 https://polla.fantasias.com.co ¿En qué más te puedo ayudar?"
-- Si el cliente quiere volver a productos, transiciona suavemente al flujo de ventas`,
+- El cliente pregunta por la polla mundialista, fútbol, mundial o temas relacionados.
+- Responde con entusiasmo y calidez. SIEMPRE incluye el link: https://polla.fantasias.com.co
+- Sé breve y directo: NO vendas productos en este momento.
+- Ejemplo: "¡Claro que sí! 🏆 Participa en nuestra polla mundialista y compite con otros fans. Entra aquí 👉 https://polla.fantasias.com.co ¿En qué más te puedo ayudar?"`,
 
-    FAREWELL: `FLUJO ACTUAL: DESPEDIDA
-- Agradece amablemente
-- Recuerda que estás disponible cuando quiera
-- Si compró: confirma que su pedido está en proceso
-- Cierra con calidez`,
+    FAREWELL: `FLUJO ACTUAL: DESPEDIDA (Etapa 8 · Fidelizar)
+- Agradece con calidez.
+- Si compró: confirma que su pedido está en proceso e invítalo a guardarte como "Sofía — Fantasías" para ver tips y novedades (VIP si superó $150.000).
+- Si NO compró y había un producto de interés: déjalo anclado en una línea ("Te dejo presente el *Nombre*, cuando quieras te lo aparto 💜").`,
   };
 
-  return instructions[flow] || instructions.DISCOVERY;
+  return instructions[flow] || instructions.RECOMMEND;
 }
 
 module.exports = { detectFlow, getFlowInstructions };

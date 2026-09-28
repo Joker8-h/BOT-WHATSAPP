@@ -1,9 +1,15 @@
 const { openai, MODEL, MODEL_CHAIN } = require('../config/openai');
 const { buildSystemPrompt, buildEmployeePrompt, buildAdminPrompt } = require('../ai/personality');
 const { detectFlow, getFlowInstructions } = require('../ai/flows');
-const { classifyClient, getRecommendedCategories, getProductLimit } = require('../ai/decisionEngine');
+const { classifyClient, getRecommendedCategories } = require('../ai/decisionEngine');
+const {
+  normalizeText, containsPhrase, detectProductTypes, expandTypes, classifyProduct,
+  formatComplementsSection, buildCatalogIndex,
+} = require('../ai/salesKnowledge');
+const { formatSaleState, formatOrderMemory } = require('../ai/saleState');
 const { prisma } = require('../config/database');
 const catalogService = require('./catalogService');
+const crmService = require('./crmService');
 const logger = require('../utils/logger');
 const fs = require('fs');
 const path = require('path');
@@ -229,6 +235,16 @@ async function streamValidatedStoryFlow({ messages, onChunk, fallbackType = 'fan
   }
 }
 
+const SEARCH_STOPWORDS = new Set([
+  'hola', 'holaa', 'buenas', 'buenos', 'tardes', 'noches', 'dias', 'gracias', 'favor', 'porfa', 'porfavor',
+  'quiero', 'quisiera', 'queria', 'necesito', 'busco', 'buscando', 'tienes', 'tienen', 'tiene', 'hay', 'venden', 'manejan',
+  'para', 'algo', 'alguno', 'alguna', 'como', 'este', 'esta', 'esto', 'estos', 'estas', 'eso', 'esos', 'esas', 'donde',
+  'cuanto', 'cuanta', 'cual', 'cuales', 'precio', 'precios', 'valor', 'vale', 'cuesta', 'sobre', 'bien', 'pero', 'tambien',
+  'mucho', 'mucha', 'muy', 'mas', 'menos', 'otro', 'otra', 'otros', 'otras', 'ella', 'ellas', 'ellos', 'porque', 'pues',
+  'entonces', 'claro', 'bueno', 'buena', 'listo', 'perfecto', 'mismo', 'misma', 'desde', 'hasta', 'cuando', 'ahora',
+  'producto', 'productos', 'cosa', 'cosas', 'saber', 'informacion', 'info', 'mandame', 'enviame', 'muestrame', 'ensename',
+]);
+
 class AIService {
   /**
    * Genera un audio a partir de texto usando OpenAI TTS
@@ -262,77 +278,121 @@ class AIService {
   /**
    * Genera una respuesta de la IA para un mensaje del cliente
    */
-  async generateResponse(userMessage, contact, messageHistory = [], branchId = null, hasRecentHumanIntervention = false, mediaData = null) {
+  /**
+   * Selecciona los productos más relevantes para la conversación (por tipo de
+   * producto, palabras del cliente y ficha de venta), en vez de ordenar por precio.
+   */
+  selectRelevantProducts({ userMessage, messageHistory, sale, catalog, clientType }) {
+    if (!catalog?.length) return { products: [], mainProducts: [] };
+
+    const currentTypes = expandTypes(detectProductTypes(userMessage || ''));
+    const recentUserText = messageHistory.filter(m => m.role === 'USER').slice(-4).map(m => m.content).join(' ');
+    const recentTypes = expandTypes(detectProductTypes(recentUserText));
+
+    const interestNorms = (sale?.interestProducts || []).map(n => normalizeText(n));
+    const interestProducts = catalog.filter(p => {
+      const pn = normalizeText(p.name);
+      return interestNorms.some(n => n && (pn === n || pn.includes(n) || n.includes(pn)));
+    });
+    const saleTypes = [...new Set(interestProducts.flatMap(p => classifyProduct(p)))];
+
+    const keywords = normalizeText(userMessage || '')
+      .split(' ')
+      .filter(w => w.length > 3 && !SEARCH_STOPWORDS.has(w));
+
+    const scored = catalog.map(p => {
+      const types = classifyProduct(p);
+      const nameNorm = normalizeText(p.name);
+      const descNorm = normalizeText(p.description || '').substring(0, 400);
+      let score = 0;
+
+      if (types.some(t => currentTypes.includes(t))) score += 6;
+      else if (types.some(t => recentTypes.includes(t))) score += 3;
+      if (types.some(t => saleTypes.includes(t))) score += 2;
+      if (interestProducts.some(ip => ip.id === p.id)) score += 8;
+
+      let descHits = 0;
+      for (const k of keywords) {
+        if (containsPhrase(nameNorm, k)) score += 2;
+        else if (descHits < 2 && containsPhrase(descNorm, k)) { score += 0.5; descHits++; }
+      }
+
+      if (score > 0) {
+        if (p.isFeatured) score += 0.5;
+        if (p.stock <= 0) score -= 4;
+      }
+      return { p, score, types };
+    });
+
+    const relevant = scored
+      .filter(s => s.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+
+    const products = relevant.map(s => s.p);
+
+    // Sin pistas todavía (inicio de conversación): destacados + categorías según perfil
+    if (products.length < 4) {
+      const categories = getRecommendedCategories(clientType);
+      const seen = new Set(products.map(p => p.id));
+      const fillers = catalog
+        .filter(p => !seen.has(p.id) && p.stock > 0)
+        .sort((a, b) => {
+          const fa = (a.isFeatured ? 2 : 0) + (categories.includes(a.category) ? 1 : 0);
+          const fb = (b.isFeatured ? 2 : 0) + (categories.includes(b.category) ? 1 : 0);
+          return fb - fa;
+        })
+        .slice(0, 6 - products.length);
+      products.push(...fillers);
+    }
+
+    const mainProducts = relevant
+      .filter(s => s.score >= 3 && s.types.length > 0 && s.p.stock > 0)
+      .slice(0, 2)
+      .map(s => s.p);
+
+    return { products, mainProducts };
+  }
+
+  async generateResponse(userMessage, contact, messageHistory = [], branchId = null, hasRecentHumanIntervention = false, mediaData = null, options = {}) {
     try {
+      const conversation = options.conversation || null;
+      const conversationContext = (conversation?.context && typeof conversation.context === 'object') ? conversation.context : {};
+      const sale = conversationContext.sale || {};
+
       // 1. Detectar flujo conversacional
       const flow = detectFlow(userMessage || (mediaData ? "[Imagen recibida]" : ""), {
         messageCount: messageHistory.length,
         clientType: contact?.clientType,
+        sale,
       });
 
-      // 2. Clasificar cliente
+      // 2. Clasificar cliente (cada 4 mensajes, o mientras siga sin clasificar)
       let classification = null;
-      if (messageHistory.length >= 2) {
+      const needsClassification = !contact?.clientType || contact.clientType === 'NUEVO';
+      if (messageHistory.length >= 2 && (needsClassification || messageHistory.length % 4 === 0)) {
         try {
-          classification = await classifyClient(messageHistory);
+          classification = await classifyClient(messageHistory.slice(-12));
+          if (contact?.clientType === 'RECURRENTE' || (contact?.totalPurchases || 0) >= 2) {
+            classification = { ...classification, clientType: 'RECURRENTE' };
+          }
         } catch (e) {
           logger.warn('⚠️ classifyClient falló, usando fallback:', e.message);
         }
       }
 
-      // 3. Obtener productos y SUCURSALES cercanas
+      // 3. Productos relevantes + complementos + índice del catálogo
       const clientType = classification?.clientType || contact?.clientType || 'NUEVO';
-      const confidenceLevel = classification?.confidenceLevel || contact?.confidenceLevel || 'BAJO';
-      const categories = getRecommendedCategories(clientType);
-      const productLimit = getProductLimit(confidenceLevel);
-      
       const effectiveBranchId = branchId || messageHistory[0]?.branchId || contact?.branchId;
-      
-      let specificProducts = [];
-      const recentMessages = messageHistory.slice(-3).map(m => m.content).join(' ');
-      const searchContext = `${userMessage || ''} ${recentMessages}`.toLowerCase();
-      
-      const targetKeywords = ['retardante', 'lubricante', 'feromona', 'vibrador', 'lenceria', 'potencializador', 'crema', 'spray'];
-      const foundTargetKeywords = targetKeywords.filter(k => searchContext.includes(k));
-      
-      const keywords = (userMessage || '').split(' ').filter(word => word.length > 3);
-      const allKeywords = [...new Set([...keywords, ...foundTargetKeywords])];
+      const catalog = await catalogService.getAllProducts(effectiveBranchId);
 
-      if (allKeywords.length > 0) {
-        specificProducts = await prisma.product.findMany({
-          where: {
-            branchId: effectiveBranchId,
-            isAvailable: true,
-            OR: [
-              ...allKeywords.map(k => ({ name: { contains: k } })),
-              ...allKeywords.map(k => ({ description: { contains: k } })),
-              ...allKeywords.map(k => ({ emotionalDesc: { contains: k } }))
-            ]
-          },
-          take: 8
-        });
-      }
+      const { products, mainProducts } = this.selectRelevantProducts({
+        userMessage, messageHistory, sale, catalog, clientType,
+      });
+      const complementsText = formatComplementsSection(mainProducts, catalog);
+      const catalogIndexText = buildCatalogIndex(catalog);
 
-      let products = await catalogService.getProductsByCategories(categories, productLimit, effectiveBranchId);
-      
-      const seenIds = new Set(specificProducts.map(p => p.id));
-      products = [...specificProducts, ...products.filter(p => !seenIds.has(p.id))];
-      products = products.sort((a, b) => Number(b.price) - Number(a.price));
-      
-      if (searchContext.includes('retardante') && !products.some(p => (p.name + p.description).toLowerCase().includes('retardante'))) {
-          const fallbackProducts = await prisma.product.findMany({
-              where: { 
-                  branchId: effectiveBranchId,
-                  isAvailable: true,
-                  OR: [
-                      { description: { contains: 'retard' } },
-                      { name: { contains: 'retard' } }
-                  ]
-              },
-              take: 5
-          });
-          products = [...fallbackProducts, ...products];
-      }
+      const orderMemory = contact?.id ? await crmService.buildOrderMemory(contact.id, conversation) : null;
 
       // 4-6. Info sucursal, proximidad, lastOrder, systemPrompt
       const currentBranch = branchId ? await prisma.branch.findUnique({ where: { id: branchId } }) : null;
@@ -360,13 +420,22 @@ class AIService {
           city: contact?.city,
           clientType,
           purchaseStage: classification?.purchaseStage || contact?.purchaseStage || 'CURIOSO',
+          totalPurchases: contact?.totalPurchases || 0,
+          totalSpent: contact?.totalSpent || 0,
+          interests: contact?.interests,
           closestBranch: closestBranch ? `${closestBranch.name} (${closestBranch.address})` : 'nuestra sede principal',
           lastOrderAddress: lastOrder?.shippingAddress,
           lastOrderCity: lastOrder?.shippingCity
         },
         products,
         currentBranch || closestBranch || {},
-        allBranches
+        allBranches,
+        {
+          saleStateText: formatSaleState(sale),
+          orderMemoryText: formatOrderMemory(orderMemory),
+          complementsText,
+          catalogIndexText,
+        }
       );
 
       const flowInstructions = getFlowInstructions(flow);
@@ -453,6 +522,7 @@ class AIService {
         response: cleanResponse,
         flow,
         actions,
+        classification,
         tokensUsed,
         closestBranchId: closestBranch?.id
       };
@@ -636,6 +706,52 @@ class AIService {
     }
   }
 
+  /**
+   * Redacta un mensaje proactivo (seguimiento, postventa, recompra) con los
+   * datos reales de la venta. Devuelve null si la IA no está disponible.
+   */
+  async generateOutreachMessage({ contact, goal, facts = [], history = [] }) {
+    const firstName = contact?.name && contact.name !== 'Sin nombre' ? contact.name.trim().split(/\s+/)[0] : null;
+    const historyText = history
+      .slice(-8)
+      .map(m => `${m.role === 'USER' ? 'Cliente' : 'Sofía'}: ${String(m.content || '').substring(0, 300)}`)
+      .join('\n');
+
+    const system = `Eres Sofía, asesora de Fantasías (productos íntimos de alta categoría) con asistencia en sexología. Vas a escribir UN mensaje proactivo de WhatsApp para un cliente.
+
+OBJETIVO DEL MENSAJE: ${goal}
+
+DATOS REALES (úsalos; no inventes otros):
+${facts.length ? facts.map(f => `- ${f}`).join('\n') : '- (sin datos adicionales)'}
+${historyText ? `\nÚLTIMOS MENSAJES DE LA CONVERSACIÓN:\n${historyText}\n` : ''}
+REGLAS:
+- Máximo 3 líneas cortas separadas por salto de línea doble. Tono cálido, elegante, cercano y natural de Colombia. Máximo 2 emojis.
+- ${firstName ? `Llámalo por su nombre: ${firstName}.` : 'No conoces su nombre: no inventes uno.'}
+- Si en los datos hay un producto concreto, menciónalo por su nombre (en *negrita* una sola vez).
+- NUNCA inventes productos, precios, descuentos, regalos ni urgencias falsas (nada de "últimas unidades", "solo hoy", "stock limitado").
+- No te presentes de nuevo si ya hubo conversación. No suenes a robot ni a plantilla. Nada vulgar ni explícito.
+- Termina con UNA pregunta fácil de responder.
+- No uses etiquetas entre corchetes ni links (el sistema agrega el link si hace falta).
+Responde SOLO con el texto del mensaje.`;
+
+    try {
+      const completion = await callChatWithFallback(
+        [
+          { role: 'system', content: system },
+          { role: 'user', content: 'Escribe el mensaje ahora.' },
+        ],
+        { temperature: 0.8, max_tokens: 220 }
+      );
+      const text = this.cleanResponse(completion.choices[0].message.content || '')
+        .replace(/^["“]|["”]$/g, '')
+        .trim();
+      return text || null;
+    } catch (error) {
+      logger.warn(`⚠️ [OUTREACH] No se pudo generar mensaje proactivo: ${error.message}`);
+      return null;
+    }
+  }
+
   findClosestBranch(contact, branches) {
     if (!contact?.city || !branches.length) return branches[0] || null;
     const contactCity = contact.city.toLowerCase().trim();
@@ -704,8 +820,33 @@ class AIService {
 
     const imageMatches = response.match(/\[IMAGEN:(.+?)\]/g);
     if (imageMatches) {
-      actions.images = imageMatches.map(m => m.match(/\[IMAGEN:(.+?)\]/)[1].trim());
+      actions.images = [...new Set(imageMatches.map(m => m.match(/\[IMAGEN:(.+?)\]/)[1].trim()))];
     }
+
+    const intentMatch = response.match(/\[CAPTURAR_INTENCION:(.+?)\]/);
+    if (intentMatch) actions.capturedIntent = intentMatch[1].trim();
+
+    const budgetMatch = response.match(/\[CAPTURAR_PRESUPUESTO:(.+?)\]/);
+    if (budgetMatch) actions.capturedBudget = budgetMatch[1].trim();
+
+    const collectAll = (tag) => {
+      const re = new RegExp(`\\[${tag}:(.+?)\\]`, 'g');
+      const values = [];
+      let m;
+      while ((m = re.exec(response)) !== null) {
+        values.push(...m[1].split(',').map(v => v.trim()).filter(Boolean));
+      }
+      return values;
+    };
+
+    const interest = collectAll('INTERES_PRODUCTO');
+    if (interest.length) actions.interestProducts = interest;
+
+    const objections = collectAll('OBJECION');
+    if (objections.length) actions.objections = objections;
+
+    const complements = collectAll('COMPLEMENTO_OFRECIDO');
+    if (complements.length) actions.complementsOffered = complements;
 
     return actions;
   }

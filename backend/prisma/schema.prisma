@@ -32,6 +32,7 @@ model Branch {
   wompiPublicKey     String?   @db.VarChar(200)
   wompiPrivateKey    String?   @db.Text
   wompiIntegritySecret String? @db.Text
+  wompiEventsSecret  String?   @db.Text
   
   // Info del local físico
   referencePoint  String? @db.VarChar(300) // Punto de referencia para llegar
@@ -340,6 +341,10 @@ model Order {
   notifiedAt      DateTime?                  // Cuándo se confirmó la notificación al dueño
   notifyAttempts  Int       @default(0)
 
+  // Postventa: 0 = sin iniciar, 1 = día 1 enviado, 2 = día 3, 3 = día 7, 4 = día 20 (fin)
+  postSaleStep    Int       @default(0)
+  postSaleNextAt  DateTime?
+
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -349,6 +354,7 @@ model Order {
   @@index([contactId])
   @@index([branchId])
   @@index([status])
+  @@index([postSaleNextAt])
 }
 
 // ── Items del pedido ──

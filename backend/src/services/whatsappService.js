@@ -176,6 +176,7 @@ class WhatsAppService {
             from: from,
             body: body,
             fromMe: false,
+            type: msg.type,
             hasMedia: msg.hasMedia || false,
             timestamp: msg.timestamp || Math.floor(Date.now() / 1000),
             id: {
@@ -386,6 +387,16 @@ class WhatsAppService {
 
   getAllStatuses() {
     return Object.fromEntries(this.sessions);
+  }
+
+  /** Estado apto para endpoints públicos: sin QR ni datos internos de la sesión. */
+  getPublicStatuses() {
+    return Object.fromEntries(
+      [...this.sessions.entries()].map(([branchId, s]) => [
+        branchId,
+        { isReady: !!s?.isReady, status: s?.status || 'UNKNOWN' },
+      ])
+    );
   }
 
   getBranchStatus(branchId) {

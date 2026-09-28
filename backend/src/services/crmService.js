@@ -89,14 +89,21 @@ class CRMService {
   async updateClassification(contactId, classification) {
     try {
       if (!classification) return;
-      return await prisma.contact.update({
-        where: { id: contactId },
-        data: {
-          clientType: classification.clientType || undefined,
-          confidenceLevel: classification.confidenceLevel || undefined,
-          purchaseStage: classification.purchaseStage || undefined,
-        },
-      });
+      const pick = (value, allowed) => {
+        const v = String(value || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        return allowed.includes(v) ? v : undefined;
+      };
+      const data = {
+        clientType: pick(classification.clientType, ['TIMIDO', 'EXPLORADOR', 'DECIDIDO', 'RECURRENTE']),
+        confidenceLevel: pick(classification.confidenceLevel, ['BAJO', 'MEDIO', 'ALTO']),
+        purchaseStage: pick(classification.purchaseStage, ['CURIOSO', 'INTERESADO', 'DECIDIDO']),
+      };
+      if (!data.clientType && !data.confidenceLevel && !data.purchaseStage) return;
+
+      const current = await prisma.contact.findUnique({ where: { id: contactId }, select: { clientType: true } });
+      if (current?.clientType === 'RECURRENTE') delete data.clientType;
+
+      return await prisma.contact.update({ where: { id: contactId }, data });
     } catch (error) {
       logger.error('Error actualizando clasificación:', error);
     }
@@ -183,7 +190,73 @@ class CRMService {
     if (context.pendingCarts && Object.keys(context.pendingCarts).length > 0) {
       carried.pendingCarts = context.pendingCarts;
     }
+    if (context.sale) carried.sale = context.sale;
     return Object.keys(carried).length > 0 ? carried : undefined;
+  }
+
+  /**
+   * Lee el contexto fresco de la conversación y aplica un parche sobre él.
+   * Evita pisar claves escritas por otros procesos (carritos, seguimientos).
+   */
+  async patchContext(conversationId, patchFn) {
+    try {
+      const conv = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        select: { context: true },
+      });
+      const context = (conv?.context && typeof conv.context === 'object') ? conv.context : {};
+      const next = patchFn({ ...context });
+      if (!next) return context;
+      await prisma.conversation.update({ where: { id: conversationId }, data: { context: next } });
+      return next;
+    } catch (error) {
+      logger.error(`Error actualizando contexto (conv ${conversationId}):`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Guarda la ficha de venta (intención, interés, objeciones, etapa...).
+   */
+  async saveSaleState(conversationId, sale) {
+    if (!sale) return null;
+    return this.patchContext(conversationId, (ctx) => ({ ...ctx, sale }));
+  }
+
+  async setSaleStage(conversationId, stage, extra = {}) {
+    return this.patchContext(conversationId, (ctx) => ({
+      ...ctx,
+      sale: { ...(ctx.sale || {}), ...extra, stage, updatedAt: new Date().toISOString() },
+    }));
+  }
+
+  /**
+   * Registra una compra confirmada en las métricas del cliente.
+   * Desde la segunda compra el cliente pasa a RECURRENTE.
+   */
+  async recordPurchase(contactId, amount, conversationId = null) {
+    try {
+      const updated = await prisma.contact.update({
+        where: { id: contactId },
+        data: {
+          totalPurchases: { increment: 1 },
+          totalSpent: { increment: Number(amount) || 0 },
+          lastPurchaseAt: new Date(),
+          purchaseStage: 'DECIDIDO',
+        },
+      });
+      if (updated.totalPurchases >= 2 && updated.clientType !== 'RECURRENTE') {
+        await prisma.contact.update({ where: { id: contactId }, data: { clientType: 'RECURRENTE' } });
+      }
+      if (conversationId) {
+        await prisma.conversation.update({ where: { id: conversationId }, data: { convertedToSale: true } });
+      }
+      logger.info(`🏆 [CRM] Compra registrada para contacto ${contactId}: $${Number(amount).toLocaleString('es-CO')} (total compras: ${updated.totalPurchases})`);
+      return updated;
+    } catch (error) {
+      logger.error(`Error registrando compra (contacto ${contactId}):`, error.message);
+      return null;
+    }
   }
 
   /**
@@ -393,7 +466,7 @@ class CRMService {
   /**
    * Crea una orden en la DB
    */
-  async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress, status = 'PENDING', paymentMethod = null, notes = null }) {
+  async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress, status = 'PENDING', paymentMethod = null, notes = null, wompiTransactionId = null }) {
     try {
       return await prisma.order.create({
         data: {
@@ -405,6 +478,7 @@ class CRMService {
           shippingAddress,
           paymentMethod,
           notes,
+          ...(wompiTransactionId ? { wompiTransactionId } : {}),
           items: {
             create: items.map(item => ({
               productId: item.productId,

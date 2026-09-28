@@ -7,16 +7,51 @@ const aiService = require('../services/aiService');
 const crmService = require('../services/crmService');
 const wompiService = require('../services/wompiService');
 const catalogService = require('../services/catalogService');
+const transcriptionService = require('../services/transcriptionService');
+const postSaleService = require('../services/postSaleService');
+const ownerAlertService = require('../services/ownerAlertService');
+const { mergeSaleState } = require('../ai/saleState');
 const { prisma } = require('../config/database');
 const { isWorkingHours, formatCOP } = require('../utils/helpers');
+const crypto = require('crypto');
+
+// Ventana para agrupar ráfagas: el cliente suele escribir 2-3 mensajes seguidos
+const BURST_WINDOW_MS = parseInt(process.env.MESSAGE_BURST_WINDOW_MS || '4000', 10);
+const ADMIN_MAX_FAILED_ATTEMPTS = 5;
+const ADMIN_LOCK_MS = 60 * 60 * 1000;
 
 class MessageController {
   constructor() {
     this.processedMessages = new Set();
-    // Mutex por chat: evita que dos mensajes del mismo chat se procesen simultáneamente
-    this.processingChats = new Set();
-    // Marca de tiempo de arranque: ignorar mensajes viejos que llegan en ráfaga al reconectar
+    // Cola por chat: agrupa mensajes seguidos y encola los que llegan mientras se responde
+    this.chatQueues = new Map();
     this.bootTime = Date.now();
+    this.adminRegistrationFailures = new Map();
+  }
+
+  _safeEqual(a, b) {
+    const ha = crypto.createHash('sha256').update(String(a)).digest();
+    const hb = crypto.createHash('sha256').update(String(b)).digest();
+    return crypto.timingSafeEqual(ha, hb);
+  }
+
+  _isAdminRegistrationLocked(id) {
+    const entry = this.adminRegistrationFailures.get(id);
+    if (!entry) return false;
+    if (Date.now() - entry.firstAt > ADMIN_LOCK_MS) {
+      this.adminRegistrationFailures.delete(id);
+      return false;
+    }
+    return entry.count >= ADMIN_MAX_FAILED_ATTEMPTS;
+  }
+
+  _registerAdminFailure(id) {
+    const entry = this.adminRegistrationFailures.get(id);
+    if (!entry || Date.now() - entry.firstAt > ADMIN_LOCK_MS) {
+      this.adminRegistrationFailures.set(id, { count: 1, firstAt: Date.now() });
+    } else {
+      entry.count += 1;
+    }
   }
 
   async handleIncomingMessage(msg, branchIdStr) {
@@ -25,46 +60,124 @@ class MessageController {
     const body = (msg.body || '').trim();
     const msgId = msg.id?._serialized || msg.id?.id || `${chatId}-${Date.now()}`;
 
+    if (!chatId || chatId === 'status@broadcast' || chatId.includes('@g.us') || msg.fromMe || (!body && !msg.hasMedia)) return;
+
+    const msgTimestamp = msg.timestamp ? msg.timestamp * 1000 : Date.now();
+    logger.info(`📩 [MSG-IN] Recibido de ${chatId} (Timestamp: ${new Date(msgTimestamp).toLocaleString()})`);
+
+    if (this.processedMessages.has(msgId)) return;
+    this.processedMessages.add(msgId);
+    setTimeout(() => this.processedMessages.delete(msgId), 60000);
+
+    this._enqueue(chatId, msg, branchId);
+  }
+
+  _enqueue(chatId, msg, branchId) {
+    let queue = this.chatQueues.get(chatId);
+    if (!queue) {
+      queue = { items: [], timer: null, processing: false };
+      this.chatQueues.set(chatId, queue);
+    }
+    queue.items.push({ msg, branchId });
+
+    // Si ya se está respondiendo, el mensaje espera y se procesa al terminar
+    if (queue.processing) {
+      logger.info(`📥 [QUEUE] ${chatId}: mensaje encolado mientras se responde el anterior (${queue.items.length} en cola).`);
+      return;
+    }
+    clearTimeout(queue.timer);
+    queue.timer = setTimeout(() => this._drain(chatId), BURST_WINDOW_MS);
+  }
+
+  async _drain(chatId) {
+    const queue = this.chatQueues.get(chatId);
+    if (!queue || queue.processing) return;
+    if (queue.items.length === 0) {
+      this.chatQueues.delete(chatId);
+      return;
+    }
+
+    queue.processing = true;
+    const batch = queue.items.splice(0);
+    if (batch.length > 1) logger.info(`🧩 [BURST] ${chatId}: agrupando ${batch.length} mensajes seguidos en una sola respuesta.`);
+
     try {
-      if (!chatId || chatId === 'status@broadcast' || chatId.includes('@g.us') || msg.fromMe || (!body && !msg.hasMedia)) return;
+      await this._processBatch(chatId, batch);
+    } catch (error) {
+      logger.error(`❌ [QUEUE-ERR] ${chatId}: ${error.stack || error.message}`);
+    } finally {
+      queue.processing = false;
+      if (queue.items.length > 0) {
+        queue.timer = setTimeout(() => this._drain(chatId), Math.round(BURST_WINDOW_MS / 2));
+      } else {
+        this.chatQueues.delete(chatId);
+      }
+    }
+  }
 
-      // Procesar todos los mensajes sin importar la antigüedad para asegurar 100% de atención
-      // El antiBanDelay se encarga de que las respuestas salgan a un ritmo seguro
-      const msgTimestamp = msg.timestamp ? msg.timestamp * 1000 : Date.now();
-      logger.info(`📩 [MSG-IN] Procesando mensaje de ${chatId} (Timestamp: ${new Date(msgTimestamp).toLocaleString()})`);
+  /**
+   * Convierte el lote en texto: captions, textos y notas de voz transcritas.
+   * La última imagen del lote se envía a la IA con visión.
+   */
+  async _resolveBatchContent(chatId, batch) {
+    const parts = [];
+    let mediaData = null;
+    let audioFailed = false;
 
-      if (this.processedMessages.has(msgId)) return;
-      this.processedMessages.add(msgId);
-      setTimeout(() => this.processedMessages.delete(msgId), 60000);
+    for (const { msg } of batch) {
+      let text = (msg.body || '').trim();
 
-      // Mutex por chat: si ya estamos procesando un mensaje de este chat, ignorar el duplicado
-      if (this.processingChats.has(chatId)) {
-        logger.info(`🔒 [SKIP-DUP] Ya se está procesando un mensaje de ${chatId}, ignorando duplicado.`);
+      if (msg.hasMedia) {
+        try {
+          const media = await msg.downloadMedia();
+          if (media?.mimetype?.startsWith('image/')) {
+            mediaData = { data: media.data, mimetype: media.mimetype };
+            logger.info(`📸 [MEDIA] Imagen recibida de ${chatId} (${media.mimetype})`);
+            if (!text) text = '[Imagen]';
+          } else if (media && transcriptionService.isAudio(msg, media)) {
+            const transcript = await transcriptionService.transcribe(media);
+            if (transcript) {
+              text = `[Nota de voz] ${transcript}`;
+            } else {
+              audioFailed = true;
+            }
+          }
+        } catch (mediaError) {
+          logger.error(`❌ Error descargando media de ${chatId}:`, mediaError);
+        }
+      }
+
+      if (text) parts.push(text);
+    }
+
+    const textParts = parts.filter(p => p !== '[Imagen]');
+    const body = textParts.join('\n').trim();
+    return { parts, body, mediaData, audioFailed };
+  }
+
+  async _processBatch(chatId, batch) {
+    const { msg, branchId } = batch[batch.length - 1];
+
+    try {
+      // ── 0. ¿NÚMERO BLOQUEADO? ────────────────────────────────
+      if (batch.some(({ msg: m }) => this._isMessageBlocked(chatId, m))) {
+        logger.info(`🚫 [BLOCKED] Mensaje ignorado de ${chatId}`);
         return;
       }
-      this.processingChats.add(chatId);
 
-      logger.info(`📨 [MSG-IN] ${chatId}: "${body.substring(0, 30)}..."`);
+      const { parts, body, mediaData, audioFailed } = await this._resolveBatchContent(chatId, batch);
+      if (!body && !mediaData && !audioFailed) return;
 
+      logger.info(`📨 [MSG-IN] ${chatId}: "${body.substring(0, 40)}..."`);
       const cleanPhone = chatId.split('@')[0];
 
-      // ── 0. ¿NÚMERO BLOQUEADO? ────────────────────────────────
-      if (
-        this._isPhoneBlocked(chatId) ||
-        this._isPhoneBlocked(msg.from) ||
-        this._isPhoneBlocked(msg.author) ||
-        this._isPhoneBlocked(msg._data?.from) ||
-        this._isPhoneBlocked(msg._data?.author)
-      ) {
-        logger.info(`🚫 [BLOCKED] Mensaje ignorado de ${chatId}`);
-        this.processingChats.delete(chatId);
-        return;
-      }
+      // ── 1. ¿ES EMPLEADO? ─────────────────────────────────────
       const employee = await prisma.employeeAccess.findFirst({
         where: { phone: cleanPhone }
       });
 
       if (employee) {
+        if (!body) return;
         logger.info(`👷 [EMPLOYEE] Mensaje de ${employee.name} (${chatId})`);
         const employeeResponse = await aiService.generateEmployeeResponse(body, branchId);
         await whatsappService.sendMessage(branchId, chatId, employeeResponse.response);
@@ -72,93 +185,12 @@ class MessageController {
       }
 
       // ── 1b. ¿ES EL DUEÑO/ADMIN? ─────────────────────────────
-      const allBranches = await prisma.branch.findMany({
-        select: { id: true, notificationPhone: true, adminLids: true }
-      });
-
-      // Check 1: Phone match
-      let matchedAdmin = allBranches.find(b => {
-        const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
-        return phone && phone === cleanPhone;
-      });
-
-      // Check 2: LID match (phone JID resuelto)
-      if (!matchedAdmin) {
-        matchedAdmin = allBranches.find(b => {
-          try {
-            const lids = JSON.parse(b.adminLids || '[]');
-            return lids.some(e => {
-              const lid = typeof e === 'string' ? e : e.lid;
-              return lid === cleanPhone;
-            });
-          } catch { return false; }
-        });
-      }
-
-      // Check 2b: LID match contra LID original (antes de resolución a teléfono)
-      if (!matchedAdmin && msg._originalLid) {
-        const originalClean = msg._originalLid.split('@')[0];
-        matchedAdmin = allBranches.find(b => {
-          try {
-            const lids = JSON.parse(b.adminLids || '[]');
-            return lids.some(e => {
-              const lid = typeof e === 'string' ? e : e.lid;
-              return lid === originalClean;
-            });
-          } catch { return false; }
-        });
-      }
-
-      // Check 3: Comando /admin para registrar LID desde WhatsApp Web
-      if (!matchedAdmin && body.trim().startsWith('/admin')) {
-        const parts = body.trim().split(/\s+/);
-        const targetPhone = parts[1]?.replace(/[^0-9]/g, '');
-        if (targetPhone) {
-          const targetBranch = allBranches.find(b => {
-            const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
-            return phone === targetPhone;
-          });
-          if (targetBranch) {
-            try {
-              const currentLids = JSON.parse(targetBranch.adminLids || '[]');
-              if (!currentLids.some(e => e.lid === cleanPhone)) {
-                currentLids.push({ lid: cleanPhone, name: parts[2] || 'Admin' });
-                await prisma.branch.update({
-                  where: { id: targetBranch.id },
-                  data: { adminLids: JSON.stringify(currentLids) }
-                });
-                await whatsappService.sendMessage(branchId, chatId, `✅ LID registrado correctamente para la sede ${targetBranch.id}. Ya puedes usar el bot como admin.`);
-                logger.info(`👑 [ADMIN-REGISTER] LID ${cleanPhone} registrado vía comando /admin para sede ${targetBranch.id}`);
-                return;
-              } else {
-                await whatsappService.sendMessage(branchId, chatId, `ℹ️ Tu LID ya está registrado para la sede ${targetBranch.id}.`);
-                return;
-              }
-            } catch (e) {
-              logger.error('Error registrando LID:', e);
-            }
-          } else {
-            await whatsappService.sendMessage(branchId, chatId, `❌ No se encontró una sede con el número ${targetPhone}.`);
-            return;
-          }
-        } else {
-          await whatsappService.sendMessage(branchId, chatId, `📝 Para registrarte como admin, envía: /admin [tu número de WhatsApp]\nEjemplo: /admin 573166575904`);
-          return;
-        }
-      }
-
-      if (matchedAdmin) {
-        logger.info(`👑 [ADMIN] Mensaje del dueño (${chatId}) - Branch ${matchedAdmin.id}`);
-        const adminResponse = await aiService.generateAdminResponse(body, branchId);
-        await whatsappService.sendMessage(branchId, chatId, adminResponse.response);
-        return;
-      }
+      if (body && await this._handleAdminMessage(msg, chatId, cleanPhone, body, branchId)) return;
 
       // ── 2. CRM Y CONVERSACIÓN ────────────────────────────────
       let contact = await crmService.findOrCreateContact(chatId, branchId);
       if (contact?.isBlocked || this._isPhoneBlocked(contact?.phone)) {
         logger.info(`🚫 [BLOCKED-CRM] Contacto en CRM bloqueado: ${contact?.phone || chatId}`);
-        this.processingChats.delete(chatId);
         return;
       }
       const conversation = await crmService.getActiveConversation(contact.id, branchId);
@@ -179,22 +211,25 @@ class MessageController {
         logger.info(`📱 [PUSH-NAME] Nombre capturado automáticamente de WhatsApp: "${pushName}" para ${chatId}`);
       }
 
+      if (body) {
+        ownerAlertService.checkIncoming({
+          contact, conversation, branchId, text: body, previousMessageAt: contact.lastMessageAt,
+        }).catch(err => logger.warn(`⚠️ [OWNER-ALERT] incoming: ${err.message}`));
+      }
+
+      const partsToSave = parts.length ? parts : (audioFailed ? ['[Nota de voz sin transcribir]'] : []);
+      const saveIncoming = async () => {
+        for (const part of partsToSave) {
+          await crmService.saveMessage(conversation.id, 'USER', part);
+        }
+      };
 
       // ── 3. VERIFICAR HORARIO LABORAL ────────────────────────
       const workingStatus = await isWorkingHours(branchId);
       if (!workingStatus.isWorking) {
         logger.info(`🌙 [OFF-HOURS] Mensaje recibido de ${chatId} (Razón: ${workingStatus.reason}). Guardando para mañana.`);
-        
-        // Guardar el mensaje del usuario ANTES de marcar pendiente
-        await crmService.saveMessage(conversation.id, 'USER', body || "[Imagen]");
-        
-        // Marcar conversación como pendiente de respuesta offline
-        const currentContext = conversation.context || {};
-        await prisma.conversation.update({
-          where: { id: conversation.id },
-          data: { context: { ...currentContext, pendingOfflineReply: true } }
-        });
-
+        await saveIncoming();
+        await crmService.patchContext(conversation.id, (ctx) => ({ ...ctx, pendingOfflineReply: true }));
         // No enviamos mensaje automático para evitar despertar/molestar al cliente de noche
         return;
       }
@@ -202,7 +237,7 @@ class MessageController {
       if (conversation.status === 'ESCALATED' || conversation.status === 'PAUSED') {
         // Si lleva más de 10 minutos escalado sin respuesta humana, reactivar automáticamente
         const lastAssistantMsg = [...(conversation.messages || [])].reverse().find(m => m.role === 'ASSISTANT');
-        const minutesSinceLastResponse = lastAssistantMsg 
+        const minutesSinceLastResponse = lastAssistantMsg
           ? (Date.now() - new Date(lastAssistantMsg.createdAt).getTime()) / (1000 * 60)
           : 999;
 
@@ -212,42 +247,129 @@ class MessageController {
             where: { id: conversation.id },
             data: { status: 'ACTIVE' }
           });
-          // Continuar el flujo normal en vez de hacer return
         } else {
           logger.info(`🤫 [MSG] Chat pausado/escalado para ${chatId} (${Math.round(minutesSinceLastResponse)}min). Esperando humano.`);
-          await crmService.saveMessage(conversation.id, 'USER', body);
+          await saveIncoming();
           return;
         }
       }
 
-      let mediaData = null;
-      if (msg.hasMedia) {
-        try {
-          const media = await msg.downloadMedia();
-          if (media && media.mimetype.startsWith('image/')) {
-            mediaData = {
-              data: media.data,
-              mimetype: media.mimetype
-            };
-            logger.info(`📸 [MEDIA] Imagen recibida de ${chatId} (${media.mimetype})`);
-          }
-        } catch (mediaError) {
-          logger.error(`❌ Error descargando media de ${chatId}:`, mediaError);
-        }
+      await saveIncoming();
+
+      // Nota de voz que no se pudo transcribir y nada más: pedir amablemente que escriba
+      if (!body && !mediaData) {
+        const askText = 'Ay, no alcancé a escuchar bien tu nota de voz 🙈\n\n¿Me la escribes porfa? Así te ayudo de una 💜';
+        await whatsappService.sendMessage(branchId, chatId, askText);
+        await crmService.saveMessage(conversation.id, 'ASSISTANT', askText);
+        return;
       }
 
-      if (!body && !mediaData) return; // Si no hay texto ni imagen, no procesar
-
-      await crmService.saveMessage(conversation.id, 'USER', body || "[Imagen]");
       const messageHistory = conversation.messages || [];
+      const aiResult = await aiService.generateResponse(body, contact, messageHistory, branchId, false, mediaData, { conversation });
 
-      const aiResult = await aiService.generateResponse(body, contact, messageHistory, branchId, false, mediaData);
-      
+      if (aiResult?.isFallback || aiResult?.flow === 'FALLBACK_RATE_LIMIT') {
+        ownerAlertService.onAiFailure({ branchId, reason: 'Límite de uso / saldo de la API de IA agotado (rate limit)' }).catch(() => {});
+      }
+
       if (!aiResult?.response) {
         logger.warn(`⚠️ [MSG] IA no generó texto para ${chatId}`);
         return;
       }
 
+      await this.processAiResult({ aiResult, contact, conversation, chatId, branchId, body, messageHistory });
+    } catch (error) {
+      logger.error(`❌ [CRITICAL-ERR] ${chatId}: ${error.stack}`);
+      whatsappService.sendMessage(branchId, chatId, 'Dame un momento... ¡Ya te conecto con un compañero! 😊').catch(() => {});
+      ownerAlertService.onAiFailure({ branchId, reason: `Error al responder a ${chatId.split('@')[0]}: ${error.message}` }).catch(() => {});
+    }
+  }
+
+  /**
+   * Detecta al dueño/admin (por teléfono o LID) y le responde en modo admin.
+   * Devuelve true si el mensaje fue atendido aquí.
+   */
+  async _handleAdminMessage(msg, chatId, cleanPhone, body, branchId) {
+    const allBranches = await prisma.branch.findMany({
+      select: { id: true, notificationPhone: true, adminLids: true }
+    });
+
+    const lidMatches = (b, target) => {
+      try {
+        const lids = JSON.parse(b.adminLids || '[]');
+        return lids.some(e => (typeof e === 'string' ? e : e.lid) === target);
+      } catch { return false; }
+    };
+
+    let matchedAdmin = allBranches.find(b => {
+      const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
+      return phone && phone === cleanPhone;
+    });
+    if (!matchedAdmin) matchedAdmin = allBranches.find(b => lidMatches(b, cleanPhone));
+    if (!matchedAdmin && msg._originalLid) {
+      const originalClean = msg._originalLid.split('@')[0];
+      matchedAdmin = allBranches.find(b => lidMatches(b, originalClean));
+    }
+
+    // Comando /admin para registrar LID desde WhatsApp Web (protegido con PIN)
+    if (!matchedAdmin && body.trim().startsWith('/admin')) {
+      const registrationPin = String(process.env.ADMIN_REGISTRATION_PIN || '').trim();
+      if (!registrationPin) {
+        await whatsappService.sendMessage(branchId, chatId, `🔒 El registro de administradores por WhatsApp está desactivado. Agrega tu acceso desde el panel (Sedes → Admins).`);
+        return true;
+      }
+      if (this._isAdminRegistrationLocked(cleanPhone)) return true;
+
+      const parts = body.trim().split(/\s+/);
+      const targetPhone = parts[1]?.replace(/[^0-9]/g, '');
+      const pin = parts[2] || '';
+      if (!targetPhone || !pin) {
+        await whatsappService.sendMessage(branchId, chatId, `📝 Para registrarte como admin, envía: /admin [número de la sede] [PIN] [tu nombre]\nEjemplo: /admin 573166575904 1234 Carlos`);
+        return true;
+      }
+      const targetBranch = allBranches.find(b => b.notificationPhone?.replace(/[^0-9]/g, '') === targetPhone);
+      if (!targetBranch || !this._safeEqual(pin, registrationPin)) {
+        this._registerAdminFailure(cleanPhone);
+        logger.warn(`🚫 [ADMIN-REGISTER] Intento fallido desde ${cleanPhone} (sede ${targetPhone})`);
+        await whatsappService.sendMessage(branchId, chatId, `❌ Datos de registro inválidos.`);
+        return true;
+      }
+      try {
+        const currentLids = JSON.parse(targetBranch.adminLids || '[]');
+        if (!currentLids.some(e => e.lid === cleanPhone)) {
+          const adminName = parts.slice(3).join(' ') || 'Admin';
+          currentLids.push({ lid: cleanPhone, name: adminName });
+          await prisma.branch.update({
+            where: { id: targetBranch.id },
+            data: { adminLids: JSON.stringify(currentLids) }
+          });
+          await whatsappService.sendMessage(branchId, chatId, `✅ LID registrado correctamente para la sede ${targetBranch.id}. Ya puedes usar el bot como admin.`);
+          logger.info(`👑 [ADMIN-REGISTER] LID ${cleanPhone} registrado vía comando /admin para sede ${targetBranch.id}`);
+          ownerAlertService.onAdminRegistered({ branchId: targetBranch.id, lid: cleanPhone, name: adminName }).catch(() => {});
+        } else {
+          await whatsappService.sendMessage(branchId, chatId, `ℹ️ Tu LID ya está registrado para la sede ${targetBranch.id}.`);
+        }
+        return true;
+      } catch (e) {
+        logger.error('Error registrando LID:', e);
+        return false;
+      }
+    }
+
+    if (matchedAdmin) {
+      logger.info(`👑 [ADMIN] Mensaje del dueño (${chatId}) - Branch ${matchedAdmin.id}`);
+      const adminResponse = await aiService.generateAdminResponse(body, branchId);
+      await whatsappService.sendMessage(branchId, chatId, adminResponse.response);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Ejecuta todo lo que la IA decidió: redes de seguridad, captura de datos,
+   * ficha de venta, envío de la respuesta, pedidos contraentrega y links Wompi.
+   * Se usa tanto en tiempo real como para las respuestas fuera de horario.
+   */
+  async processAiResult({ aiResult, contact, conversation, chatId, branchId, body = '', messageHistory = [] }) {
       const actions = aiResult.actions || {};
       logger.debug(`🔍 [ACTIONS] Para ${chatId}: contraentrega=${actions.shouldCreateContraEntrega}, closeSale=${actions.shouldCloseSale}, productos=${JSON.stringify(actions.productsToSell)}, addr=${actions.capturedAddress}, city=${actions.capturedCity}`);
 
@@ -294,7 +416,6 @@ class MessageController {
             /([A-Za-záéíóúÁÉÍÓÚñÑ][A-Za-záéíóúÁÉÍÓÚñÑ\s]{3,40}[A-Z0-9]{2,6}[-][A-Z0-9]{2,10})/,
           ];
 
-          
           let rescuedProduct = null;
           for (const pattern of productPatterns) {
             const match = aiFullText.match(pattern);
@@ -306,7 +427,7 @@ class MessageController {
           
           // Si no encontramos en la IA, buscar en el historial reciente
           if (!rescuedProduct) {
-            const recentAI = messageHistory.filter(m => m.role === 'assistant').slice(-5);
+            const recentAI = messageHistory.filter(m => m.role === 'ASSISTANT').slice(-5);
             for (const msg of recentAI.reverse()) {
               for (const pattern of productPatterns) {
                 const match = (msg.content || '').match(pattern);
@@ -318,6 +439,12 @@ class MessageController {
               if (rescuedProduct) break;
             }
           }
+
+          // Último recurso: el producto que la ficha de venta tiene como interés
+          if (!rescuedProduct) {
+            const saleInterest = conversation?.context?.sale?.interestProducts;
+            if (saleInterest?.length) rescuedProduct = saleInterest[saleInterest.length - 1];
+          }
           
           if (rescuedProduct) {
             logger.info(`✅ [SAFETY-NET] Producto rescatado: "${rescuedProduct}" — activando shouldCreateContraEntrega`);
@@ -325,11 +452,9 @@ class MessageController {
             actions.productsToSell = [rescuedProduct];
           } else {
             logger.warn(`⚠️ [SAFETY-NET] No se pudo extraer el producto del texto. Se requerirá intervención manual.`);
-            // Notificar al admin para que cierre manualmente
             try {
-              const contactForNotif = contact;
               await whatsappService.notifyPhone(branchId, 
-                `⚠️ *PEDIDO PERDIDO — ACCIÓN REQUERIDA*\n\nLa IA confirmó una venta en texto pero no registró el pedido.\n\n👤 *Cliente:* ${contactForNotif.name || 'Sin nombre'}\n📱 *WhatsApp:* ${contactForNotif.phone}\n\nTexto de la IA:\n"${(aiResult.response || '').substring(0, 300)}"`
+                `⚠️ *PEDIDO PERDIDO — ACCIÓN REQUERIDA*\n\nLa IA confirmó una venta en texto pero no registró el pedido.\n\n👤 *Cliente:* ${contact.name || 'Sin nombre'}\n📱 *WhatsApp:* ${contact.phone}\n\nTexto de la IA:\n"${(aiResult.response || '').substring(0, 300)}"`
               );
             } catch (notifErr) {
               logger.error('Error notificando admin en SAFETY-NET:', notifErr);
@@ -352,7 +477,7 @@ class MessageController {
             if (m && m[1]) { wRescuedProduct = m[1].trim().replace(/[*_]/g, ''); break; }
           }
           if (!wRescuedProduct) {
-            const recentAIW = messageHistory.filter(m => m.role === 'assistant').slice(-5);
+            const recentAIW = messageHistory.filter(m => m.role === 'ASSISTANT').slice(-5);
             for (const msgW of recentAIW.reverse()) {
               for (const pat of wProductPatterns) {
                 const m = (msgW.content || '').match(pat);
@@ -360,6 +485,10 @@ class MessageController {
               }
               if (wRescuedProduct) break;
             }
+          }
+          if (!wRescuedProduct) {
+            const saleInterest = conversation?.context?.sale?.interestProducts;
+            if (saleInterest?.length) wRescuedProduct = saleInterest[saleInterest.length - 1];
           }
           if (wRescuedProduct) {
             logger.info(`✅ [SAFETY-NET-WOMPI] Producto rescatado: "${wRescuedProduct}" — activando shouldCloseSale (Wompi)`);
@@ -369,8 +498,6 @@ class MessageController {
         }
       }
 
-
-      
       // Actualizar cliente
       const contactUpdates = {};
       if (actions.capturedName || actions.capturedFullName) contactUpdates.name = actions.capturedFullName || actions.capturedName;
@@ -382,17 +509,14 @@ class MessageController {
 
       // FALLBACK: Si la IA intentó cerrar contraentrega/venta pero no capturó la dirección con etiqueta,
       // intentar rescatar la dirección que la IA menciona en su propio texto de respuesta.
-      // Ej: "Estaremos enviando el producto a tu dirección en Calle 15E #31, Barrio Modelo"
       if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && !contactUpdates.address && !contact.address) {
         const aiText = aiResult.response || '';
-        // Buscar patrones de dirección en el texto de respuesta de la IA
         const addrInText = aiText.match(/(?:direcci[oó]n(?:\s+en)?|dirección\s+como|direcci[oó]n:\s*|enviar[^a]*a|enviando[^a]*a)\s*([A-Za-z0-9#\-\.° ,áéíóúÁÉÍÓÚñÑ]{8,80})/i);
         if (addrInText && addrInText[1]) {
           const rescued = addrInText[1].trim().replace(/[.,!?]+$/, '');
           logger.info(`🔍 [ADDR-RESCUE] Dirección rescatada del texto de IA: "${rescued}"`);
           contactUpdates.address = rescued;
         }
-        // También intentar extraer del mensaje entrante del usuario
         const userAddrMatch = body.match(/(?:calle|carrera|avenida|diagonal|transversal|cl|kr|av|dg|tv)\s+[A-Za-z0-9#\-\.° ,áéíóúÁÉÍÓÚñÑ]{3,60}/i);
         if (!contactUpdates.address && userAddrMatch) {
           const rescued = userAddrMatch[0].trim();
@@ -420,6 +544,24 @@ class MessageController {
         contact = await crmService.findOrCreateContact(chatId, branchId);
       }
 
+      // ── Ficha de venta y clasificación ──
+      const savedContext = await crmService.patchContext(conversation.id, (ctx) => {
+        const merged = mergeSaleState(ctx.sale, actions, aiResult.flow);
+        return merged ? { ...ctx, sale: merged } : null;
+      });
+      if (aiResult.classification) await crmService.updateClassification(contact.id, aiResult.classification);
+      if (actions.objections?.length) {
+        ownerAlertService.onSaleUpdate({ contact, conversation, branchId, actions, sale: savedContext?.sale || {} })
+          .catch(err => logger.warn(`⚠️ [OWNER-ALERT] hesitation: ${err.message}`));
+      }
+
+      if (actions.productsToSell?.length) {
+        await crmService.saveOrderDraft(conversation.id, {
+          productos: actions.productsToSell,
+          metodoPago: actions.shouldCreateContraEntrega ? 'contraentrega' : 'link de pago',
+        });
+      }
+
       // VALIDACIÓN DE DIRECCIÓN PREVIA AL ENVÍO DE RESPUESTA
       // Si la IA intenta cerrar venta/contraentrega pero falta dirección/ciudad,
       // suprimimos la respuesta generada de la IA para evitar confirmaciones falsas.
@@ -437,14 +579,11 @@ class MessageController {
       logger.info(`📤 [MSG-DEBUG] aiResponseToSend: ${aiResponseToSend ? 'SÍ tiene respuesta' : 'NULL — sin respuesta'}, shouldContraEntrega=${actions.shouldCreateContraEntrega}, shouldCloseSale=${actions.shouldCloseSale}, missingAddress=${missingAddress}, missingCity=${missingCity}`);
 
       if (aiResponseToSend) {
-        // Separar mensaje largo en 2 envíos naturales (por párrafo, sin cortar palabras)
         const responseParts = this.splitMessageNaturally(aiResponseToSend);
         
         logger.info(`📤 [MSG-SEND] Preparando envío de ${responseParts.length} partes a ${chatId} (branch ${branchId})`);
         for (let i = 0; i < responseParts.length; i++) {
-          logger.info(`📤 [MSG-SEND] Enviando parte ${i + 1}/${responseParts.length} (${responseParts[i].length} chars) a ${chatId}`);
           await whatsappService.sendMessage(branchId, chatId, responseParts[i]);
-          // Pequeña pausa entre mensajes para simular escritura humana
           if (i < responseParts.length - 1) {
             await new Promise(r => setTimeout(r, 1200));
           }
@@ -455,12 +594,9 @@ class MessageController {
         await crmService.saveMessage(conversation.id, 'ASSISTANT', '[Mensaje suprimido por validación de backend]', null, aiResult.tokensUsed);
       }
 
-      // Clasificación
-      if (actions.classification) await crmService.updateClassification(contact.id, actions.classification);
-
-      // Imágenes
+      // Imágenes (máximo 3 para no saturar el chat)
       if (actions.images?.length > 0) {
-        for (const imgUrl of actions.images) {
+        for (const imgUrl of actions.images.slice(0, 3)) {
           const cleanUrl = imgUrl.replace(/^Media:\s*/i, '');
           if (cleanUrl?.startsWith('http')) await whatsappService.sendMedia(branchId, chatId, cleanUrl);
         }
@@ -512,50 +648,64 @@ class MessageController {
           return;
         }
 
-        if (orderItems.length > 0) {
-          // Crear orden en BD con estado PENDING
-          const order = await crmService.createOrder({
-            contactId: contact.id,
-            branchId,
-            items: orderItems,
-            amount: totalAmount,
-            shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
-            shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
-            status: 'PENDING'
-          });
+        const order = await crmService.createOrder({
+          contactId: contact.id,
+          branchId,
+          items: orderItems,
+          amount: totalAmount,
+          shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
+          shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
+          status: 'PENDING',
+          paymentMethod: 'CONTRAENTREGA',
+        });
 
-          // La IA ya informó al cliente que el pedido fue registrado.
-          // No enviamos un segundo mensaje de confirmación para evitar confusión.
-          logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por $${totalAmount.toLocaleString('es-CO')} COP — sin doble confirmación al cliente.`);
+        // La IA ya informó al cliente que el pedido fue registrado: sin doble confirmación.
+        logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por $${totalAmount.toLocaleString('es-CO')} COP — sin doble confirmación al cliente.`);
 
+        await crmService.recordPurchase(contact.id, totalAmount, conversation.id);
+        await crmService.patchContext(conversation.id, (ctx) => {
+          const next = { ...ctx };
+          delete next.pedido;
+          next.sale = {
+            ...(ctx.sale || {}),
+            stage: 'comprado',
+            lastPurchase: { orderId: order.id, products: productNames, amount: totalAmount, at: new Date().toISOString() },
+            updatedAt: new Date().toISOString(),
+          };
+          return next;
+        });
+        await postSaleService.schedule(order.id);
 
-          // Notificar al número central
-          const cleanClientPhone = (contact.phone || chatId).replace(/@[a-z.]+$/i, '');
-          const clientName = contact.name && contact.name !== 'Sin nombre' ? contact.name : `Cliente ${cleanClientPhone}`;
-          const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
-          const finalAddr = contactUpdates.address || contact.address;
-          const finalCity = contactUpdates.city || contact.city;
-          const hasAddr = finalAddr && finalAddr !== 'Por confirmar';
-          const hasCity = finalCity && finalCity !== 'Por confirmar';
-          const addrWarning = (!hasAddr || !hasCity)
-            ? `\n⚠️ *DIRECCIÓN PENDIENTE — CONTACTAR AL CLIENTE*\n`
-            : '';
-          const centralMsg = `📦 *PEDIDO CONTRAENTREGA* 📦\n\n` +
-            `👤 *Cliente:* ${clientName}\n` +
-            `📱 *WhatsApp:* ${cleanClientPhone}\n` +
-            `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
-            `📦 *Productos:* ${productNames.join(', ')}\n` +
-            `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
-            `📍 *DIRECCIÓN DE ENTREGA:*\n` +
-            `${hasAddr ? finalAddr : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
-            `🏙️ *CIUDAD:* ${hasCity ? finalCity : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
-            `${contactUpdates.neighborhood || contact.neighborhood ? `🏘️ *Barrio:* ${contactUpdates.neighborhood || contact.neighborhood}\n` : ''}` +
-            `${addrWarning}` +
-            `\n⚠️ *TIPO:* Contraentrega (pago en efectivo al recibir)`;
+        // Notificar al número central
+        const cleanClientPhone = (contact.phone || chatId).replace(/@[a-z.]+$/i, '');
+        const clientName = contact.name && contact.name !== 'Sin nombre' ? contact.name : `Cliente ${cleanClientPhone}`;
+        const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
+        const finalAddr = contactUpdates.address || contact.address;
+        const finalCityCOD = contactUpdates.city || contact.city;
+        const hasAddr = finalAddr && finalAddr !== 'Por confirmar';
+        const hasCity = finalCityCOD && finalCityCOD !== 'Por confirmar';
+        const addrWarning = (!hasAddr || !hasCity)
+          ? `\n⚠️ *DIRECCIÓN PENDIENTE — CONTACTAR AL CLIENTE*\n`
+          : '';
+        const waLink = ownerAlertService.waLink(cleanClientPhone);
+        const historyLine = await ownerAlertService.buyerHistoryLine(contact.id);
+        const centralMsg = `📦 *PEDIDO CONTRAENTREGA* 📦\n\n` +
+          `🧾 *Pedido:* #${order.id}\n` +
+          `👤 *Cliente:* ${clientName}\n` +
+          `📱 *WhatsApp:* ${cleanClientPhone}\n` +
+          `${waLink ? `💬 *Abrir chat:* ${waLink}\n` : ''}` +
+          `${historyLine ? `${historyLine}\n` : ''}` +
+          `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
+          `📦 *Productos:* ${productNames.join(', ')}\n` +
+          `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
+          `📍 *DIRECCIÓN DE ENTREGA:*\n` +
+          `${hasAddr ? finalAddr : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
+          `🏙️ *CIUDAD:* ${hasCity ? finalCityCOD : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
+          `${contactUpdates.neighborhood || contact.neighborhood ? `🏘️ *Barrio:* ${contactUpdates.neighborhood || contact.neighborhood}\n` : ''}` +
+          `${addrWarning}` +
+          `\n⚠️ *TIPO:* Contraentrega (pago en efectivo al recibir)`;
 
-          await whatsappService.notifyPhone(branchId, centralMsg);
-
-        }
+        await whatsappService.notifyPhone(branchId, centralMsg);
       }
 
       // Cierre de venta Wompi
@@ -601,60 +751,87 @@ class MessageController {
           return;
         }
 
-        if (orderItems.length > 0) {
-          const reference = `PAY-${conversation.id}-${Date.now()}`;
-          const cartData = {
-            contactId: contact.id,
-            branchId,
-            items: orderItems,
-            amount: totalAmount,
-            shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
-            shippingAddress: contactUpdates.address || contact.address || 'Por confirmar'
-          };
+        const cartData = {
+          contactId: contact.id,
+          branchId,
+          items: orderItems,
+          amount: totalAmount,
+          shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
+          shippingAddress: contactUpdates.address || contact.address || 'Por confirmar'
+        };
 
-          // Guardar carrito pendiente en el contexto de la conversación
-          const currentContext = conversation.context || {};
-          const pendingCarts = currentContext.pendingCarts || {};
-          pendingCarts[reference] = cartData;
-
-          await prisma.conversation.update({
-            where: { id: conversation.id },
-            data: { context: { ...currentContext, pendingCarts } }
-          });
-
-          try {
-            const wompiLink = await wompiService.generatePaymentLink({
-              branchId,
-              amount: totalAmount,
-              name: `Pedido - ${contact.name || 'Cliente'}`,
-              description: `Compra: ${productNames.join(', ')}`,
-              reference
-            });
-
-            if (wompiLink?.url) {
-              const paymentMsg = `✨ *¡Todo listo!* Aquí tienes tu link de pago seguro por *$${totalAmount.toLocaleString('es-CO')} COP*:\n\n🔗 ${wompiLink.url}\n\nConfírmame cuando lo realices para despachar tu pedido discreto. 🌹`;
-              await whatsappService.sendMessage(branchId, chatId, paymentMsg);
-              await crmService.saveMessage(conversation.id, 'ASSISTANT', paymentMsg);
-            }
-          } catch (err) {
-            logger.error(`❌ [SALE-ERR] Wompi falló: ${err.message}`);
-            const errorMsg = "Lo siento, tuve un pequeño problema técnico generando tu link de pago seguro. 😅 Dame un momento y ya te conecto con un compañero para que te ayude de inmediato.";
-            await whatsappService.sendMessage(branchId, chatId, errorMsg);
-            await crmService.saveMessage(conversation.id, 'ASSISTANT', errorMsg);
-          }
+        const wompiLink = await this.sendPaymentLink({ conversationId: conversation.id, contact, chatId, branchId, cartData, productNames });
+        if (!wompiLink) {
+          const errorMsg = "Lo siento, tuve un pequeño problema técnico generando tu link de pago seguro. 😅 Dame un momento y ya te conecto con un compañero para que te ayude de inmediato.";
+          await whatsappService.sendMessage(branchId, chatId, errorMsg);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', errorMsg);
         }
       }
 
-      if (actions.shouldEscalate) await crmService.escalateConversation(conversation.id);
+      if (actions.shouldEscalate) {
+        await crmService.escalateConversation(conversation.id);
+        ownerAlertService.onEscalation({ contact, conversation, branchId, body, messageHistory })
+          .catch(err => logger.warn(`⚠️ [OWNER-ALERT] escalation: ${err.message}`));
+      }
+  }
 
-    } catch (error) {
-      logger.error(`❌ [CRITICAL-ERR] ${chatId}: ${error.stack}`);
-      whatsappService.sendMessage(branchId, chatId, 'Dame un momento... ¡Ya te conecto con un compañero! 😊').catch(() => {});
-    } finally {
-      // Siempre liberar el mutex del chat para permitir el siguiente mensaje
-      this.processingChats.delete(chatId);
+  /**
+   * Genera un link Wompi para un carrito, lo guarda en el contexto y lo envía.
+   * Reutilizado por los seguimientos para reenviar links vencidos.
+   */
+  async sendPaymentLink({ conversationId, contact, chatId, branchId, cartData, productNames, intro = null }) {
+    const reference = `PAY-${conversationId}-${Date.now()}`;
+
+    await crmService.patchContext(conversationId, (ctx) => ({
+      ...ctx,
+      pendingCarts: { ...(ctx.pendingCarts || {}), [reference]: cartData },
+    }));
+
+    try {
+      const wompiLink = await wompiService.generatePaymentLink({
+        branchId,
+        amount: cartData.amount,
+        name: `Pedido - ${contact.name || 'Cliente'}`,
+        description: `Compra: ${productNames.join(', ')}`,
+        reference
+      });
+      if (!wompiLink?.url) return null;
+
+      // Las transacciones de links de pago llegan con una referencia propia de Wompi:
+      // el webhook solo puede reconocer la venta por payment_link_id.
+      await crmService.patchContext(conversationId, (ctx) => {
+        const carts = { ...(ctx.pendingCarts || {}) };
+        if (!carts[reference]) return null;
+        carts[reference] = { ...carts[reference], paymentLinkId: wompiLink.id };
+        return { ...ctx, pendingCarts: carts };
+      });
+
+      const paymentMsg = intro
+        ? `${intro}\n\n🔗 ${wompiLink.url}`
+        : `✨ *¡Todo listo!* Aquí tienes tu link de pago seguro por *$${Number(cartData.amount).toLocaleString('es-CO')} COP*:\n\n🔗 ${wompiLink.url}\n\nConfírmame cuando lo realices para despachar tu pedido discreto. 🌹`;
+      await whatsappService.sendMessage(branchId, chatId, paymentMsg);
+      await crmService.saveMessage(conversationId, 'ASSISTANT', paymentMsg);
+
+      await crmService.setSaleStage(conversationId, 'link_enviado', {
+        pendingPayment: { reference, paymentLinkId: wompiLink.id, amount: cartData.amount, products: productNames, sentAt: new Date().toISOString() },
+      });
+      return wompiLink;
+    } catch (err) {
+      logger.error(`❌ [SALE-ERR] Wompi falló: ${err.message}`);
+      return null;
     }
   }
+
+  _isMessageBlocked(chatId, msg) {
+    return (
+      this._isPhoneBlocked(chatId) ||
+      this._isPhoneBlocked(msg?.from) ||
+      this._isPhoneBlocked(msg?.author) ||
+      this._isPhoneBlocked(msg?._data?.from) ||
+      this._isPhoneBlocked(msg?._data?.author)
+    );
+  }
+
   /**
    * Verifica si un JID, número o string pertenece a un número bloqueado.
    * Maneja sufijos de dispositivo (:45), dominios (@c.us) y prefijo de país (57).
@@ -681,17 +858,13 @@ class MessageController {
   }
 
   /**
-   * Divide un mensaje largo en 2 partes naturales, cortando por párrafo (\n\n)
+   * Divide un mensaje largo en partes naturales, cortando por párrafo (\n\n)
    * sin cortar palabras ni frases. Mensajes cortos se dejan como están.
    */
   splitMessageNaturally(text) {
-    // Si el mensaje es corto, no dividir
     if (!text || text.length < 120) return [text];
     
-    // Separar por párrafos (doble salto de línea)
     const paragraphs = text.split(/\n\n+/).map(p => p.trim()).filter(p => p.length > 0);
-    
-    // Si solo hay un párrafo o no se pudo dividir
     if (paragraphs.length <= 1) return [text];
     
     // Agrupar párrafos muy cortos con el anterior para no enviar líneas huérfanas
@@ -700,7 +873,6 @@ class MessageController {
     
     for (const para of paragraphs) {
       if (current && (current.length + para.length) < 150) {
-        // Juntar con el anterior si ambos son cortos
         current += '\n\n' + para;
       } else if (!current) {
         current = para;
@@ -711,7 +883,6 @@ class MessageController {
     }
     if (current) parts.push(current);
     
-    // Si todo quedó en una sola parte, devolver como está
     if (parts.length <= 1) return [text];
     
     return parts;

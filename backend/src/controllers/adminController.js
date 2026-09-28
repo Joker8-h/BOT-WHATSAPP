@@ -929,6 +929,7 @@ class AdminController {
           wompiPublicKey: true, 
           wompiPrivateKey: true, 
           wompiIntegritySecret: true,
+          wompiEventsSecret: true,
           notificationGroupName: true,
           notificationPhone: true
         }
@@ -941,6 +942,7 @@ class AdminController {
           wompiPublicKey: branch?.wompiPublicKey ? '••••••••••••••••' : '',
           wompiPrivateKey: branch?.wompiPrivateKey ? '••••••••••••••••' : '',
           wompiIntegritySecret: branch?.wompiIntegritySecret ? '••••••••••••••••' : '',
+          wompiEventsSecret: branch?.wompiEventsSecret ? '••••••••••••••••' : '',
           notificationPhone: branch?.notificationPhone || '',
           notificationGroupName: branch?.notificationGroupName || '',
           isConfigured: !!(branch?.wompiPrivateKey && branch?.wompiPublicKey)
@@ -954,7 +956,7 @@ class AdminController {
   async updateWompiConfig(req, res) {
     try {
       const { branchId } = req.user;
-      const { wompiMerchantId, wompiPublicKey, wompiPrivateKey, wompiIntegritySecret, notificationGroupName, notificationPhone } = req.body;
+      const { wompiMerchantId, wompiPublicKey, wompiPrivateKey, wompiIntegritySecret, wompiEventsSecret, notificationGroupName, notificationPhone } = req.body;
 
       if (!branchId) return res.status(400).json({ success: false, error: 'Usuario sin sucursal asignada' });
 
@@ -974,6 +976,9 @@ class AdminController {
       }
       if (wompiIntegritySecret && wompiIntegritySecret !== '••••••••••••••••') {
           data.wompiIntegritySecret = encrypt(wompiIntegritySecret);
+      }
+      if (wompiEventsSecret && wompiEventsSecret !== '••••••••••••••••') {
+          data.wompiEventsSecret = encrypt(wompiEventsSecret.trim());
       }
 
       await prisma.branch.update({

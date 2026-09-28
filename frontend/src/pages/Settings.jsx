@@ -29,6 +29,7 @@ export default function Settings() {
       wompiPublicKey: '',
       wompiPrivateKey: '',
       wompiIntegritySecret: '',
+      wompiEventsSecret: '',
       notificationPhone: '',
       notificationGroupName: ''
   });
@@ -299,6 +300,18 @@ export default function Settings() {
                               value={wompiForm.wompiIntegritySecret}
                               onChange={e => {
                                   setWompiForm({...wompiForm, wompiIntegritySecret: e.target.value});
+                                  setFormIsDirty(true);
+                              }}
+                          />
+                      </div>
+                      <div className="form-group">
+                          <label>Events Secret (Webhook)</label>
+                          <input 
+                              type="password"
+                              placeholder="prod_events_..."
+                              value={wompiForm.wompiEventsSecret || ''}
+                              onChange={e => {
+                                  setWompiForm({...wompiForm, wompiEventsSecret: e.target.value});
                                   setFormIsDirty(true);
                               }}
                           />

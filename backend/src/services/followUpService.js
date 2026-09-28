@@ -1,11 +1,37 @@
 // ─────────────────────────────────────────────────────────
 //  SERVICE: Follow-Up Automático — Recuperación de Ventas
-//  Detecta clientes que dejaron de responder y envía
-//  recordatorios inteligentes para cerrar la venta.
+//  Seguimientos personalizados con IA según la ficha de venta:
+//  3h → 24h → 72h (y reactivación a los 15 días si había interés).
 // ─────────────────────────────────────────────────────────
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
-const { isWorkingHours } = require('../utils/helpers');
+const { isWorkingHours, formatCOP } = require('../utils/helpers');
+const { OBJECTION_LABELS } = require('../ai/saleState');
+const { normalizeText, classifyProduct, pickProductOfType } = require('../ai/salesKnowledge');
+
+const HOUR_MS = 60 * 60 * 1000;
+const MIN_GAP_BETWEEN_FOLLOWUPS_MS = 18 * HOUR_MS;
+const COD_CITIES = ['popayan', 'pitalito', 'florencia', 'yopal'];
+
+const STEPS = [
+  {
+    minSilenceHours: 3,
+    goal: 'Retomar la conversación con suavidad donde quedó: recordar el producto que le interesó (si hay) con su beneficio principal y ofrecer dejárselo listo.',
+  },
+  {
+    minSilenceHours: 24,
+    goal: 'Seguimiento amable al día siguiente: recordar el producto que le interesó y resolver la duda u objeción que tuvo. Si le pareció caro y hay una alternativa más económica en los datos, ofrécela.',
+  },
+  {
+    minSilenceHours: 72,
+    goal: 'Último seguimiento, sin ninguna presión: preguntar si aún le interesa o si prefiere que le recomiende otra opción, dejando la puerta abierta.',
+  },
+  {
+    minSilenceHours: 15 * 24,
+    requiresInterest: true,
+    goal: 'Reactivación después de unos días: saludarlo con calidez, contarle que el producto que le interesó sigue disponible y preguntarle si quiere que se lo aparte.',
+  },
+];
 
 class FollowUpService {
   constructor() {
@@ -21,13 +47,80 @@ class FollowUpService {
     this.aiService = aiService;
   }
 
+  _findCatalogProduct(catalog, name) {
+    const target = normalizeText(name);
+    if (!target) return null;
+    return catalog.find(p => normalizeText(p.name) === target)
+      || catalog.find(p => normalizeText(p.name).includes(target) || target.includes(normalizeText(p.name)))
+      || null;
+  }
+
+  _isCodCity(city) {
+    const c = normalizeText(city);
+    return !!c && COD_CITIES.some(x => c.includes(x));
+  }
+
   /**
-   * CRON principal: Busca conversaciones estancadas y envía follow-ups
-   * Reglas:
-   *   - Sin seguimiento previo y se estancó HOY → enviar follow-up
-   *   - Ya tiene seguimiento y pasaron 8+ días → enviar otro
-   *   - Caso contrario → saltar
-   * Se ejecuta cada hora.
+   * Arma el objetivo y los datos reales para el mensaje de seguimiento.
+   */
+  _buildFollowUpBrief(stepIndex, conv, sale, catalog) {
+    const contact = conv.contact;
+    const facts = [];
+    const interest = (sale.interestProducts || [])
+      .map(name => this._findCatalogProduct(catalog, name) || { name })
+      .slice(-2);
+
+    for (const p of interest) {
+      facts.push(p.price ? `Producto que le interesó: ${p.name} (${formatCOP(p.price)})` : `Producto que le interesó: ${p.name}`);
+    }
+    if (sale.intent) facts.push(`Intención de compra: ${sale.intent}`);
+    if (sale.objections?.length) {
+      facts.push(`Objeción que tuvo: ${sale.objections.map(o => OBJECTION_LABELS[o] || o).join('; ')}`);
+    }
+
+    const mainInterest = interest.find(p => p.id);
+    if (stepIndex >= 1 && mainInterest && sale.objections?.includes('precio')) {
+      const type = classifyProduct(mainInterest)[0];
+      const cheaper = type
+        ? pickProductOfType(type, catalog, { maxPrice: Number(mainInterest.price) - 1, excludeIds: new Set([mainInterest.id]) })
+        : null;
+      if (cheaper) facts.push(`Alternativa más económica disponible: ${cheaper.name} (${formatCOP(cheaper.price)})`);
+    }
+    if (!interest.length) facts.push('Aún no eligió un producto concreto: ofrécete a recomendarle algo según lo que busca.');
+    if (contact.city) facts.push(`Ciudad del cliente: ${contact.city}`);
+
+    return { goal: STEPS[stepIndex].goal, facts, interest };
+  }
+
+  _fallbackFollowUp(stepIndex, name, interest) {
+    const hi = name ? `Hola ${name} 💜` : 'Hola 💜';
+    const product = interest?.[interest.length - 1]?.name;
+    if (stepIndex === 0) {
+      return product
+        ? `${hi}\n\nQuedé pendiente contigo con *${product}*.\n\n¿Te lo dejo listo o tienes alguna duda que te pueda resolver?`
+        : `${hi}\n\nQuedamos a medias en nuestra conversación.\n\n¿Te ayudo a elegir la mejor opción para lo que buscas?`;
+    }
+    if (stepIndex === 1) {
+      return product
+        ? `${hi}\n\nSigo pendiente por si quieres llevar *${product}*.\n\n¿Quieres que te cuente algo más para decidirte?`
+        : `${hi}\n\n¿Pudiste pensar en lo que hablamos?\n\nCon gusto te recomiendo algo según tu presupuesto ✨`;
+    }
+    if (stepIndex === 2) {
+      return `${hi}\n\nNo quiero molestarte, solo saber si aún te interesa o si prefieres que te recomiende otra opción.\n\nAquí estoy cuando quieras ✨`;
+    }
+    return product
+      ? `${hi}\n\n*${product}* sigue disponible por si aún lo tienes en mente.\n\n¿Quieres que te lo aparte?`
+      : `${hi}\n\nTenemos novedades que te pueden gustar.\n\n¿Te las muestro?`;
+  }
+
+  _fallbackPayment(name) {
+    const hi = name ? `Hola ${name} 💜` : 'Hola 💜';
+    return `${hi}\n\nVi que quedó pendiente el pago de tu pedido.\n\n¿Tuviste algún inconveniente? Te ayudo con gusto ✨`;
+  }
+
+  /**
+   * CRON principal (cada hora en horario laboral): conversaciones donde el
+   * cliente dejó de responder después de un mensaje de Sofía.
    */
   async processFollowUps() {
     if (!this.whatsappService) {
@@ -40,176 +133,151 @@ class FollowUpService {
       return;
     }
 
-    logger.info('🔔 Iniciando proceso de follow-up automático...');
+    logger.info('🔔 Iniciando proceso de follow-up inteligente...');
+    const crmService = require('./crmService');
+    const catalogService = require('./catalogService');
+    const now = new Date();
 
     try {
-      const now = new Date();
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const eightDaysAgo = new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000);
-
-      const stalledConversations = await prisma.conversation.findMany({
+      const candidates = await prisma.conversation.findMany({
         where: {
           status: 'ACTIVE',
-          updatedAt: { lte: new Date(now.getTime() - 4 * 60 * 60 * 1000) },
-          messageCount: { gte: 2 }
+          messageCount: { gte: 2 },
+          updatedAt: {
+            lte: new Date(now.getTime() - STEPS[0].minSilenceHours * HOUR_MS),
+            gte: new Date(now.getTime() - 20 * 24 * HOUR_MS),
+          },
         },
         include: {
           contact: true,
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 5
-          },
-          branch: true
-        }
+          messages: { orderBy: { createdAt: 'desc' }, take: 12 },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 200,
       });
 
       let sentCount = 0;
 
-      for (const conv of stalledConversations) {
+      for (const conv of candidates) {
         try {
-          const context = conv.context || {};
-          const lastFollowUpAt = context.lastFollowUpAt ? new Date(context.lastFollowUpAt) : null;
+          const contact = conv.contact;
+          if (!contact || contact.isBlocked) continue;
 
-          // Regla 1: Sin seguimiento previo y se estancó hoy
-          const isStalledToday = conv.updatedAt >= todayStart;
-          const canSendToday = !lastFollowUpAt && isStalledToday;
-
-          // Regla 2: Ya tiene seguimiento y pasaron 8+ días
-          const canSendAfterEight = lastFollowUpAt && (now.getTime() - lastFollowUpAt.getTime() >= 8 * 24 * 60 * 60 * 1000);
-
-          if (!canSendToday && !canSendAfterEight) continue;
+          const context = (conv.context && typeof conv.context === 'object') ? conv.context : {};
+          if (context.pendingOfflineReply) continue;
 
           const lastMsg = conv.messages[0];
           if (!lastMsg || lastMsg.role !== 'ASSISTANT') continue;
 
-          const branchStatus = this.whatsappService.getBranchStatus(conv.branchId);
-          if (!branchStatus?.isReady) continue;
+          const lastUser = conv.messages.find(m => m.role === 'USER');
+          if (!lastUser) continue;
 
-          const followUpMsg = await this.generateFollowUpMessage(conv);
-          if (!followUpMsg) continue;
+          const sale = context.sale || {};
+          if (sale.stage === 'comprado') continue; // de aquí en adelante se encarga la postventa
 
-          const chatId = conv.contact.phone.includes('@') 
-            ? conv.contact.phone 
-            : `${conv.contact.phone}@c.us`;
-          
-          const sent = await this.whatsappService.sendMessage(conv.branchId, chatId, followUpMsg);
-          
-          if (sent) {
-            await prisma.message.create({
-              data: {
-                conversationId: conv.id,
-                role: 'ASSISTANT',
-                content: followUpMsg,
-                tokensUsed: 0
-              }
-            });
-            
-            await prisma.conversation.update({
-              where: { id: conv.id },
-              data: { 
-                messageCount: { increment: 1 },
-                updatedAt: new Date(),
-                context: { ...context, lastFollowUpAt: now.toISOString() }
-              }
-            });
+          // El contador se reinicia cada vez que el cliente vuelve a escribir
+          let followUp = context.followUp || {};
+          if (followUp.anchorMessageId !== lastUser.id) followUp = { count: 0 };
 
-            sentCount++;
-            logger.info(`📩 Follow-up enviado a ${conv.contact.name || conv.contact.phone} (Conv: ${conv.id})`);
+          const stepIndex = followUp.count || 0;
+          const step = STEPS[stepIndex];
+          if (!step) continue;
+
+          const silenceMs = now - new Date(lastUser.createdAt);
+          if (silenceMs < step.minSilenceHours * HOUR_MS) continue;
+          if (followUp.lastAt && now - new Date(followUp.lastAt) < MIN_GAP_BETWEEN_FOLLOWUPS_MS) continue;
+          if (context.lastOutreachAt && now - new Date(context.lastOutreachAt) < MIN_GAP_BETWEEN_FOLLOWUPS_MS) continue;
+          if (step.requiresInterest && !sale.interestProducts?.length) continue;
+
+          const branchId = conv.branchId || contact.branchId || 1;
+          if (!this.whatsappService.getBranchStatus(branchId)?.isReady) continue;
+
+          const chatId = contact.phone.includes('@') ? contact.phone : `${contact.phone}@c.us`;
+          const firstName = contact.name && contact.name !== 'Sin nombre' ? contact.name.split(' ')[0] : '';
+          const history = [...conv.messages].reverse();
+          let sent = false;
+
+          if (sale.stage === 'link_enviado' && sale.pendingPayment) {
+            sent = await this._sendPaymentFollowUp({ conv, contact, chatId, branchId, sale, context, stepIndex, history, firstName });
+          } else {
+            const catalog = await catalogService.getAllProducts(branchId);
+            const { goal, facts, interest } = this._buildFollowUpBrief(stepIndex, conv, sale, catalog);
+            const text = (this.aiService && await this.aiService.generateOutreachMessage({ contact, goal, facts, history }))
+              || this._fallbackFollowUp(stepIndex, firstName, interest);
+
+            sent = await this.whatsappService.sendMessage(branchId, chatId, text);
+            if (sent) await crmService.saveMessage(conv.id, 'ASSISTANT', text);
           }
 
-          await new Promise(r => setTimeout(r, 5000));
+          if (!sent) continue;
 
+          await crmService.patchContext(conv.id, (ctx) => ({
+            ...ctx,
+            followUp: { count: stepIndex + 1, lastAt: now.toISOString(), anchorMessageId: lastUser.id },
+            lastOutreachAt: now.toISOString(),
+            lastFollowUpAt: now.toISOString(),
+          }));
+
+          sentCount++;
+          logger.info(`📩 Follow-up #${stepIndex + 1} enviado a ${contact.name || contact.phone} (Conv: ${conv.id})`);
+          await new Promise(r => setTimeout(r, 5000));
         } catch (err) {
           logger.error(`Error en follow-up para conv ${conv.id}:`, err.message);
         }
       }
 
-      logger.info(`🔔 Follow-up completado: ${sentCount} mensajes enviados de ${stalledConversations.length} conversaciones estancadas.`);
-
+      logger.info(`🔔 Follow-up completado: ${sentCount} mensajes enviados de ${candidates.length} conversaciones revisadas.`);
     } catch (error) {
       logger.error('❌ Error en processFollowUps:', error);
     }
   }
 
   /**
-   * Genera un mensaje de follow-up personalizado según el contexto de la conversación
+   * Link de pago enviado y no pagado: recordatorio amable y, desde el segundo
+   * seguimiento, un link nuevo (y la opción contraentrega si su ciudad aplica).
    */
-  async generateFollowUpMessage(conversation) {
-    const contact = conversation.contact;
-    const messages = conversation.messages;
-    const name = contact.name || '';
+  async _sendPaymentFollowUp({ conv, contact, chatId, branchId, sale, context, stepIndex, history, firstName }) {
+    const crmService = require('./crmService');
+    const payment = sale.pendingPayment;
+    const codAvailable = this._isCodCity(contact.city);
+    await this._alertOwnerLinkAbandoned({ conv, contact, branchId, payment });
 
-    // Analizar los últimos mensajes para detectar el contexto
-    const lastMessages = messages.map(m => m.content).join(' ').toLowerCase();
-    
-    // ¿Se mencionó un link de pago?
-    const mentionedPayment = lastMessages.includes('checkout.wompi') || 
-                              lastMessages.includes('link de pago') ||
-                              lastMessages.includes('pago');
+    const facts = [
+      `Pedido pendiente de pago: ${(payment.products || []).join(', ')} por ${formatCOP(payment.amount)}`,
+    ];
+    if (codAvailable) facts.push(`Su ciudad (${contact.city}) tiene pago contra entrega en efectivo como alternativa`);
 
-    // ¿Se mencionaron productos específicos?
-    const mentionedProducts = lastMessages.includes('precio') || 
-                               lastMessages.includes('$') ||
-                               lastMessages.includes('producto');
+    const goal = `Recordar con amabilidad que quedó pendiente el pago de su pedido, preguntar si tuvo algún inconveniente con el link y ofrecer ayuda.${codAvailable ? ' Mencionar que si prefiere, también puede pagar en efectivo contra entrega.' : ''}${stepIndex >= 1 ? ' Decirle que le envías un link nuevo aquí mismo.' : ''}`;
 
-    // ¿El cliente pidió envío?
-    const mentionedShipping = lastMessages.includes('envío') || 
-                               lastMessages.includes('domicilio') ||
-                               lastMessages.includes('dirección');
+    const text = (this.aiService && await this.aiService.generateOutreachMessage({ contact, goal, facts, history }))
+      || this._fallbackPayment(firstName);
 
-    // Seleccionar el template más relevante
-    if (mentionedPayment) {
-      return this.getPaymentFollowUp(name);
-    } else if (mentionedShipping) {
-      return this.getShippingFollowUp(name);
-    } else if (mentionedProducts) {
-      return this.getProductFollowUp(name);
-    } else {
-      return this.getGeneralFollowUp(name);
+    const cart = context.pendingCarts?.[payment.reference];
+    if (stepIndex >= 1 && cart) {
+      const messageController = require('../controllers/messageController');
+      const link = await messageController.sendPaymentLink({
+        conversationId: conv.id, contact, chatId, branchId, cartData: cart, productNames: payment.products || [], intro: text,
+      });
+      if (link) return true;
     }
+
+    const sent = await this.whatsappService.sendMessage(branchId, chatId, text);
+    if (sent) await crmService.saveMessage(conv.id, 'ASSISTANT', text);
+    return sent;
   }
 
-  // ── Templates de Follow-Up ──────────────────────────────
-
-  getPaymentFollowUp(name) {
-    const templates = [
-      `Hola${name ? ` ${name}` : ''} 😊 Vi que te envié el link de pago pero no alcanzaste a completar. ¿Tuviste algún problema con el pago? Estoy aquí para ayudarte ✨`,
-      `Hey${name ? ` ${name}` : ''} 💕 ¿Pudiste completar tu pedido? Si necesitas otro método de pago o tienes alguna duda, aquí estoy para ti 🌹`,
-      `${name ? `${name}, ` : ''}solo quería asegurarme de que todo esté bien con tu pedido 💫 Si el link de pago te dio algún problema, con gusto te genero uno nuevo. ¡Tu pedido te va a encantar! 🔥`
-    ];
-    return templates[Math.floor(Math.random() * templates.length)];
-  }
-
-  getShippingFollowUp(name) {
-    const templates = [
-      `Hola${name ? ` ${name}` : ''} ✨ Quedamos pendientes con los datos de envío. ¿Me confirmas tu dirección completa para despachar tu pedido? 📦`,
-      `${name ? `${name}, ` : ''}te cuento que tenemos despacho rápido disponible 🚀 ¿Me das tu dirección para que tu pedido salga hoy mismo?`
-    ];
-    return templates[Math.floor(Math.random() * templates.length)];
-  }
-
-  getProductFollowUp(name) {
-    const templates = [
-      `Hola${name ? ` ${name}` : ''} 😊 ¿Pudiste pensar en los productos que te mostré? Si quieres que te arme un kit especial o necesitas más opciones, aquí estoy ✨`,
-      `${name ? `${name}! ` : '¡Hola! '}Quería contarte que algunos de los productos que viste tienen stock limitado 🔥 Si te interesa alguno, te lo puedo apartar. ¿Qué dices? 😉`,
-      `Hey${name ? ` ${name}` : ''} 💕 Sé que a veces es difícil decidirse. Si quieres te ayudo a elegir según lo que buscas, ¡sin compromiso! 🌹`
-    ];
-    return templates[Math.floor(Math.random() * templates.length)];
-  }
-
-  getGeneralFollowUp(name) {
-    const templates = [
-      `Hola${name ? ` ${name}` : ''} 💫 ¿Cómo estás? Quedamos a medias en nuestra conversación. ¿Hay algo en lo que te pueda ayudar? 😊`,
-      `${name ? `${name}, ` : ''}por aquí sigo disponible si necesitas algo 🌹 Cuéntame cómo te puedo ayudar ✨`
-    ];
-    return templates[Math.floor(Math.random() * templates.length)];
+  async _alertOwnerLinkAbandoned({ conv, contact, branchId, payment }) {
+    const ownerAlertService = require('./ownerAlertService');
+    await ownerAlertService.onLinkAbandoned({ contact, conversation: conv, branchId, pending: payment })
+      .catch(err => logger.warn(`⚠️ [OWNER-ALERT] link_abandoned: ${err.message}`));
   }
 
   // ── PROCESAMIENTO DE MENSAJES FUERA DE HORARIO ──────────
 
   /**
-   * Se ejecuta a las 9am (Lun-Sáb). Busca conversaciones con mensajes
-   * pendientes enviados fuera de horario y genera respuestas con IA.
+   * Se ejecuta a las 9am (Lun-Sáb). Responde los mensajes que llegaron fuera
+   * de horario pasando por el MISMO pipeline que el tiempo real (pedidos,
+   * datos del cliente, links de pago, ficha de venta).
    */
   async processOfflineMessages() {
     if (!this.whatsappService || !this.aiService) {
@@ -223,9 +291,10 @@ class FollowUpService {
     }
 
     logger.info('🌅 Procesando mensajes recibidos fuera de horario...');
+    const crmService = require('./crmService');
+    const messageController = require('../controllers/messageController');
 
     try {
-      // Buscar conversaciones marcadas con pendingOfflineReply
       const pendingConversations = await prisma.conversation.findMany({
         where: {
           status: 'ACTIVE',
@@ -233,11 +302,7 @@ class FollowUpService {
         },
         include: {
           contact: true,
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 20
-          },
-          branch: true
+          messages: { orderBy: { createdAt: 'desc' }, take: 20 },
         }
       });
 
@@ -246,83 +311,62 @@ class FollowUpService {
 
       for (const conv of pendingConversations) {
         try {
-          // Verificar WhatsApp activo
-          const branchStatus = this.whatsappService.getBranchStatus(conv.branchId);
-          if (!branchStatus?.isReady) {
-            logger.warn(`⚠️ Branch ${conv.branchId} no está listo, saltando.`);
+          const branchId = conv.branchId || conv.contact.branchId || 1;
+          if (!this.whatsappService.getBranchStatus(branchId)?.isReady) {
+            logger.warn(`⚠️ Branch ${branchId} no está listo, saltando.`);
             continue;
           }
 
-          // Preparar historial
-          const messageHistory = conv.messages.reverse().map(m => ({
-            role: m.role,
-            content: m.content,
-          }));
+          const chronological = [...conv.messages].reverse();
 
-          // Obtener el último mensaje del usuario (el que escribió fuera de horario)
-          const lastUserMsg = conv.messages.filter(m => m.role === 'USER').pop();
-          if (!lastUserMsg) continue;
+          // Todos los mensajes que el cliente escribió desde la última respuesta de Sofía
+          let splitIdx = chronological.length;
+          while (splitIdx > 0 && chronological[splitIdx - 1].role === 'USER') splitIdx--;
+          const pendingUserMsgs = chronological.slice(splitIdx);
+          const messageHistory = chronological.slice(0, splitIdx);
 
-          // Generar respuesta con IA
+          await crmService.patchContext(conv.id, (ctx) => {
+            const next = { ...ctx };
+            delete next.pendingOfflineReply;
+            return next;
+          });
+
+          if (!pendingUserMsgs.length) continue;
+          const userMessage = pendingUserMsgs.map(m => m.content).join('\n');
+
+          const chatId = conv.contact.phone.includes('@') ? conv.contact.phone : `${conv.contact.phone}@c.us`;
           const aiResult = await this.aiService.generateResponse(
-            lastUserMsg.content,
+            userMessage,
             conv.contact,
             messageHistory,
-            conv.branchId,
-            true // hasRecentHumanIntervention = true para que analice el contexto
+            branchId,
+            true,
+            null,
+            { conversation: conv }
           );
+          if (!aiResult?.response) continue;
 
-          // Enviar la respuesta
-          const chatId = conv.contact.phone.includes('@')
-            ? conv.contact.phone
-            : `${conv.contact.phone}@c.us`;
+          await messageController.processAiResult({
+            aiResult,
+            contact: conv.contact,
+            conversation: conv,
+            chatId,
+            branchId,
+            body: userMessage,
+            messageHistory,
+          });
 
-          const sent = await this.whatsappService.sendMessage(conv.branchId, chatId, aiResult.response);
-
-          if (sent) {
-            // Guardar respuesta en historial
-            await prisma.message.create({
-              data: {
-                conversationId: conv.id,
-                role: 'ASSISTANT',
-                content: aiResult.response,
-                tokensUsed: aiResult.tokensUsed
-              }
-            });
-
-            // Limpiar bandera de pendiente
-            const currentContext = conv.context || {};
-            delete currentContext.pendingOfflineReply;
-            await prisma.conversation.update({
-              where: { id: conv.id },
-              data: {
-                messageCount: { increment: 1 },
-                context: currentContext,
-                updatedAt: new Date()
-              }
-            });
-
-            // Enviar imágenes si las hay
-            if (aiResult.actions?.images?.length > 0) {
-              for (const imageUrl of aiResult.actions.images.slice(0, 5)) {
-                await this.whatsappService.sendMedia(conv.branchId, chatId, imageUrl);
-              }
-            }
-
-            processedCount++;
-            logger.info(`✅ Respuesta offline enviada a ${conv.contact.name || conv.contact.phone} (Conv: ${conv.id})`);
-          }
+          processedCount++;
+          logger.info(`✅ Respuesta offline enviada a ${conv.contact.name || conv.contact.phone} (Conv: ${conv.id})`);
 
           // Anti-ban delay
           await new Promise(r => setTimeout(r, 5000));
-
         } catch (err) {
           logger.error(`Error procesando offline conv ${conv.id}:`, err.message);
         }
       }
 
       logger.info(`🌅 Procesamiento offline completado: ${processedCount}/${pendingConversations.length} respondidos.`);
-
     } catch (error) {
       logger.error('❌ Error en processOfflineMessages:', error);
     }

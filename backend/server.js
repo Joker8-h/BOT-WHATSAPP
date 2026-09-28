@@ -21,6 +21,8 @@ const whatsappService = require('./src/services/whatsappService');
 const messageController = require('./src/controllers/messageController');
 const campaignService = require('./src/services/campaignService');
 const followUpService = require('./src/services/followUpService');
+const postSaleService = require('./src/services/postSaleService');
+const ownerAlertService = require('./src/services/ownerAlertService');
 const aiService = require('./src/services/aiService');
 const visualService = require('./src/services/visualService');
 const apiRoutes = require('./src/routes/api');
@@ -74,7 +76,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     service: 'fantasias-chatbot',
     uptime: Math.floor(process.uptime()),
-    whatsapp: whatsappService.getAllStatuses(),
+    whatsapp: whatsappService.getPublicStatuses(),
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
   });
@@ -157,6 +159,8 @@ async function startServer() {
 
     // 3b. Follow-Up Automático (Recuperación de ventas)
     followUpService.setServices(whatsappService, aiService);
+    postSaleService.setServices(whatsappService, aiService);
+    ownerAlertService.setServices(whatsappService);
 
     // 4. Iniciar sesión maestra directamente (Sucursal 1)
     // El método initializeBranch tiene guardas contra inicialización duplicada
@@ -186,6 +190,22 @@ async function startServer() {
     // Follow-up automático (cada hora, Lun-Sáb 9am-6pm Colombia)
     cron.schedule('0 9-18 * * 1-6', () => {
       followUpService.processFollowUps();
+    }, {
+      scheduled: true,
+      timezone: "America/Bogota"
+    });
+
+    // Postventa y recompra (cada hora a los :30, Lun-Sáb 9am-6pm Colombia)
+    cron.schedule('30 9-18 * * 1-6', () => {
+      postSaleService.processPostSales();
+    }, {
+      scheduled: true,
+      timezone: "America/Bogota"
+    });
+
+    // Resumen diario al dueño de cada sede (7pm Colombia)
+    cron.schedule('0 19 * * *', () => {
+      ownerAlertService.sendDailySummaries().catch(e => logger.error('Error en resumen diario:', e));
     }, {
       scheduled: true,
       timezone: "America/Bogota"

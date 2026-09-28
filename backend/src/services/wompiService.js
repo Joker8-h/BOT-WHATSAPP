@@ -82,33 +82,56 @@ class WompiService {
   }
 
   /**
-   * Valida el checksum de un evento de webhook de Wompi
-   * @param {Object} data - El body completo del webhook
-   * @param {string} secret - El secret (usualmente el integrity secret si no hay uno específico de eventos)
+   * Valida el checksum de un evento de webhook de Wompi.
+   * Las `properties` apuntan a campos del objeto `data` del evento (no del body completo),
+   * y el secreto es el "Secreto de Eventos" (prod_events_... / test_events_...).
+   * @param {Object} body - El body completo del webhook
+   * @param {string} secret - Secreto de eventos
+   * @param {string} [headerChecksum] - Valor del header X-Event-Checksum
    */
-  isValidWebhookChecksum(data, secret) {
+  isValidWebhookChecksum(body, secret, headerChecksum = null) {
     try {
-      const { signature, timestamp } = data;
-      if (!signature || !signature.checksum || !signature.properties) return false;
+      if (!secret || !body || typeof body !== 'object') return false;
+      const signature = body.signature || {};
+      const received = String(signature.checksum || headerChecksum || '').trim().toLowerCase();
+      const properties = Array.isArray(signature.properties) ? signature.properties : null;
+      const timestamp = body.timestamp ?? signature.timestamp;
+      if (!received || !properties?.length || timestamp === undefined || timestamp === null) return false;
 
-      // 1. Reconstruir la cadena de propiedades según el orden que envía Wompi
       let concatenated = '';
-      for (const property of signature.properties) {
-        // Acceso anidado dinámico: de "data.transaction.id" obtener el valor real
-        const value = property.split('.').reduce((obj, key) => obj?.[key], data);
-        concatenated += value;
+      for (const property of properties) {
+        const value = String(property).split('.').reduce((obj, key) => obj?.[key], body.data);
+        if (value === undefined || value === null) return false;
+        concatenated += String(value);
       }
 
-      // 2. Añadir timestamp y secret
-      const chain = `${concatenated}${timestamp}${secret}`;
-      
-      // 3. Generar hash y comparar
-      const generatedChecksum = crypto.createHash('sha256').update(chain).digest('hex');
-      
-      return generatedChecksum === signature.checksum;
+      const generated = crypto
+        .createHash('sha256')
+        .update(`${concatenated}${timestamp}${secret}`)
+        .digest('hex');
+
+      const a = Buffer.from(generated, 'utf8');
+      const b = Buffer.from(received, 'utf8');
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
     } catch (error) {
       logger.error('Error validando checksum de Wompi:', error);
       return false;
+    }
+  }
+
+  /**
+   * Consulta un link de pago (endpoint público de Wompi) para recuperar su `sku`,
+   * donde guardamos nuestra referencia PAY-<conversationId>-<timestamp>.
+   */
+  async getPaymentLink(paymentLinkId, environment = 'prod') {
+    if (!paymentLinkId) return null;
+    const base = environment === 'test' ? this.sandboxUrl : this.productionUrl;
+    try {
+      const response = await axios.get(`${base}/payment_links/${encodeURIComponent(paymentLinkId)}`, { timeout: 8000 });
+      return response.data?.data || null;
+    } catch (error) {
+      logger.warn(`⚠️ Wompi: no se pudo consultar el link ${paymentLinkId}: ${error.response?.status || error.message}`);
+      return null;
     }
   }
 }

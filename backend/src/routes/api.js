@@ -36,57 +36,10 @@ const upload = multer({
 // ── Rutas Públicas (Auth y Pagos) ──
 // router.post('/auth/register', authController.register); // Desactivado
 router.post('/auth/login', authController.login);
+// Solo estado de conexión: nunca exponer el QR ni datos de la sesión (permitiría vincular el WhatsApp).
 router.get('/public/status', (req, res) => {
   const whatsappService = require('../services/whatsappService');
-  res.json({ success: true, statuses: whatsappService.getAllStatuses() });
-});
-router.get('/debug/test-campaign-yopal', async (req, res) => {
-  try {
-    const { prisma } = require('../config/database');
-    const campaignService = require('../services/campaignService');
-    const whatsappService = require('../services/whatsappService');
-    
-    // 1. Diagnóstico de Sesión
-    const status = whatsappService.getBranchStatus(2);
-    const contacts = await prisma.contact.findMany({ where: { branchId: 2, isActive: true } });
-
-    if (!status.isReady) {
-      return res.json({ 
-        success: false, 
-        error: 'Sesión de Yopal no está READY (Conectada)', 
-        status: status.status,
-        whatsappStatus: status,
-        contactsFound: contacts.length
-      });
-    }
-
-    // 2. Crear Campaña
-    const campaign = await prisma.campaign.create({
-      data: {
-        name: `TEST YOPAL ${new Date().toLocaleTimeString()}`,
-        message: '🚀 ¡Prueba de Campaña Masiva Fantasías (Yopal)! Validando sistema multi-sede.',
-        branchId: 2,
-        targetFilter: { clientType: 'NUEVO' },
-        status: 'RUNNING',
-        totalTargets: contacts.length,
-        startedAt: new Date()
-      }
-    });
-
-    // 3. Disparar
-    campaignService.setWhatsAppService(whatsappService);
-    campaignService._sendCampaignMessages(campaign.id, contacts, campaign.message, 2);
-    
-    res.json({ 
-      success: true, 
-      message: 'Campaña Yopal disparada exitosamente', 
-      campaignId: campaign.id, 
-      targets: contacts.length,
-      session: 'READY'
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
+  res.json({ success: true, statuses: whatsappService.getPublicStatuses() });
 });
 router.get('/payment/success', (req, res) => paymentController.paymentSuccess(req, res));
 router.get('/payment/cancel', (req, res) => paymentController.paymentCancel(req, res));

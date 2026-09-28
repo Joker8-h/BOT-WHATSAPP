@@ -13,6 +13,7 @@
     "import:products": "node scripts/importExcel.js",
     "import:contacts": "node scripts/importContacts.js",
     "seed": "node scripts/seedData.js",
+    "simulate": "node scripts/simulateSale.js",
     "docker:build": "docker-compose build",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down"
