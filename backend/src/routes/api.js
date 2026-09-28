@@ -104,6 +104,17 @@ api.post('/sync-sources', (req, res) => adminController.createSyncSource(req, re
 api.delete('/sync-sources/:id', (req, res) => adminController.deleteSyncSource(req, res));
 api.post('/sync-sources/:id/sync', (req, res) => adminController.triggerSync(req, res));
 
+// ── Catálogo de la tienda web (fuente principal) ──
+api.get('/store-catalog/status', isAdmin, (req, res) => {
+  const storeCatalogService = require('../services/storeCatalogService');
+  res.json({ success: true, config: storeCatalogService.config, lastResult: storeCatalogService.lastResult });
+});
+api.post('/store-catalog/sync', isAdmin, async (req, res) => {
+  const storeCatalogService = require('../services/storeCatalogService');
+  const result = await storeCatalogService.sync();
+  res.json({ success: !!result, result });
+});
+
 api.get('/orders', (req, res) => adminController.getOrders(req, res));
 api.put('/orders/:id/status', (req, res) => adminController.updateOrderStatus(req, res));
 api.get('/conversations', (req, res) => adminController.getConversations(req, res));

@@ -179,6 +179,12 @@ async function startServer() {
       timezone: "America/Bogota"
     });
 
+    // Catálogo de la tienda web: es liviano (JSON), se trae apenas el servidor se estabiliza
+    setTimeout(() => {
+      require('./src/services/storeCatalogService').sync()
+        .catch(e => logger.error('Error sincronizando catálogo de la tienda:', e));
+    }, 30000);
+
     // 🚀 EJECUTAR SINCRONIZACIÓN PESADA 2 MINUTOS DESPUÉS DEL ARRANQUE
     // Esto da prioridad total a la conexión de WhatsApp y atención de mensajes iniciales
     setTimeout(() => {

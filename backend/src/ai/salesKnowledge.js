@@ -36,29 +36,30 @@ function containsPhrase(normalizedText, phrase) {
 
 // ── Tipos de producto ────────────────────────────────────
 const PRODUCT_TYPES = {
-  vibrador:        { label: 'Vibradores', toy: true, keywords: ['vibrador', 'vibradora', 'punto g', 'conejo', 'rabbit', 'vibrador punto g', 'estimulador punto g'] },
-  succionador:     { label: 'Succionadores / estimuladores de clítoris', toy: true, keywords: ['succionador', 'succion', 'satisfyer', 'clitoriano', 'clitorial', 'estimulador de clitoris', 'estimulador clitoris', 'clitoris'] },
-  dildo:           { label: 'Dildos / consoladores', toy: true, keywords: ['dildo', 'consolador', 'realistico', 'realista', 'pene realistico'] },
+  vibrador:        { label: 'Vibradores', toy: true, keywords: ['vibrador', 'vibradora', 'punto g', 'conejo', 'rabbit', 'vibrador punto g', 'estimulador punto g', 'vibrating', 'vibrator'] },
+  succionador:     { label: 'Succionadores / estimuladores de clítoris', toy: true, keywords: ['succionador', 'succion', 'satisfyer', 'clitoriano', 'clitorial', 'clitoral', 'estimulador de clitoris', 'estimulador clitoris', 'clitoris'] },
+  dildo:           { label: 'Dildos / consoladores / arneses', toy: true, keywords: ['dildo', 'consolador', 'realistico', 'realista', 'pene realistico', 'arnes', 'harness', 'strap on', 'strapon'] },
   bala:            { label: 'Balas y huevos vibradores', toy: true, keywords: ['bala', 'bala vibradora', 'huevo vibrador', 'huevito vibrador', 'mini vibrador'] },
-  masturbador:     { label: 'Masturbadores masculinos', toy: true, keywords: ['masturbador', 'vagina artificial', 'huevo masturbador', 'fleshlight'] },
-  anillo:          { label: 'Anillos', toy: true, keywords: ['anillo', 'anillo vibrador', 'anillo retardante'] },
-  plug:            { label: 'Juguetes anales', toy: true, keywords: ['plug', 'plug anal', 'juguete anal', 'bolas anales', 'bolitas anales', 'dilatador'] },
-  juguete:         { label: 'Juguetes', toy: true, generic: true, keywords: ['juguete', 'juguetico', 'juguete sexual'] },
+  masturbador:     { label: 'Masturbadores masculinos', toy: true, keywords: ['masturbador', 'maturbador', 'vagina artificial', 'huevo masturbador', 'fleshlight'] },
+  anillo:          { label: 'Anillos y jaulas', toy: true, keywords: ['anillo', 'anillo vibrador', 'anillo retardante', 'c ringz', 'cringz', 'cock ring', 'cock blocker', 'jaula para el pene', 'jaula de castidad'] },
+  funda:           { label: 'Fundas y extensiones', toy: true, keywords: ['funda', 'funda peneana', 'funda para pene', 'funda con extension', 'extensor de pene', 'alargador de pene'] },
+  plug:            { label: 'Juguetes anales', toy: true, keywords: ['plug', 'plug anal', 'juguete anal', 'bolas anales', 'bolitas anales', 'dilatador', 'acostumbrador anal', 'acostumbrador'] },
+  juguete:         { label: 'Juguetes', toy: true, generic: true, keywords: ['juguete', 'juguetico', 'juguete sexual', 'estimulador', 'masajeador', 'bolas vaginales', 'bolas chinas', 'kegel'] },
   lubricante_anal: { label: 'Lubricantes anales', keywords: ['lubricante anal', 'gel anal', 'anal gel', 'easy anal', 'crema anal', 'spray anal', 'anal relax', 'relajante anal', 'desensibilizante anal'] },
   lubricante:      { label: 'Lubricantes', keywords: ['lubricante', 'lubricante intimo', 'gel intimo', 'gel lubricante', 'lubricante sabor', 'lubricante caliente', 'lubricante frio'] },
-  retardante:      { label: 'Retardantes', keywords: ['retardante', 'retardador', 'eyaculacion precoz', 'precoz', 'durar mas', 'aguantar mas', 'dure mas', 'sativa'] },
-  potencializador: { label: 'Potencializadores', keywords: ['potencializador', 'potenciador', 'ereccion', 'viagra', 'vigorizante', 'energizante sexual', 'estimulante masculino'] },
-  excitante:       { label: 'Excitantes / multiorgásmicos', keywords: ['multiorgasmico', 'multiorgasmica', 'excitante', 'estimulante femenino', 'acelerador', 'vibrador liquido', 'orgasmico', 'hormigueo'] },
-  feromona:        { label: 'Feromonas', keywords: ['feromona', 'perfume feromona', 'locion feromona', 'atrayente'] },
-  lenceria:        { label: 'Lencería', keywords: ['lenceria', 'baby doll', 'babydoll', 'body', 'tanga', 'corset', 'corse', 'liguero', 'liga', 'encaje', 'medias de malla', 'disfraz', 'bata', 'conjunto de lenceria', 'conjunto sexy', 'panty'] },
+  retardante:      { label: 'Retardantes', keywords: ['retardante', 'retardador', 'eyaculacion precoz', 'precoz', 'durar mas', 'aguantar mas', 'dure mas', 'sativa', 'prolong'] },
+  potencializador: { label: 'Potencializadores', keywords: ['potencializador', 'potenciador', 'ereccion', 'viagra', 'vigorizante', 'energizante sexual', 'estimulante masculino', 'pk2', 'maca', 'borojo', 'chontaduro', 'guarana', 'j 1000', 'bomba de vacio', 'bomba peneana', 'passion pump', 'pump'] },
+  excitante:       { label: 'Excitantes / multiorgásmicos', keywords: ['multiorgasmico', 'multiorgasmica', 'excitante', 'estimulante femenino', 'acelerador', 'vibrador liquido', 'orgasmico', 'hormigueo', 'multi ohh', 'pomada'] },
+  feromona:        { label: 'Feromonas', keywords: ['feromona', 'perfume feromona', 'locion feromona', 'atrayente', 'pheromone', 'locion corporal'] },
+  lenceria:        { label: 'Lencería', keywords: ['lenceria', 'lingerie', 'baby doll', 'babydoll', 'body', 'tanga', 'corset', 'corse', 'liguero', 'liga', 'encaje', 'medias de malla', 'medias', 'malla', 'teddy', 'disfraz', 'bata', 'conjunto de lenceria', 'conjunto sexy', 'panty'] },
   aceite_masaje:   { label: 'Aceites y velas de masaje', keywords: ['aceite', 'aceite de masaje', 'aceite caliente', 'masaje', 'vela de masaje', 'vela'] },
-  bondage:         { label: 'Bondage / línea fetish', keywords: ['esposas', 'bondage', 'amarres', 'cuerdas', 'mordaza', 'fusta', 'latigo', 'fetish', 'fetiche', 'bdsm', 'collar', 'inmovilizador'] },
-  venda:           { label: 'Vendas y antifaces', keywords: ['venda', 'tapaojos', 'tapa ojos', 'antifaz'] },
-  limpiador:       { label: 'Limpiadores de juguetes', keywords: ['limpiador', 'limpiador de juguetes', 'shampoo', 'toy cleaner'] },
+  bondage:         { label: 'Bondage / línea fetish', keywords: ['esposas', 'bondage', 'amarres', 'cuerdas', 'mordaza', 'fusta', 'latigo', 'fetish', 'fetiche', 'bdsm', 'collar', 'inmovilizador', 'paleta', 'nalgueador', 'azotador', 'correa'] },
+  venda:           { label: 'Vendas, antifaces y máscaras', keywords: ['venda', 'tapaojos', 'tapa ojos', 'antifaz', 'mascara'] },
+  limpiador:       { label: 'Limpiadores de juguetes', keywords: ['limpiador', 'limpiador de juguetes', 'shampoo', 'toy cleaner', 'detergente'] },
   bolsa:           { label: 'Bolsas y estuches', keywords: ['bolsa', 'bolsita', 'estuche', 'bolsa de tela'] },
   ducha_anal:      { label: 'Duchas anales', keywords: ['ducha anal', 'ducha', 'enema', 'lavado anal', 'pera anal'] },
-  preservativo:    { label: 'Preservativos', keywords: ['preservativo', 'condon', 'condones'] },
-  juego:           { label: 'Juegos eróticos', keywords: ['juego erotico', 'juegos eroticos', 'dados', 'cartas eroticas', 'ruleta', 'kamasutra'] },
+  preservativo:    { label: 'Preservativos', keywords: ['preservativo', 'condon', 'condones', 'fitone'] },
+  juego:           { label: 'Juegos eróticos y de despedida', keywords: ['juego erotico', 'juegos eroticos', 'dados', 'cartas eroticas', 'ruleta', 'kamasutra', 'pirinola', 'juego', 'inflatable', 'inflable', 'love doll', 'despedida', 'bachelorette', 'ring toss'] },
 };
 
 const TOY_TYPES = Object.entries(PRODUCT_TYPES).filter(([, t]) => t.toy && !t.generic).map(([k]) => k);
@@ -68,6 +69,7 @@ const TOY_COMBO = ['lubricante', 'limpiador', 'bolsa'];
 const COMBO_MAP = {
   vibrador: TOY_COMBO, succionador: TOY_COMBO, dildo: TOY_COMBO, bala: TOY_COMBO,
   masturbador: TOY_COMBO, anillo: ['lubricante', 'preservativo', 'retardante'], juguete: TOY_COMBO,
+  funda: ['lubricante', 'limpiador', 'retardante'],
   plug: ['lubricante_anal', 'ducha_anal', 'limpiador'],
   lubricante_anal: ['ducha_anal', 'preservativo'],
   lubricante: ['preservativo', 'aceite_masaje', 'feromona'],
@@ -89,6 +91,7 @@ const REPURCHASE_MAP = {
   vibrador: TOY_REPURCHASE, succionador: TOY_REPURCHASE, dildo: TOY_REPURCHASE, bala: TOY_REPURCHASE,
   masturbador: ['lubricante', 'limpiador', 'retardante'], plug: ['lubricante_anal', 'ducha_anal', 'limpiador'],
   anillo: ['lubricante', 'retardante', 'potencializador'],
+  funda: ['lubricante', 'limpiador', 'retardante'],
   lubricante: ['vibrador', 'preservativo', 'aceite_masaje', 'feromona'],
   lubricante_anal: ['plug', 'ducha_anal', 'preservativo'],
   retardante: ['potencializador', 'feromona', 'lubricante'],
@@ -116,6 +119,10 @@ function detectProductTypes(text) {
   if (found.includes('lubricante_anal')) {
     const idx = found.indexOf('lubricante');
     if (idx >= 0) found.splice(idx, 1);
+  }
+  // "estimulador de clítoris" es un succionador, no "cualquier juguete"
+  if (found.includes('juguete') && found.some(t => PRODUCT_TYPES[t].toy && !PRODUCT_TYPES[t].generic)) {
+    found.splice(found.indexOf('juguete'), 1);
   }
   return found;
 }

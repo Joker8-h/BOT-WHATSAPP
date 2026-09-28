@@ -25,7 +25,11 @@ class SyncService {
    */
   async syncAll() {
     logger.info('🔄 Iniciando sincronización global de inventario...');
-    
+
+    // La tienda web es la fuente principal; el Excel/Drive complementa lo que no esté en ella.
+    const storeCatalogService = require('./storeCatalogService');
+    await storeCatalogService.sync();
+
     try {
       const sources = await prisma.syncSource.findMany({
         where: { isActive: true },
@@ -98,6 +102,11 @@ class SyncService {
             branchId: source.branchId
           }
         });
+
+        // Los productos de la tienda web mandan: el Excel no los sobrescribe.
+        if (existing && String(existing.excelRef || '').startsWith('API-')) {
+          continue;
+        }
 
         // Si el producto ya tiene imagen en la BD, usar esa en vez de re-subir
         const productData = {
