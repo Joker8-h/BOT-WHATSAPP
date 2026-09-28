@@ -371,12 +371,16 @@ class MessageController {
    */
   async processAiResult({ aiResult, contact, conversation, chatId, branchId, body = '', messageHistory = [] }) {
       const actions = aiResult.actions || {};
+      this._preferClientPaymentMethod(actions, body, messageHistory);
       logger.debug(`🔍 [ACTIONS] Para ${chatId}: contraentrega=${actions.shouldCreateContraEntrega}, closeSale=${actions.shouldCloseSale}, productos=${JSON.stringify(actions.productsToSell)}, addr=${actions.capturedAddress}, city=${actions.capturedCity}`);
+
+      const lastPurchaseAt = conversation?.context?.sale?.lastPurchase?.at;
+      const purchasedRecently = lastPurchaseAt && (Date.now() - new Date(lastPurchaseAt).getTime() < 30 * 60 * 1000);
 
       // SAFETY NET ACTIVO: Si la IA dice en texto que va a registrar el pedido contraentrega pero no usó la etiqueta,
       // activar el pedido automáticamente extrayendo el producto del texto de la IA.
       // IMPORTANTE: Solo aplica para contraentrega. Si menciona Wompi/transferencia/link, NO activar contraentrega.
-      if (!actions.shouldCreateContraEntrega && !actions.shouldCloseSale) {
+      if (!purchasedRecently && !actions.shouldCreateContraEntrega && !actions.shouldCloseSale) {
         const aiText = (aiResult.response || '').toLowerCase();
         
         // Detectar si es pago por Wompi/transferencia (NO contraentrega)
@@ -621,19 +625,8 @@ class MessageController {
         }
 
         logger.info(`📦 [CONTRAENTREGA] Procesando pedido contraentrega para ${chatId}`);
-        const orderItems = [];
-        let totalAmount = 0;
-        const productNames = [];
-
-        for (const pName of actions.productsToSell) {
-          const product = await catalogService.findProductByName(pName, branchId);
-          if (product) {
-            const qty = product.parsedQuantity || 1;
-            orderItems.push({ productId: product.id, quantity: qty, price: product.price });
-            totalAmount += parseFloat(product.price) * qty;
-            productNames.push(`${product.name}${qty > 1 ? ` x${qty}` : ''}`);
-          }
-        }
+        const resolved = await catalogService.resolveSaleProducts(actions.productsToSell, branchId);
+        const { items: orderItems, productNames, notFound, totalAmount } = resolved;
 
         if (orderItems.length === 0) {
           logger.error(`⚠️ [CONTRAENTREGA] No se encontraron productos en BD para: ${actions.productsToSell.join(', ')}`);
@@ -648,6 +641,12 @@ class MessageController {
           return;
         }
 
+        const duplicate = await crmService.findRecentSimilarOrder(contact.id, 'CONTRAENTREGA', orderItems.map(i => i.productId));
+        if (duplicate) {
+          logger.warn(`⚠️ [CONTRAENTREGA] Pedido #${duplicate.id} ya existe para este cliente. No se crea ni se avisa otra vez.`);
+          return;
+        }
+
         const order = await crmService.createOrder({
           contactId: contact.id,
           branchId,
@@ -657,6 +656,7 @@ class MessageController {
           shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
           status: 'PENDING',
           paymentMethod: 'CONTRAENTREGA',
+          notes: notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
         });
 
         // La IA ya informó al cliente que el pedido fue registrado: sin doble confirmación.
@@ -697,6 +697,7 @@ class MessageController {
           `${historyLine ? `${historyLine}\n` : ''}` +
           `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
           `📦 *Productos:* ${productNames.join(', ')}\n` +
+          `${notFound.length ? `⚠️ *Sin identificar:* ${notFound.join(', ')}\n` : ''}` +
           `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
           `📍 *DIRECCIÓN DE ENTREGA:*\n` +
           `${hasAddr ? finalAddr : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
@@ -705,7 +706,8 @@ class MessageController {
           `${addrWarning}` +
           `\n⚠️ *TIPO:* Contraentrega (pago en efectivo al recibir)`;
 
-        await whatsappService.notifyPhone(branchId, centralMsg);
+        const sent = await whatsappService.notifyPhone(branchId, centralMsg);
+        await crmService.markOwnerNotified(order.id, !!sent);
       }
 
       // Cierre de venta Wompi
@@ -727,19 +729,8 @@ class MessageController {
         }
 
         logger.info(`💰 [SALE] Iniciando proceso de pago para ${chatId}`);
-        const orderItems = [];
-        let totalAmount = 0;
-        const productNames = [];
-
-        for (const pName of actions.productsToSell) {
-          const product = await catalogService.findProductByName(pName, branchId);
-          if (product) {
-            const qty = product.parsedQuantity || 1;
-            orderItems.push({ productId: product.id, quantity: qty, price: product.price });
-            totalAmount += parseFloat(product.price) * qty;
-            productNames.push(`${product.name}${qty > 1 ? ` x${qty}` : ''}`);
-          }
-        }
+        const resolved = await catalogService.resolveSaleProducts(actions.productsToSell, branchId);
+        const { items: orderItems, productNames, notFound, totalAmount } = resolved;
 
         if (orderItems.length === 0) {
           logger.error(`⚠️ [WOMPI] No se encontraron productos en BD para: ${actions.productsToSell.join(', ')}`);
@@ -751,13 +742,25 @@ class MessageController {
           return;
         }
 
+        const pending = conversation?.context?.sale?.pendingPayment;
+        const pendingNames = (pending?.products || []).map(name => String(name).toLowerCase());
+        const samePending = pending?.sentAt
+          && (Date.now() - new Date(pending.sentAt).getTime() < 30 * 60 * 1000)
+          && productNames.length > 0
+          && productNames.every(name => pendingNames.includes(String(name).toLowerCase()));
+        if (samePending) {
+          logger.warn(`💰 [SALE] Link ${pending.reference} ya se envió hace poco. No se genera otro.`);
+          return;
+        }
+
         const cartData = {
           contactId: contact.id,
           branchId,
           items: orderItems,
           amount: totalAmount,
           shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
-          shippingAddress: contactUpdates.address || contact.address || 'Por confirmar'
+          shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
+          notes: notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
         };
 
         const wompiLink = await this.sendPaymentLink({ conversationId: conversation.id, contact, chatId, branchId, cartData, productNames });
@@ -855,6 +858,32 @@ class MessageController {
         rawStr.includes(bDigits)
       );
     });
+  }
+
+  /**
+   * Si la IA cierra por contraentrega y por link en el mismo turno, queda un solo camino:
+   * el medio de pago que el cliente mencionó de último.
+   */
+  _preferClientPaymentMethod(actions, body, messageHistory = []) {
+    if (!actions.shouldCreateContraEntrega || !actions.shouldCloseSale) return;
+
+    const blob = [...messageHistory.filter(m => m.role === 'USER').slice(-6).map(m => m.content || ''), body || '']
+      .join('\n')
+      .toLowerCase();
+    const lastIndex = (words) => words.reduce((max, word) => Math.max(max, blob.lastIndexOf(word)), -1);
+    const electronicAt = lastIndex(['nequi', 'daviplata', 'davi plata', 'transferenc', 'tarjeta', 'wompi', 'pse', 'link de pago']);
+    const cashAt = lastIndex(['contraentrega', 'contra entrega', 'efectivo', 'pago al recibir']);
+    const useElectronic = electronicAt > cashAt;
+
+    if (useElectronic) {
+      actions.shouldCreateContraEntrega = false;
+      if (actions.wompiProducts?.length) actions.productsToSell = actions.wompiProducts;
+      logger.warn('⚠️ [SALE] Salieron las dos etiquetas de cierre. Se usa el link de pago que pidió el cliente.');
+    } else {
+      actions.shouldCloseSale = false;
+      if (actions.contraProducts?.length) actions.productsToSell = actions.contraProducts;
+      logger.warn('⚠️ [SALE] Salieron las dos etiquetas de cierre. Se usa contraentrega.');
+    }
   }
 
   /**

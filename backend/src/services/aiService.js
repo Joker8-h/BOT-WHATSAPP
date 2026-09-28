@@ -806,16 +806,20 @@ Responde SOLO con el texto del mensaje.`;
       actions.capturedDeliveryPhone = deliveryPhoneMatch[1].trim();
     }
 
+    const splitProducts = (raw) => raw.split(',').map(p => p.trim()).filter(Boolean);
+
     const saleMatch = response.match(/\[CERRAR_VENTA:(.+?)\]/);
     if (saleMatch) {
       actions.shouldCloseSale = true;
-      actions.productsToSell = saleMatch[1].split(',').map(p => p.trim());
+      actions.wompiProducts = splitProducts(saleMatch[1]);
+      actions.productsToSell = actions.wompiProducts;
     }
 
     const contraMatch = response.match(/\[PEDIDO_CONTRAENTREGA:(.+?)\]/);
     if (contraMatch) {
       actions.shouldCreateContraEntrega = true;
-      actions.productsToSell = contraMatch[1].split(',').map(p => p.trim());
+      actions.contraProducts = splitProducts(contraMatch[1]);
+      actions.productsToSell = actions.contraProducts;
     }
 
     const imageMatches = response.match(/\[IMAGEN:(.+?)\]/g);

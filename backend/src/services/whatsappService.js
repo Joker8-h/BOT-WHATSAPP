@@ -241,7 +241,7 @@ class WhatsAppService {
     return `${clean}@c.us`;
   }
 
-  async sendMessage(branchId, to, text) {
+  async sendMessage(branchId, to, text, options = {}) {
     const BLOCKED_NUMBERS = ['3106124802'];
     const cleanTo = String(to).split('@')[0].split(':')[0].replace(/\D/g, '');
     if (BLOCKED_NUMBERS.some(b => cleanTo === b || cleanTo === '57' + b || cleanTo.endsWith(b))) {
@@ -277,7 +277,8 @@ class WhatsAppService {
         ]);
       };
 
-      const maxLength = 450;
+      // Los avisos al dueño viajan completos. El corte corto es solo para el chat con el cliente.
+      const maxLength = options.singleMessage ? 4000 : 450;
       if (text.length > maxLength) {
         const parts = [];
         let remaining = text;
@@ -413,7 +414,7 @@ class WhatsAppService {
       if (branch?.notificationPhone) {
         const phone = branch.notificationPhone.replace(/[^0-9]/g, '');
         const chatId = `${phone}@c.us`;
-        const sent = await this.sendMessage(branchId, chatId, message);
+        const sent = await this.sendMessage(branchId, chatId, message, { singleMessage: true });
         if (!sent) {
           logger.warn(`⚠️ Falló envío de notificación al teléfono ${phone} de sucursal ${branchId}`);
         } else {

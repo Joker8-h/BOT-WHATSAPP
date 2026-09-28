@@ -136,6 +136,95 @@ class CatalogService {
   }
 
   /**
+   * Un nombre solo entra al pedido si corresponde de verdad a ese producto.
+   * Un fragmento corto ("sabor fresa") no puede arrastrar otro producto del catálogo.
+   */
+  _tokenHits(left, rightSet) {
+    let hits = 0;
+    for (const token of left) {
+      if (rightSet.has(token) || [...rightSet].some(other => other.startsWith(token) || token.startsWith(other))) hits += 1;
+    }
+    return hits;
+  }
+
+  _isReliableSaleMatch(rawName, product) {
+    if (!product) return false;
+    const search = this._normalize(this._parseQuantity(rawName).name);
+    const productNorm = this._normalize(product.name);
+    if (!search || !productNorm) return false;
+    if (search === productNorm) return true;
+
+    const searchTokens = search.split(' ').filter(t => t.length >= 3);
+    const productTokens = productNorm.split(' ').filter(t => t.length >= 3);
+    if (!searchTokens.length || !productTokens.length) return false;
+
+    const searchCoverage = this._tokenHits(searchTokens, new Set(productTokens)) / searchTokens.length;
+    const productCoverage = this._tokenHits(productTokens, new Set(searchTokens)) / productTokens.length;
+    // El nombre pedido y el del catálogo tienen que cubrirse entre sí.
+    // Así "sabor fresa" no se convierte en otro producto, ni dos productos en uno.
+    return searchCoverage >= 0.8 && productCoverage >= 0.6;
+  }
+
+  _saleResultFromProducts(pairs) {
+    const byId = new Map();
+    for (const { product } of pairs) {
+      const qty = product.parsedQuantity || 1;
+      const prev = byId.get(product.id);
+      if (!prev) byId.set(product.id, { product, quantity: qty });
+      else prev.quantity = Math.max(prev.quantity, qty);
+    }
+
+    const items = [];
+    const productNames = [];
+    const outOfStock = [];
+    let totalAmount = 0;
+    for (const { product, quantity } of byId.values()) {
+      items.push({ productId: product.id, quantity, price: product.price });
+      productNames.push(`${product.name}${quantity > 1 ? ` x${quantity}` : ''}`);
+      if (product.isOutOfStock) outOfStock.push(product.name);
+      totalAmount += parseFloat(product.price) * quantity;
+    }
+    return { items, productNames, notFound: [], outOfStock, totalAmount };
+  }
+
+  /**
+   * Resuelve los productos de un cierre de venta.
+   * Si la lista partida por comas es en realidad un solo nombre, se reúne.
+   * Lo que no está en el catálogo vuelve en `notFound` y no se cambia por otro producto.
+   */
+  async resolveSaleProducts(names = [], branchId) {
+    const clean = [...new Set(names.map(n => String(n || '').trim()).filter(Boolean))];
+    const empty = { items: [], productNames: [], notFound: [], outOfStock: [], totalAmount: 0 };
+    if (!clean.length) return empty;
+
+    if (clean.length > 1) {
+      const wholeName = clean.join(', ');
+      const whole = await this.findProductByName(wholeName, branchId);
+      if (this._isReliableSaleMatch(wholeName, whole)) {
+        logger.info(`🔎 [CATALOG] "${wholeName}" es un solo producto: "${whole.name}"`);
+        return this._saleResultFromProducts([{ product: whole }]);
+      }
+    }
+
+    const matched = [];
+    const notFound = [];
+    for (const raw of clean) {
+      const product = await this.findProductByName(raw, branchId);
+      if (this._isReliableSaleMatch(raw, product)) matched.push({ product });
+      else {
+        if (product) {
+          logger.warn(`🔎 [CATALOG] "${raw}" no se asigna a "${product.name}" para no mezclar otro producto`);
+        }
+        notFound.push(raw);
+      }
+    }
+
+    const result = this._saleResultFromProducts(matched);
+    result.notFound = notFound;
+    return result;
+  }
+
+  /**
    * Busca un producto por nombre en una sucursal.
    * Estrategia en cascada para NUNCA perder un producto del pedido:
    *   1. Coincidencia directa en BD (contains)

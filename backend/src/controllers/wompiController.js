@@ -182,12 +182,21 @@ class WompiController {
 
     const crmService = require('../services/crmService');
     const { paymentLinkId, ...orderData } = cartData;
-    const created = await crmService.createOrder({
-      ...orderData,
-      status: 'PAID',
-      paymentMethod: 'WOMPI',
-      wompiTransactionId: transaction.id,
-    });
+    let created;
+    try {
+      created = await crmService.createOrder({
+        ...orderData,
+        status: 'PAID',
+        paymentMethod: 'WOMPI',
+        wompiTransactionId: transaction.id,
+      });
+    } catch (error) {
+      if (error?.code === 'P2002') {
+        logger.info(`ℹ️ Wompi: transacción ${transaction.id} ya tenía pedido. No se crea ni se avisa otra vez.`);
+        return;
+      }
+      throw error;
+    }
 
     await crmService.patchContext(convId, (ctx) => {
       const pendingCarts = { ...(ctx.pendingCarts || {}) };
@@ -229,10 +238,26 @@ class WompiController {
 
     if (transaction.status === 'APPROVED') {
       if (order.status === 'PAID') return;
-      await prisma.order.update({
-        where: { id: orderId },
-        data: { status: 'PAID', wompiTransactionId: transaction.id },
-      });
+      try {
+        const updated = await prisma.order.updateMany({
+          where: {
+            id: orderId,
+            status: { not: 'PAID' },
+            OR: [{ wompiTransactionId: null }, { wompiTransactionId: transaction.id }],
+          },
+          data: { status: 'PAID', wompiTransactionId: transaction.id },
+        });
+        if (updated.count === 0) {
+          logger.info(`ℹ️ Wompi: orden ${orderId} ya estaba pagada. No se avisa otra vez.`);
+          return;
+        }
+      } catch (error) {
+        if (error?.code === 'P2002') {
+          logger.info(`ℹ️ Wompi: transacción ${transaction.id} ya estaba registrada. No se avisa otra vez.`);
+          return;
+        }
+        throw error;
+      }
       await this._afterApproved(order, transaction, null);
     } else if (DECLINE_STATUSES.includes(transaction.status)) {
       const chatId = `${this._cleanPhone(order.contact.phone)}@c.us`;
@@ -310,7 +335,8 @@ class WompiController {
         `${historyLine ? `${historyLine}\n` : ''}` +
         `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
         `🏪 *Sucursal:* ${order.branch.name} (${order.branch.city})\n\n` +
-        `📦 *Productos:*\n${itemsList}\n\n` +
+        `📦 *Productos:*\n${itemsList}\n` +
+        `${order.notes ? `⚠️ *${order.notes}*\n` : ''}\n` +
         `📍 *DIRECCIÓN DE ENVÍO:*\n` +
         `${hasAddress ? order.shippingAddress : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
         `🏙️ *CIUDAD:* ${hasCity ? order.shippingCity : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
@@ -318,7 +344,9 @@ class WompiController {
         `${addressWarning}` +
         `💳 *Ref Wompi:* ${transaction.id}\n\n` +
         `🚀 *ACCIÓN REQUERIDA:* Preparar despacho inmediato`;
-      await whatsappService.notifyPhone(order.branchId, notificationMsg);
+      const sent = await whatsappService.notifyPhone(order.branchId, notificationMsg);
+      const crmService = require('../services/crmService');
+      await crmService.markOwnerNotified(order.id, !!sent);
     });
 
     await step('postventa', async () => {

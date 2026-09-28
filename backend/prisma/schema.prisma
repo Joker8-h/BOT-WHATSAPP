@@ -324,7 +324,7 @@ model Order {
   branch          Branch?   @relation(fields: [branchId], references: [id])
 
   // Pago
-  wompiTransactionId String?  @db.VarChar(200)
+  wompiTransactionId String?  @unique @db.VarChar(200)
   wompiPaymentLink  String?   @db.VarChar(500)
   amount          Decimal   @db.Decimal(12, 2)
   currency        String    @default("cop") @db.VarChar(10)

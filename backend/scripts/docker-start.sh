@@ -4,7 +4,11 @@
 echo "⏳ Esperando a que la base de datos se estabilice..."
 sleep 5
 
-# 2. Sincronizar el esquema de Prisma con la DB (sin borrar datos)
+# 2. Liberar ids de Wompi repetidos antes del índice único
+echo "🧹 Limpiando transacciones Wompi duplicadas..."
+node scripts/dedupeWompiTx.js || echo "⚠️ No se pudieron limpiar duplicados de Wompi; el arranque sigue"
+
+# 2b. Sincronizar el esquema de Prisma con la DB (sin borrar datos)
 echo "🔄 Sincronizando esquema de base de datos..."
 npx prisma db push --accept-data-loss
 

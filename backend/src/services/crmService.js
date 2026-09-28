@@ -464,6 +464,46 @@ class CRMService {
   }
 
   /**
+   * Pedido del mismo cliente, mismo medio de pago y mismos productos, creado hace poco.
+   * Sirve para no registrar otra vez una confirmación que Sofía repitió.
+   */
+  async findRecentSimilarOrder(contactId, paymentMethod, productIds, windowMs = 30 * 60 * 1000) {
+    if (!contactId || !productIds?.length) return null;
+    try {
+      const recent = await prisma.order.findFirst({
+        where: {
+          contactId,
+          paymentMethod,
+          status: { not: 'CANCELLED' },
+          createdAt: { gte: new Date(Date.now() - windowMs) },
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { items: { select: { productId: true } } },
+      });
+      if (!recent) return null;
+      const existing = new Set(recent.items.map(item => item.productId));
+      return productIds.every(id => existing.has(id)) ? recent : null;
+    } catch (error) {
+      logger.warn(`⚠️ No se pudo buscar un pedido reciente del contacto ${contactId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  async markOwnerNotified(orderId, sent) {
+    try {
+      await prisma.order.update({
+        where: { id: orderId },
+        data: {
+          notifyAttempts: { increment: 1 },
+          ...(sent ? { notifiedAt: new Date() } : {}),
+        },
+      });
+    } catch (error) {
+      logger.warn(`⚠️ No se pudo marcar la notificación del pedido #${orderId}: ${error.message}`);
+    }
+  }
+
+  /**
    * Crea una orden en la DB
    */
   async createOrder({ contactId, branchId, items, amount, shippingCity, shippingAddress, status = 'PENDING', paymentMethod = null, notes = null, wompiTransactionId = null }) {
