@@ -119,13 +119,13 @@ function getFlowInstructions(flow) {
 - Registra [OBJECION: tipo].`,
 
     SHIPPING_INFO: `FLUJO ACTUAL: INFORMACIÓN DE ENVÍO
-- Responde clara y brevemente con la INFORMACIÓN LOGÍSTICA (envío discreto, contraentrega solo en Popayán, Pitalito, Florencia y Yopal dentro de la ciudad, resto por transportadora con link de pago).
+- Responde clara y brevemente con la INFORMACIÓN LOGÍSTICA (envío discreto, contraentrega solo en Popayán, Pitalito, Florencia y Yopal dentro de la ciudad, resto por transportadora con link de pago) y el COSTO DE ENVÍO que le corresponde según su ciudad.
 - Si no sabes su ciudad, pregúntala: "¿Desde qué ciudad nos escribes?".
 - Después de responder, retoma la venta: si ya hay producto de interés, pregunta si se lo dejas listo; si no, pregunta qué está buscando.`,
 
     CLOSING: `FLUJO ACTUAL: CIERRE DE VENTA (Etapa 7)
 - **PRIMERO VERIFICA**: ¿Tienes DIRECCIÓN ([CAPTURAR_DIRECCION]) y CIUDAD ([CAPTURAR_CIUDAD])? Si falta algo, pídelo con naturalidad (un dato por mensaje) antes de usar etiquetas de cierre.
-- Confirma el/los producto(s) y el total en COP en un resumen corto.
+- Confirma el/los producto(s), el envío según su ciudad y el total en COP en un resumen corto (productos + envío = total).
 - Si aún no ofreciste complemento y el cliente no lo rechazó, ofrécelo UNA vez en una línea antes de cerrar ("¿Te lo agrego?").
 - **PRIORIDAD DEL MÉTODO DE PAGO**: Si el cliente menciona 'nequi', 'daviplata', 'transferencia', 'tarjeta' o pago electrónico: usa [CERRAR_VENTA] (link Wompi), sin importar la ciudad.
 - **CIERRE AUTOMÁTICO** cuando el cliente confirme la compra y ya tengas dirección y ciudad:

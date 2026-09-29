@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 const wompiService = require('../services/wompiService');
 const whatsappService = require('../services/whatsappService');
 const ownerAlertService = require('../services/ownerAlertService');
+const shippingService = require('../services/shippingService');
 const { decrypt } = require('../utils/encryption');
 const { formatCOP } = require('../utils/helpers');
 
@@ -319,6 +320,12 @@ class WompiController {
       const waLink = ownerAlertService.waLink(cleanPhone);
       const historyLine = await ownerAlertService.buyerHistoryLine(order.contactId);
       const itemsList = order.items.map(i => `- ${i.product.name} (x${i.quantity})`).join('\n');
+      const subtotal = order.items.reduce((sum, i) => sum + Number(i.price) * i.quantity, 0);
+      const shippingFee = Number(order.amount) - subtotal;
+      const shippingLine = shippingFee > 0
+        ? `🛍️ *Productos:* ${formatCOP(subtotal)}\n🚚 *${shippingService.getShipping(order.shippingCity).label}:* ${formatCOP(shippingFee)}\n`
+        : '';
+      const extraNotes = String(order.notes || '').split(' | ').filter(n => n && !/^Env[ií]o /.test(n)).join(' | ');
       const neighborhoodInfo = order.contact.neighborhood ? `🏘️ *Barrio:* ${order.contact.neighborhood}\n` : '';
       const deliveryPhone = order.contact.deliveryPhone || 'No proporcionado';
       const hasAddress = order.shippingAddress && order.shippingAddress !== 'Por confirmar';
@@ -328,6 +335,7 @@ class WompiController {
         : '';
       const notificationMsg = `✅ *¡CLIENTE YA PAGÓ VÍA WOMPI!* ✅\n\n` +
         `🧾 *Pedido:* #${order.id}\n` +
+        `${shippingLine}` +
         `💰 *Total pagado:* ${formatCOP(order.amount)}\n` +
         `👤 *Cliente:* ${order.contact.name || 'Sin nombre'}\n` +
         `📱 *WhatsApp:* ${cleanPhone}\n` +
@@ -336,7 +344,7 @@ class WompiController {
         `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
         `🏪 *Sucursal:* ${order.branch.name} (${order.branch.city})\n\n` +
         `📦 *Productos:*\n${itemsList}\n` +
-        `${order.notes ? `⚠️ *${order.notes}*\n` : ''}\n` +
+        `${extraNotes ? `⚠️ *${extraNotes}*\n` : ''}\n` +
         `📍 *DIRECCIÓN DE ENVÍO:*\n` +
         `${hasAddress ? order.shippingAddress : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
         `🏙️ *CIUDAD:* ${hasCity ? order.shippingCity : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +

@@ -10,6 +10,7 @@ const catalogService = require('../services/catalogService');
 const transcriptionService = require('../services/transcriptionService');
 const postSaleService = require('../services/postSaleService');
 const ownerAlertService = require('../services/ownerAlertService');
+const shippingService = require('../services/shippingService');
 const { mergeSaleState } = require('../ai/saleState');
 const { prisma } = require('../config/database');
 const { isWorkingHours, formatCOP } = require('../utils/helpers');
@@ -647,29 +648,34 @@ class MessageController {
           return;
         }
 
+        const codCity = contactUpdates.city || contact.city || 'Por confirmar';
+        const codQuote = shippingService.quote(totalAmount, codCity);
         const order = await crmService.createOrder({
           contactId: contact.id,
           branchId,
           items: orderItems,
-          amount: totalAmount,
-          shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
+          amount: codQuote.total,
+          shippingCity: codCity,
           shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
           status: 'PENDING',
           paymentMethod: 'CONTRAENTREGA',
-          notes: notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
+          notes: [
+            `${codQuote.label}: ${formatCOP(codQuote.fee)}`,
+            notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
+          ].filter(Boolean).join(' | '),
         });
 
         // La IA ya informó al cliente que el pedido fue registrado: sin doble confirmación.
-        logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por $${totalAmount.toLocaleString('es-CO')} COP — sin doble confirmación al cliente.`);
+        logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por ${formatCOP(codQuote.total)} (envío ${formatCOP(codQuote.fee)}) — sin doble confirmación al cliente.`);
 
-        await crmService.recordPurchase(contact.id, totalAmount, conversation.id);
+        await crmService.recordPurchase(contact.id, codQuote.total, conversation.id);
         await crmService.patchContext(conversation.id, (ctx) => {
           const next = { ...ctx };
           delete next.pedido;
           next.sale = {
             ...(ctx.sale || {}),
             stage: 'comprado',
-            lastPurchase: { orderId: order.id, products: productNames, amount: totalAmount, at: new Date().toISOString() },
+            lastPurchase: { orderId: order.id, products: productNames, amount: codQuote.total, at: new Date().toISOString() },
             updatedAt: new Date().toISOString(),
           };
           return next;
@@ -698,7 +704,8 @@ class MessageController {
           `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
           `📦 *Productos:* ${productNames.join(', ')}\n` +
           `${notFound.length ? `⚠️ *Sin identificar:* ${notFound.join(', ')}\n` : ''}` +
-          `💰 *Total:* ${formatCOP(totalAmount)}\n\n` +
+          `${shippingService.breakdownLines(codQuote)}\n` +
+          `💵 *Cobrar al entregar:* ${formatCOP(codQuote.total)}\n\n` +
           `📍 *DIRECCIÓN DE ENTREGA:*\n` +
           `${hasAddr ? finalAddr : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
           `🏙️ *CIUDAD:* ${hasCity ? finalCityCOD : '❌ NO PROPORCIONADA — CONTACTAR AL CLIENTE'}\n` +
@@ -753,14 +760,19 @@ class MessageController {
           return;
         }
 
+        const payCity = contactUpdates.city || contact.city || 'Por confirmar';
+        const payQuote = shippingService.quote(totalAmount, payCity);
         const cartData = {
           contactId: contact.id,
           branchId,
           items: orderItems,
-          amount: totalAmount,
-          shippingCity: contactUpdates.city || contact.city || 'Por confirmar',
+          amount: payQuote.total,
+          shippingCity: payCity,
           shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
-          notes: notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
+          notes: [
+            `${payQuote.label}: ${formatCOP(payQuote.fee)}`,
+            notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
+          ].filter(Boolean).join(' | '),
         };
 
         const wompiLink = await this.sendPaymentLink({ conversationId: conversation.id, contact, chatId, branchId, cartData, productNames });
@@ -809,9 +821,14 @@ class MessageController {
         return { ...ctx, pendingCarts: carts };
       });
 
+      const subtotal = (cartData.items || []).reduce((sum, i) => sum + Number(i.price) * (i.quantity || 1), 0);
+      const fee = Number(cartData.amount) - subtotal;
+      const breakdown = fee > 0
+        ? `${shippingService.breakdownLines({ subtotal, fee, label: shippingService.getShipping(cartData.shippingCity).label, total: Number(cartData.amount) })}\n\n`
+        : '';
       const paymentMsg = intro
         ? `${intro}\n\n🔗 ${wompiLink.url}`
-        : `✨ *¡Todo listo!* Aquí tienes tu link de pago seguro por *$${Number(cartData.amount).toLocaleString('es-CO')} COP*:\n\n🔗 ${wompiLink.url}\n\nConfírmame cuando lo realices para despachar tu pedido discreto. 🌹`;
+        : `✨ *¡Todo listo!* Aquí tienes tu link de pago seguro por *$${Number(cartData.amount).toLocaleString('es-CO')} COP*${fee > 0 ? ' (envío incluido)' : ''}:\n\n${breakdown}🔗 ${wompiLink.url}\n\nConfírmame cuando lo realices para despachar tu pedido discreto. 🌹`;
       await whatsappService.sendMessage(branchId, chatId, paymentMsg);
       await crmService.saveMessage(conversationId, 'ASSISTANT', paymentMsg);
 
