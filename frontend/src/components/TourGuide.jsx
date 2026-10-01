@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import Joyride, { ACTIONS, STATUS } from 'react-joyride';
+import { Joyride, ACTIONS, STATUS } from 'react-joyride';
 import { useAuth } from '../context/AuthContext';
 
 const TOUR_KEY = 'fantasias_tour_completed';
