@@ -41,10 +41,39 @@ function cleanPhone(phone) {
 }
 
 /**
- * Obtener saludo según hora del día
+ * Obtener componentes de fecha y hora exactos para Colombia (America/Bogota, UTC-5)
+ */
+function getColombiaParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Bogota',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: 'numeric',
+    minute: 'numeric',
+    weekday: 'short',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const map = {};
+  for (const p of parts) map[p.type] = p.value;
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    year: parseInt(map.year, 10),
+    month: map.month,
+    date: map.day,
+    hour: parseInt(map.hour, 10),
+    minute: parseInt(map.minute, 10),
+    day: weekdayMap[map.weekday] ?? 0,
+    todayMMDD: `${map.month}-${map.day}`,
+  };
+}
+
+/**
+ * Obtener saludo según hora del día en Colombia
  */
 function getGreeting() {
-  const hour = new Date().getHours();
+  const { hour } = getColombiaParts();
   if (hour < 12) return 'Buenos días';
   if (hour < 18) return 'Buenas tardes';
   return 'Buenas noches';
@@ -86,27 +115,7 @@ async function isWorkingHours(branchId = null) {
     }
   }
 
-  const now = new Date();
-  const offset = now.getTimezoneOffset();
-  const colombiaTime = new Date(now.getTime() + (offset - 300) * 60 * 1000);
-
-  const month = String(colombiaTime.getMonth() + 1).padStart(2, '0');
-  const date = String(colombiaTime.getDate()).padStart(2, '0');
-  const todayMMDD = `${month}-${date}`;
-
-  // 1. Verificar festivos
-  let holidays = [];
-  try {
-    holidays = JSON.parse(settings.holidays || '[]');
-  } catch (e) {
-    holidays = [];
-  }
-  if (holidays.includes(todayMMDD)) {
-    return { isWorking: false, reason: 'holiday' };
-  }
-
-  const day = colombiaTime.getDay();
-  const hour = colombiaTime.getHours();
+  const { todayMMDD, day, hour } = getColombiaParts();
 
   // 2. Verificar días de trabajo
   const workingDays = (settings.workingDays || '1,2,3,4,5,6').split(',').map(Number);
@@ -147,4 +156,5 @@ module.exports = {
   truncate,
   getRecentMessages,
   isWorkingHours,
+  getColombiaParts,
 };

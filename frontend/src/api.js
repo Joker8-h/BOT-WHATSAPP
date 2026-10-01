@@ -50,7 +50,7 @@ export const loginUser = (username, password) => api('/api/auth/login', {
   body: JSON.stringify({ username, password }),
 });
 
-export const registerUser = (data) => api('/auth/register', {
+export const registerUser = (data) => api('/api/auth/register', {
   method: 'POST',
   body: JSON.stringify(data),
 });

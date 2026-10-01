@@ -126,7 +126,7 @@ class WompiController {
 
     try {
       const conv = await prisma.conversation.findFirst({
-        where: { context: { path: '$.sale.pendingPayment.paymentLinkId', equals: linkId } },
+        where: { context: { path: ['sale', 'pendingPayment', 'paymentLinkId'], equals: linkId } },
         select: { context: true },
       });
       const ref = conv?.context?.sale?.pendingPayment?.reference;

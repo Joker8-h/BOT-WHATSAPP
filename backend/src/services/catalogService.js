@@ -15,19 +15,25 @@ class CatalogService {
    * Obtiene todos los productos disponibles de una sucursal
    */
   async getAllProducts(branchId) {
-    if (!branchId) return [];
+    const bId = branchId ? parseInt(branchId, 10) : null;
+    const cacheKey = bId ?? 'global';
 
-    const cached = this._caches.get(branchId);
+    const cached = this._caches.get(cacheKey);
     if (cached && (Date.now() - cached.time) < this._cacheTTL) {
       return cached.data;
     }
 
+    const where = {
+      isAvailable: true,
+      ...(bId ? { OR: [{ branchId: bId }, { branchId: null }] } : {}),
+    };
+
     const products = await prisma.product.findMany({
-      where: { isAvailable: true, branchId },
+      where,
       orderBy: [{ isFeatured: 'desc' }, { category: 'asc' }],
     });
 
-    this._caches.set(branchId, { data: products, time: Date.now() });
+    this._caches.set(cacheKey, { data: products, time: Date.now() });
     return products;
   }
 
@@ -154,15 +160,28 @@ class CatalogService {
     if (!search || !productNorm) return false;
     if (search === productNorm) return true;
 
+    // Si uno incluye al otro y tiene longitud significativa
+    if ((productNorm.includes(search) || search.includes(productNorm)) && search.length >= 5) {
+      return true;
+    }
+
     const searchTokens = search.split(' ').filter(t => t.length >= 3);
     const productTokens = productNorm.split(' ').filter(t => t.length >= 3);
     if (!searchTokens.length || !productTokens.length) return false;
 
     const searchCoverage = this._tokenHits(searchTokens, new Set(productTokens)) / searchTokens.length;
     const productCoverage = this._tokenHits(productTokens, new Set(searchTokens)) / productTokens.length;
-    // El nombre pedido y el del catálogo tienen que cubrirse entre sí.
-    // Así "sabor fresa" no se convierte en otro producto, ni dos productos en uno.
-    return searchCoverage >= 0.8 && productCoverage >= 0.6;
+
+    // Si la gran mayoría de palabras pedidas por el cliente están en el producto
+    if (searchCoverage >= 0.75 && (productCoverage >= 0.25 || searchTokens.length >= 2)) {
+      return true;
+    }
+
+    if ((product.matchScore || 0) >= 0.8) {
+      return true;
+    }
+
+    return searchCoverage >= 0.8 && productCoverage >= 0.5;
   }
 
   _saleResultFromProducts(pairs) {
@@ -236,9 +255,14 @@ class CatalogService {
     const { name: productName, quantity } = this._parseQuantity(rawName);
     if (!productName) return null;
 
-    // 1. Coincidencia directa en BD
+    // 1. Coincidencia directa en BD (sucursal específica o catálogo global)
+    const bId = branchId ? parseInt(branchId, 10) : null;
     let product = await prisma.product.findFirst({
-      where: { isAvailable: true, branchId, name: { contains: productName } },
+      where: {
+        isAvailable: true,
+        ...(bId ? { OR: [{ branchId: bId }, { branchId: null }] } : {}),
+        name: { contains: productName }
+      },
     });
     if (product) return { ...product, parsedQuantity: quantity, matchScore: 1 };
 

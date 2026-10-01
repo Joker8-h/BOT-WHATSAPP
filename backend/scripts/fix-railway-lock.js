@@ -6,6 +6,8 @@ const path = require('path');
  * En entornos como Railway, estos archivos pueden quedar bloqueados tras un reinicio
  * forzado, impidiendo que la nueva instancia de WhatsApp se inicie correctamente.
  */
+const { removeChromiumLocks } = require('../src/utils/processCleanup');
+
 async function fixLocks() {
     const authDir = path.join(process.cwd(), '.wwebjs_auth');
     
@@ -20,10 +22,10 @@ async function fixLocks() {
         if (session.startsWith('session-')) {
             const sessionPath = path.join(authDir, session);
             try {
-                fs.rmSync(sessionPath, { recursive: true, force: true });
-                console.log(`✅ Sesión completamente eliminada para forzar reinicio limpio: ${session}`);
+                removeChromiumLocks(sessionPath);
+                console.log(`✅ Candados de Chromium eliminados preservando la sesión: ${session}`);
             } catch (err) {
-                console.error(`❌ No se pudo eliminar la sesión ${session}: ${err.message}`);
+                console.error(`❌ Error al limpiar candados en ${session}: ${err.message}`);
             }
         }
     }

@@ -219,7 +219,7 @@ function mapExcelToProducts(excelData) {
     return [];
   }
   return excelData.map((row, index) => {
-    const category = mapCategory(''); // Por defecto
+    const category = mapCategory(row.category || '', row.name || '', row.features || '');
 
     return {
       name: row.name || `Producto ${index + 1}`,

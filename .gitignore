@@ -1,11 +1,28 @@
 node_modules/
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
 dist/
 build/
 *.log
+logs/
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# WhatsApp Web and Puppeteer
+.wwebjs_auth/
+.wwebjs_cache/
+.local-chromium/
+
+# Service Accounts and Secrets
+google-service-account.json
+src/config/google-service-account.json
+*.pem
+*.key
+
+# Temp files
+temp_audio_*.ogg
+temp_audio_*.mp3
+*.sqlite

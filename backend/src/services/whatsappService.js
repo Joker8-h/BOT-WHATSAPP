@@ -5,6 +5,7 @@ const { prisma } = require('../config/database');
 const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
+const { removeChromiumLocks } = require('../utils/processCleanup');
 
 class WhatsAppService {
   constructor() {
@@ -73,13 +74,8 @@ class WhatsAppService {
         fs.mkdirSync(sessionDir, { recursive: true });
       }
 
-      // 🧹 Eliminar TODO el perfil Chromium anterior (SingletonLock persistente en volumen Railway)
-      // LocalAuth asigna userDataDir = <dataPath>/session-<clientId>
-      const chromiumProfileDir = path.join(sessionDir, `session-branch_${branchId}`);
-      if (fs.existsSync(chromiumProfileDir)) {
-        fs.rmSync(chromiumProfileDir, { recursive: true, force: true });
-        logger.info(`🗑️ Perfil Chromium previo eliminado: ${chromiumProfileDir}`); // <-- key: backtick
-      }
+      // 🧹 Liberar candados huérfanos de Chromium sin borrar la sesión de WhatsApp
+      removeChromiumLocks(sessionDir);
 
       this.sessions.set(branchId, { isReady: false, qr: null, status: 'INITIALIZING' });
 
@@ -242,27 +238,27 @@ class WhatsAppService {
   }
 
   async sendMessage(branchId, to, text, options = {}) {
-    const BLOCKED_NUMBERS = ['3106124802'];
+    const blockedEnv = (process.env.BLOCKED_NUMBERS || '3106124802').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
     const cleanTo = String(to).split('@')[0].split(':')[0].replace(/\D/g, '');
-    if (BLOCKED_NUMBERS.some(b => cleanTo === b || cleanTo === '57' + b || cleanTo.endsWith(b))) {
+    if (blockedEnv.some(b => cleanTo === b || cleanTo === '57' + b || cleanTo.endsWith(b))) {
       logger.warn(`🚫 [SEND-BLOCKED] Intento de envío cancelado para número bloqueado: ${to}`);
       return false;
     }
 
-    const masterBranchId = 1;
-    const client = this.clients.get(masterBranchId);
-    const session = this.sessions.get(masterBranchId);
+    const targetBranch = branchId ? parseInt(branchId) : 1;
+    const client = this.clients.get(targetBranch) || this.clients.get(1);
+    const session = this.sessions.get(targetBranch) || this.sessions.get(1);
 
     if (!client) {
-      logger.error(`❌ [SEND] WhatsApp Central (Branch ${masterBranchId}): cliente NO EXISTE — no se puede enviar a ${to}`);
+      logger.error(`❌ [SEND] WhatsApp (Branch ${targetBranch}/1): cliente NO EXISTE — no se puede enviar a ${to}`);
       return false;
     }
     if (!session?.isReady) {
-      logger.warn(`⚠️ [SEND] WhatsApp sucursal ${masterBranchId} aún no está lista (isReady=false). Intentando enviar de todas formas...`);
+      logger.warn(`⚠️ [SEND] WhatsApp sucursal ${targetBranch} aún no está lista (isReady=false). Intentando enviar de todas formas...`);
     }
 
     try {
-      logger.info(`📤 [SEND-INICIO] Enviando a ${to} (branch ${branchId}, texto ${text.length} chars)`);
+      logger.info(`📤 [SEND-INICIO] Enviando a ${to} (branch ${targetBranch}, texto ${text.length} chars)`);
       await antiBanDelay();
       logger.info(`📤 [SEND-POST-DELAY] Delay completado, preparando envío a ${to}`);
       const chatId = this._normalizeJid(to);
@@ -315,16 +311,16 @@ class WhatsAppService {
   }
 
   async sendMedia(branchId, to, mediaSource, options = {}) {
-    const masterBranchId = 1;
-    const client = this.clients.get(masterBranchId);
-    const session = this.sessions.get(masterBranchId);
+    const targetBranch = branchId ? parseInt(branchId) : 1;
+    const client = this.clients.get(targetBranch) || this.clients.get(1);
+    const session = this.sessions.get(targetBranch) || this.sessions.get(1);
 
     if (!client) {
-      logger.warn(`WhatsApp Central (Branch ${masterBranchId}): cliente no existe para enviar media`);
+      logger.warn(`WhatsApp (Branch ${targetBranch}): cliente no existe para enviar media`);
       return false;
     }
     if (!session?.isReady) {
-      logger.warn(`⚠️ WhatsApp sucursal ${masterBranchId} aún no está lista para media (isReady=false). Intentando enviar...`);
+      logger.warn(`⚠️ WhatsApp sucursal ${targetBranch} aún no está lista para media (isReady=false). Intentando enviar...`);
     }
 
     try {

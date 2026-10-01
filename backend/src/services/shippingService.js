@@ -14,7 +14,8 @@ const normalize = (text) => String(text || '')
 
 const LOCAL_FEE = toAmount(process.env.SHIPPING_LOCAL_FEE, 6000);
 const NATIONAL_FEE = toAmount(process.env.SHIPPING_NATIONAL_FEE, 15000);
-const LOCAL_CITIES = (process.env.SHIPPING_LOCAL_CITIES || 'popayan')
+const DEFAULT_LOCAL_CITIES = 'Popayán, Florencia';
+const LOCAL_CITIES = (process.env.SHIPPING_LOCAL_CITIES || DEFAULT_LOCAL_CITIES)
   .split(',').map(normalize).filter(Boolean);
 
 const money = (value) => `$${Number(value || 0).toLocaleString('es-CO')}`;
@@ -49,7 +50,7 @@ function breakdownLines({ subtotal, fee, label, total }) {
 }
 
 function promptSection(clientCity) {
-  const localNames = (process.env.SHIPPING_LOCAL_CITIES || 'Popayán').split(',').map(s => s.trim()).filter(Boolean).join(', ');
+  const localNames = (process.env.SHIPPING_LOCAL_CITIES || DEFAULT_LOCAL_CITIES).split(',').map(s => s.trim()).filter(Boolean).join(', ');
   let text = `## COSTO DE ENVÍO (se suma al valor de los productos)
 - Envío local (${localNames}): ${money(LOCAL_FEE)} COP.
 - Envío nacional (cualquier otra ciudad o municipio): ${money(NATIONAL_FEE)} COP.

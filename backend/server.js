@@ -83,8 +83,13 @@ app.get('/health', (req, res) => {
 });
 
 // ─── Servir React Admin Panel (build de producción) ───
-const adminBuildPath = path.join(__dirname, 'frontend', 'dist');
-if (fs.existsSync(adminBuildPath)) {
+const candidatePaths = [
+  path.join(__dirname, 'frontend', 'dist'),
+  path.join(__dirname, '..', 'frontend', 'dist'),
+  path.join(process.cwd(), 'frontend', 'dist')
+];
+const adminBuildPath = candidatePaths.find(p => fs.existsSync(p));
+if (adminBuildPath) {
   app.use(express.static(adminBuildPath));
   // SPA fallback — todas las rutas que no son API van a React
   app.get('*', (req, res) => {
@@ -92,7 +97,7 @@ if (fs.existsSync(adminBuildPath)) {
       res.sendFile(path.join(adminBuildPath, 'index.html'));
     }
   });
-  logger.info('📁 Sirviendo admin panel desde build de producción');
+  logger.info(`📁 Sirviendo admin panel desde build de producción: ${adminBuildPath}`);
 } else {
   app.get('/', (req, res) => {
     res.json({

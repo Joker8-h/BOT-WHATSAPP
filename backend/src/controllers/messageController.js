@@ -213,6 +213,15 @@ class MessageController {
       }
 
       if (body) {
+        const preExtracted = this._extractCustomerDataFromText(body);
+        if (Object.keys(preExtracted).length > 0) {
+          await crmService.updateContactInfo(contact.id, preExtracted);
+          contact = { ...contact, ...preExtracted };
+          logger.info(`📝 [PRE-EXTRACT] Datos capturados directamente del mensaje de ${chatId}: ${JSON.stringify(preExtracted)}`);
+        }
+      }
+
+      if (body) {
         ownerAlertService.checkIncoming({
           contact, conversation, branchId, text: body, previousMessageAt: contact.lastMessageAt,
         }).catch(err => logger.warn(`⚠️ [OWNER-ALERT] incoming: ${err.message}`));
@@ -512,6 +521,16 @@ class MessageController {
       if (actions.capturedInterests) contactUpdates.interests = actions.capturedInterests;
       if (actions.capturedDeliveryPhone) contactUpdates.deliveryPhone = actions.capturedDeliveryPhone;
 
+      // Rescatar cualquier dato presente en el texto del usuario que no haya sido capturado
+      if (body) {
+        const textExtracted = this._extractCustomerDataFromText(body);
+        for (const [k, v] of Object.entries(textExtracted)) {
+          if (!contactUpdates[k] && (!contact[k] || contact[k] === 'Sin nombre' || contact[k] === 'Por confirmar')) {
+            contactUpdates[k] = v;
+          }
+        }
+      }
+
       // FALLBACK: Si la IA intentó cerrar contraentrega/venta pero no capturó la dirección con etiqueta,
       // intentar rescatar la dirección que la IA menciona en su propio texto de respuesta.
       if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && !contactUpdates.address && !contact.address) {
@@ -567,18 +586,29 @@ class MessageController {
         });
       }
 
-      // VALIDACIÓN DE DIRECCIÓN PREVIA AL ENVÍO DE RESPUESTA
-      // Si la IA intenta cerrar venta/contraentrega pero falta dirección/ciudad,
-      // suprimimos la respuesta generada de la IA para evitar confirmaciones falsas.
+      // VALIDACIÓN INTELIGENTE DE CIERRE PREVIA AL ENVÍO
       const finalAddress = contactUpdates.address || contact.address;
       const finalCity = contactUpdates.city || contact.city;
-      const missingAddress = !finalAddress || finalAddress === 'Por confirmar';
-      const missingCity = !finalCity || finalCity === 'Por confirmar';
+      const finalNeighborhood = contactUpdates.neighborhood || contact.neighborhood;
+      const missingAddress = !finalAddress || finalAddress === 'Por confirmar' || finalAddress.trim() === '';
+      const missingCity = !finalCity || finalCity === 'Por confirmar' || finalCity.trim() === '';
 
       let aiResponseToSend = aiResult.response;
       if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && (missingAddress || missingCity)) {
-        logger.warn(`⚠️ [MSG-BLOCKED] IA intentó cerrar venta pero falta dirección/ciudad. Suprimiendo respuesta contradictoria.`);
-        aiResponseToSend = null;
+        logger.warn(`⚠️ [ORDER-GATE] Cierre prematuro detectado sin dirección/ciudad (missingAddress=${missingAddress}, missingCity=${missingCity}). Cancelando creación inmediata.`);
+        actions.shouldCreateContraEntrega = false;
+        actions.shouldCloseSale = false;
+
+        const asksForDeliveryInfo = /(?:direcci[oó]n|d[oó]nde te lo enviamos|ciudad|barrio|datos de env[ií]o|para envi[aá]rtelo)/i.test(aiResponseToSend || '');
+        if (!asksForDeliveryInfo) {
+          const missingFields = [];
+          if (missingAddress) missingFields.push('🏠 Tu dirección exacta de entrega');
+          if (!finalNeighborhood || finalNeighborhood === 'Por confirmar') missingFields.push('🏘️ El barrio o sector');
+          if (missingCity) missingFields.push('🏙️ La ciudad');
+          if (!contact.name || contact.name === 'Sin nombre') missingFields.push('👤 Tu nombre completo para el empaque');
+
+          aiResponseToSend = `¡Excelente elección! 💜 Con mucho gusto te dejo tu pedido empacado con total discreción.\n\nPara coordinar tu despacho, por favor compárteme:\n${missingFields.join('\n')}`;
+        }
       }
 
       logger.info(`📤 [MSG-DEBUG] aiResponseToSend: ${aiResponseToSend ? 'SÍ tiene respuesta' : 'NULL — sin respuesta'}, shouldContraEntrega=${actions.shouldCreateContraEntrega}, shouldCloseSale=${actions.shouldCloseSale}, missingAddress=${missingAddress}, missingCity=${missingCity}`);
@@ -660,6 +690,8 @@ class MessageController {
           status: 'PENDING',
           paymentMethod: 'CONTRAENTREGA',
           notes: [
+            contactUpdates.neighborhood || contact.neighborhood ? `Barrio: ${contactUpdates.neighborhood || contact.neighborhood}` : null,
+            deliveryPhone && deliveryPhone !== 'No proporcionado' ? `Tel Entrega: ${deliveryPhone}` : null,
             `${codQuote.label}: ${formatCOP(codQuote.fee)}`,
             notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
           ].filter(Boolean).join(' | '),
@@ -770,6 +802,8 @@ class MessageController {
           shippingCity: payCity,
           shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
           notes: [
+            contactUpdates.neighborhood || contact.neighborhood ? `Barrio: ${contactUpdates.neighborhood || contact.neighborhood}` : null,
+            (contactUpdates.deliveryPhone || contact.deliveryPhone) ? `Tel Entrega: ${contactUpdates.deliveryPhone || contact.deliveryPhone}` : null,
             `${payQuote.label}: ${formatCOP(payQuote.fee)}`,
             notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
           ].filter(Boolean).join(' | '),
@@ -932,6 +966,71 @@ class MessageController {
     if (parts.length <= 1) return [text];
     
     return parts;
+  }
+
+  /**
+   * Extrae determinísticamente información clave del cliente y entrega
+   * (celular, dirección, barrio, ciudad, nombre) desde cualquier texto recibido.
+   */
+  _extractCustomerDataFromText(text) {
+    if (!text || typeof text !== 'string') return {};
+    const extracted = {};
+
+    // 1. Teléfono de entrega (10 dígitos colombianos iniciando en 3)
+    const phoneMatch = text.match(/(?:(?:tel|cel|celular|numero|número|contacto|llamar)\s*[:\s]*)?([3][0-9]{9})\b/i);
+    if (phoneMatch) {
+      extracted.deliveryPhone = phoneMatch[1].trim();
+    }
+
+    // 2. Dirección colombiana estructurada (ej: calle 5 # 12-34, carrera 10 # 4-50, manzana A casa 12)
+    const addrPattern = /(?:(?:calle|cll|cl|carrera|cra|cr|kr|avenida|av|diagonal|dg|transversal|tv)\.?\s*\d+[a-zA-Z]?(?:\s*(?:bis|sur|este|norte))?\s*#\s*\d+[a-zA-Z]?(?:\s*-\s*\d+)?(?:(?:\s+int(?:erior)?|\s+apto|\s+torre|\s+casa|\s+piso)\s*\d+)?|(?:manzana|mz)\s*[a-zA-Z0-9]+\s*(?:casa|lote)\s*[0-9]+)/i;
+    const addrMatch = text.match(addrPattern);
+    if (addrMatch) {
+      extracted.address = addrMatch[0].trim().replace(/[.,;]+$/, '');
+    }
+
+    // 3. Barrio o sector (ej: barrio Modelo, sector Las Palmas)
+    const barrioMatch = text.match(/(?:barrio|b\/|sector|urbanizaci[oó]n|urb\.?)\s+([A-Za-z0-9áéíóúÁÉÍÓÚñÑ\.-]+(?:\s+[A-Za-z0-9áéíóúÁÉÍÓÚñÑ\.-]+)?)/i);
+    if (barrioMatch) {
+      let bName = barrioMatch[1].trim().replace(/[.,;]+$/, '');
+      bName = bName.replace(/\s+(?:calle|cll|cl|carrera|cra|cr|kr|av|avenida|diagonal|dg|tv|casa|apto|mz|tel|cel).*$/i, '').trim();
+      if (bName.length >= 2) {
+        extracted.neighborhood = bName;
+      }
+    }
+
+    // 4. Ciudad
+    const knownCities = [
+      'Popayán', 'Popayan', 'Florencia', 'Pitalito', 'Yopal',
+      'Bogotá', 'Bogota', 'Medellín', 'Medellin', 'Cali', 'Neiva', 'Pasto',
+      'Barranquilla', 'Bucaramanga', 'Pereira', 'Manizales', 'Armenia',
+      'Ibagué', 'Ibague', 'Cartagena', 'Villavicencio', 'Tunja', 'Cúcuta',
+      'Cucuta', 'Valledupar', 'Santa Marta'
+    ];
+    for (const city of knownCities) {
+      const cityRegex = new RegExp(`\\b${city}\\b`, 'i');
+      if (cityRegex.test(text)) {
+        const canonical = city.replace(/Popayan/i, 'Popayán')
+          .replace(/Bogota/i, 'Bogotá')
+          .replace(/Medellin/i, 'Medellín')
+          .replace(/Ibague/i, 'Ibagué')
+          .replace(/Cucuta/i, 'Cúcuta');
+        extracted.city = canonical;
+        break;
+      }
+    }
+
+    // 5. Nombre propio presentado (ej: me llamo Andrea Gómez, a nombre de Carlos Ruiz, soy Camilo)
+    const nameMatch = text.match(/(?:me llamo|mi nombre es|a nombre de)\s+([A-Za-záéíóúÁÉÍÓÚñÑ]{2,25}(?:\s+[A-Za-záéíóúÁÉÍÓÚñÑ]{2,25})?)/i)
+      || text.match(/\bsoy\s+([A-Za-záéíóúÁÉÍÓÚñÑ]{3,20}(?:\s+[A-Za-záéíóúÁÉÍÓÚñÑ]{3,20})?)\b(?!\s+(?:de|un|una|el|la|cliente))/i);
+    if (nameMatch) {
+      const candidateName = nameMatch[1].trim().replace(/[.,;]+$/, '');
+      if (candidateName.length >= 3 && !/(?:vivo|estoy|hola|buenas|quiero)/i.test(candidateName)) {
+        extracted.name = candidateName;
+      }
+    }
+
+    return extracted;
   }
 }
 

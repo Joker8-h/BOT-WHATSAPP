@@ -6,7 +6,7 @@ const { normalizeText, containsPhrase, detectProductTypes } = require('./salesKn
 // Todas las palabras se comparan normalizadas (sin tildes, minúsculas) y como
 // palabras/frases completas: "eso" ya no coincide con "beso", ni "av" con "nuevo".
 const KEYWORDS = {
-  polla: ['polla', 'polla mundialista', 'mundial', 'futbol', 'mundialista', 'champions', 'apostar', 'apuesta', 'copa del mundo', 'copa mundial'],
+  polla: ['polla mundialista', 'polla futbolera', 'mundial de futbol', 'quiniela', 'apuesta mundial', 'copa mundial', 'champions league'],
   help: ['humano', 'hablar con alguien', 'hablar con una persona', 'persona real', 'administrador', 'reclamo', 'queja', 'jefe', 'gerente', 'quejarme', 'supervisor'],
   replyToContact: ['escribiste', 'vi tu mensaje', 'vi el mensaje', 'veo tu mensaje', 'recien veo', 'no te habia visto', 'me mandaste', 'me enviaste', 'te respondo'],
   objection: [

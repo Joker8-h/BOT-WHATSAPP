@@ -417,15 +417,20 @@ class AIService {
       const systemPrompt = buildSystemPrompt(
         {
           name: contact?.name,
+          phone: contact?.phone,
+          deliveryPhone: contact?.deliveryPhone || contact?.phone,
           city: contact?.city,
+          address: contact?.address,
+          neighborhood: contact?.neighborhood,
           clientType,
           purchaseStage: classification?.purchaseStage || contact?.purchaseStage || 'CURIOSO',
           totalPurchases: contact?.totalPurchases || 0,
           totalSpent: contact?.totalSpent || 0,
           interests: contact?.interests,
           closestBranch: closestBranch ? `${closestBranch.name} (${closestBranch.address})` : 'nuestra sede principal',
-          lastOrderAddress: lastOrder?.shippingAddress,
-          lastOrderCity: lastOrder?.shippingCity
+          lastOrderAddress: lastOrder?.shippingAddress || contact?.address,
+          lastOrderCity: lastOrder?.shippingCity || contact?.city,
+          lastOrderNeighborhood: contact?.neighborhood,
         },
         products,
         currentBranch || closestBranch || {},
@@ -768,73 +773,78 @@ Responde SOLO con el texto del mensaje.`;
       deliveryOption: null 
     };
 
-    if (response.includes('[ESCALAR]')) actions.shouldEscalate = true;
-    if (response.includes('domicilio') && response.length < 500) actions.deliveryOption = 'DOMICILIO';
+    if (/\[ESCALAR\]/i.test(response)) actions.shouldEscalate = true;
+    if (/\bdomicilio\b/i.test(response) && response.length < 500) actions.deliveryOption = 'DOMICILIO';
     
-    const nameMatch = response.match(/\[CAPTURAR_NOMBRE:(.+?)\]/);
+    const nameMatch = response.match(/\[CAPTURAR_NOMBRE:\s*(.+?)\]/i);
     if (nameMatch) {
       actions.capturedName = nameMatch[1].trim();
     }
 
-    const cityMatch = response.match(/\[CAPTURAR_CIUDAD:(.+?)\]/);
+    const cityMatch = response.match(/\[CAPTURAR_CIUDAD:\s*(.+?)\]/i);
     if (cityMatch) {
       actions.capturedCity = cityMatch[1].trim();
     }
 
-    const addressMatch = response.match(/\[CAPTURAR_DIRECCION:(.+?)\]/);
+    const addressMatch = response.match(/\[CAPTURAR_DIRECCION:\s*(.+?)\]/i);
     if (addressMatch) {
       actions.capturedAddress = addressMatch[1].trim();
     }
 
-    const fullNameMatch = response.match(/\[CAPTURAR_NOMBRE_COMPLETO:(.+?)\]/);
+    const fullNameMatch = response.match(/\[CAPTURAR_NOMBRE_COMPLETO:\s*(.+?)\]/i);
     if (fullNameMatch) {
       actions.capturedFullName = fullNameMatch[1].trim();
     }
 
-    const interestsMatch = response.match(/\[CAPTURAR_GUSTOS:(.+?)\]/);
+    const interestsMatch = response.match(/\[CAPTURAR_GUSTOS:\s*(.+?)\]/i);
     if (interestsMatch) {
       actions.capturedInterests = interestsMatch[1].trim();
     }
 
-    const neighborhoodMatch = response.match(/\[CAPTURAR_BARRIO:(.+?)\]/);
+    const neighborhoodMatch = response.match(/\[CAPTURAR_BARRIO:\s*(.+?)\]/i);
     if (neighborhoodMatch) {
       actions.capturedNeighborhood = neighborhoodMatch[1].trim();
     }
 
-    const deliveryPhoneMatch = response.match(/\[CAPTURAR_TELEFONO_ENTREGA:(.+?)\]/);
+    const deliveryPhoneMatch = response.match(/\[CAPTURAR_TELEFONO_ENTREGA:\s*(.+?)\]/i);
     if (deliveryPhoneMatch) {
       actions.capturedDeliveryPhone = deliveryPhoneMatch[1].trim();
     }
 
+    const paymentMethodMatch = response.match(/\[(?:CAPTURAR_METODO_PAGO|METODO_PAGO):\s*(.+?)\]/i);
+    if (paymentMethodMatch) {
+      actions.capturedPaymentMethod = paymentMethodMatch[1].trim();
+    }
+
     const splitProducts = (raw) => raw.split(',').map(p => p.trim()).filter(Boolean);
 
-    const saleMatch = response.match(/\[CERRAR_VENTA:(.+?)\]/);
+    const saleMatch = response.match(/\[CERRAR_VENTA:\s*(.+?)\]/i);
     if (saleMatch) {
       actions.shouldCloseSale = true;
       actions.wompiProducts = splitProducts(saleMatch[1]);
       actions.productsToSell = actions.wompiProducts;
     }
 
-    const contraMatch = response.match(/\[PEDIDO_CONTRAENTREGA:(.+?)\]/);
+    const contraMatch = response.match(/\[PEDIDO_CONTRAENTREGA:\s*(.+?)\]/i);
     if (contraMatch) {
       actions.shouldCreateContraEntrega = true;
       actions.contraProducts = splitProducts(contraMatch[1]);
       actions.productsToSell = actions.contraProducts;
     }
 
-    const imageMatches = response.match(/\[IMAGEN:(.+?)\]/g);
+    const imageMatches = response.match(/\[IMAGEN:\s*(.+?)\]/gi);
     if (imageMatches) {
-      actions.images = [...new Set(imageMatches.map(m => m.match(/\[IMAGEN:(.+?)\]/)[1].trim()))];
+      actions.images = [...new Set(imageMatches.map(m => m.match(/\[IMAGEN:\s*(.+?)\]/i)[1].trim()))];
     }
 
-    const intentMatch = response.match(/\[CAPTURAR_INTENCION:(.+?)\]/);
+    const intentMatch = response.match(/\[CAPTURAR_INTENCION:\s*(.+?)\]/i);
     if (intentMatch) actions.capturedIntent = intentMatch[1].trim();
 
-    const budgetMatch = response.match(/\[CAPTURAR_PRESUPUESTO:(.+?)\]/);
+    const budgetMatch = response.match(/\[CAPTURAR_PRESUPUESTO:\s*(.+?)\]/i);
     if (budgetMatch) actions.capturedBudget = budgetMatch[1].trim();
 
     const collectAll = (tag) => {
-      const re = new RegExp(`\\[${tag}:(.+?)\\]`, 'g');
+      const re = new RegExp(`\\[${tag}:\\s*(.+?)\\]`, 'gi');
       const values = [];
       let m;
       while ((m = re.exec(response)) !== null) {

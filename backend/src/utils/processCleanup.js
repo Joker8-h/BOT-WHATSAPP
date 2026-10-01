@@ -4,6 +4,25 @@ const path = require('path');
 const os = require('os');
 const logger = require('./logger');
 
+function removeChromiumLocks(dir) {
+  if (!fs.existsSync(dir)) return;
+  const lockNames = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        removeChromiumLocks(fullPath);
+      } else if (lockNames.includes(entry.name) || entry.name.startsWith('Singleton')) {
+        try {
+          fs.unlinkSync(fullPath);
+          logger.info(`🔓 Candado de Chromium eliminado: ${fullPath}`);
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+}
+
 function cleanupPuppeteer() {
   logger.info('🧹 Limpiando procesos y perfiles Chromium huérfanos...');
 
@@ -36,7 +55,8 @@ function cleanupPuppeteer() {
     if (cleaned > 0) logger.info(`🗑️ ${cleaned} perfil(es) temporal(es) de Chromium eliminados.`);
   } catch (_) {}
 
-  // 3. Limpiar perfiles Chromium completos de .wwebjs_auth (LocalAuth asigna userDataDir = <dataPath>/session-<clientId>)
+  // 3. Limpiar candados Chromium (SingletonLock, SingletonSocket, SingletonCookie) dentro de .wwebjs_auth
+  // SIN eliminar las credenciales ni la sesión de LocalAuth
   const wwebjsDir = path.join(process.cwd(), '.wwebjs_auth');
   try {
     if (fs.existsSync(wwebjsDir)) {
@@ -44,12 +64,7 @@ function cleanupPuppeteer() {
       for (const branch of branches) {
         const branchDir = path.join(wwebjsDir, branch);
         if (fs.statSync(branchDir).isDirectory()) {
-          const sessionDir = path.join(branchDir, `session-${branch}`);
-          if (fs.existsSync(sessionDir)) {
-            try {
-              fs.rmSync(sessionDir, { recursive: true, force: true });
-            } catch (_) {}
-          }
+          removeChromiumLocks(branchDir);
         }
       }
     }
@@ -59,17 +74,11 @@ function cleanupPuppeteer() {
   const chromeConfigDir = path.join(os.homedir(), '.config', 'chromium');
   try {
     if (fs.existsSync(chromeConfigDir)) {
-      const locks = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
-      for (const lock of locks) {
-        const lockPath = path.join(chromeConfigDir, lock);
-        if (fs.existsSync(lockPath)) {
-          fs.unlinkSync(lockPath);
-        }
-      }
+      removeChromiumLocks(chromeConfigDir);
     }
   } catch (_) {}
 
   logger.info('✅ Limpieza de Chromium completada.');
 }
 
-module.exports = { cleanupPuppeteer };
+module.exports = { cleanupPuppeteer, removeChromiumLocks };
