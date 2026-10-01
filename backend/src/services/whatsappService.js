@@ -6,12 +6,14 @@ const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 const { removeChromiumLocks } = require('../utils/processCleanup');
+const emailService = require('./emailService');
 
 class WhatsAppService {
   constructor() {
     this.clients = new Map();
     this.sessions = new Map();
     this.pendingInits = new Set();
+    this._botSentIds = new Set();
 
     this.messageHandler = null;
     this.manualLogout = new Set();
@@ -22,6 +24,14 @@ class WhatsAppService {
     if (!fs.existsSync(this.authDir)) {
       fs.mkdirSync(this.authDir, { recursive: true });
     }
+  }
+
+  _trackBotMessage(id) {
+    if (!id) return;
+    if (this._botSentIds.size > 3000) {
+      this._botSentIds.clear();
+    }
+    this._botSentIds.add(id);
   }
 
   get isReady() {
@@ -122,6 +132,8 @@ class WhatsAppService {
         this.clients.delete(branchId);
         this.pendingInits.delete(branchId);
 
+        this._sendSessionAlert(branchId, reason, 'DISCONNECTED').catch(() => {});
+
         if (this.manualLogout.has(branchId)) {
           logger.info(`🛑 Desconexión MANUAL de sucursal ${branchId}. No se reconectará.`);
           this.manualLogout.delete(branchId);
@@ -139,6 +151,8 @@ class WhatsAppService {
         logger.warn(`⚠️ Auth failure para sucursal ${branchId}: ${message}`);
         this.sessions.set(branchId, { isReady: false, qr: null, status: 'AUTH_FAILURE' });
 
+        this._sendSessionAlert(branchId, message, 'AUTH_FAILURE').catch(() => {});
+
         const sessDir = path.join(this.authDir, `branch_${branchId}`);
         try {
           if (fs.existsSync(sessDir)) {
@@ -155,6 +169,58 @@ class WhatsAppService {
             logger.error(`Error re-inicializando sucursal ${branchId}:`, err)
           );
         }, 15000);
+      });
+
+      client.on('message_create', async (msg) => {
+        try {
+          if (!msg.fromMe) return;
+
+          const serializedId = msg.id?._serialized;
+          if (serializedId && this._botSentIds.has(serializedId)) {
+            this._botSentIds.delete(serializedId);
+            return;
+          }
+
+          const to = msg.to;
+          if (!to || to === 'status@broadcast' || to.includes('@g.us') || to.includes('@broadcast')) return;
+
+          // Asesor humano respondió directamente en el WhatsApp del negocio
+          const cleanPhone = to.split('@')[0].split(':')[0].replace(/\D/g, '');
+          logger.info(`🧑‍💼 [HUMAN-TAKEOVER] Mensaje manual de asesor detectado hacia ${cleanPhone} (Sucursal ${branchId}): "${(msg.body || '').substring(0, 30)}..."`);
+
+          const contact = await prisma.contact.findFirst({
+            where: { phone: { contains: cleanPhone.slice(-10) } }
+          });
+
+          if (contact) {
+            const conversation = await prisma.conversation.findFirst({
+              where: { contactId: contact.id, status: { not: 'CLOSED' } },
+              orderBy: { updatedAt: 'desc' }
+            });
+
+            if (conversation) {
+              if (conversation.status !== 'PAUSED') {
+                await prisma.conversation.update({
+                  where: { id: conversation.id },
+                  data: { status: 'PAUSED' }
+                });
+                logger.info(`🤫 [HUMAN-TAKEOVER] Conversación ${conversation.id} pausada automáticamente por respuesta manual de asesor.`);
+              }
+
+              await prisma.message.create({
+                data: {
+                  conversationId: conversation.id,
+                  role: 'ASSISTANT',
+                  content: `[Asesor Humano]: ${msg.body || (msg.hasMedia ? '(Archivo multimedia enviado)' : '')}`,
+                  waMessageId: serializedId,
+                  messageType: msg.hasMedia ? 'media' : 'text'
+                }
+              });
+            }
+          }
+        } catch (takeoverErr) {
+          logger.error(`Error en detección de intervención humana (Sucursal ${branchId}):`, takeoverErr);
+        }
       });
 
       client.on('message', async (msg) => {
@@ -265,12 +331,16 @@ class WhatsAppService {
       logger.info(`📤 [SEND-JID] ChatID normalizado: ${chatId}`);
 
       const sendWithTimeout = async (chatId, messageText, timeoutMs = 60000) => {
-        return Promise.race([
+        const sent = await Promise.race([
           client.sendMessage(chatId, messageText),
           new Promise((_, reject) =>
             setTimeout(() => reject(new Error(`Timeout ${timeoutMs}ms al enviar a ${chatId}`)), timeoutMs)
           )
         ]);
+        if (sent?.id?._serialized) {
+          this._trackBotMessage(sent.id._serialized);
+        }
+        return sent;
       };
 
       // Los avisos al dueño viajan completos. El corte corto es solo para el chat con el cliente.
@@ -346,20 +416,22 @@ class WhatsAppService {
         const mimetype = response.headers['content-type'] || 'image/png';
         const base64 = buffer.toString('base64');
 
+        let sentMedia;
         if (options.isAudio) {
           const media = new MessageMedia('audio/mp4', base64, 'audio.mp4');
-          await client.sendMessage(chatId, media, { sendAudioAsVoice: true });
+          sentMedia = await client.sendMessage(chatId, media, { sendAudioAsVoice: true });
         } else if (mimetype.startsWith('image/')) {
           const media = new MessageMedia(mimetype, base64, 'image');
-          await client.sendMessage(chatId, media, { caption: options.caption || '' });
+          sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
         } else if (mimetype.startsWith('video/')) {
           const media = new MessageMedia(mimetype, base64, 'video');
-          await client.sendMessage(chatId, media, { caption: options.caption || '' });
+          sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
         } else {
           const fileName = mediaSource.split('/').pop() || 'file';
           const media = new MessageMedia(mimetype, base64, fileName);
-          await client.sendMessage(chatId, media, { caption: options.caption || '' });
+          sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
         }
+        if (sentMedia?.id?._serialized) this._trackBotMessage(sentMedia.id._serialized);
       } else {
         const buffer = fs.readFileSync(mediaSource);
         const base64 = buffer.toString('base64');
@@ -371,7 +443,8 @@ class WhatsAppService {
         };
         const mimetype = mimeTypes[ext] || 'image/png';
         const media = new MessageMedia(mimetype, base64, path.basename(mediaSource));
-        await client.sendMessage(chatId, media, { caption: options.caption || '' });
+        const sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
+        if (sentMedia?.id?._serialized) this._trackBotMessage(sentMedia.id._serialized);
       }
 
       logger.info(`📤 Media enviado exitosamente a ${chatId}`);
@@ -501,6 +574,37 @@ class WhatsAppService {
     }
     this.clients.clear();
     this.sessions.clear();
+  }
+
+  async _sendSessionAlert(branchId, reason, type = 'DISCONNECTED') {
+    try {
+      const alertEmail = process.env.ALERT_EMAIL || process.env.ADMIN_EMAIL;
+      const adminUser = await prisma.user.findFirst({
+        where: { role: 'SUPER_ADMIN' },
+        select: { email: true }
+      });
+      const targetEmail = alertEmail || adminUser?.email;
+      if (!targetEmail) return;
+
+      const subject = type === 'AUTH_FAILURE'
+        ? `🚨 [URGENTE] Fallo de Autenticación WhatsApp - Sucursal ${branchId}`
+        : `⚠️ Desconexión de WhatsApp - Sucursal ${branchId}`;
+
+      const html = `
+        <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #f5c6cb; border-radius: 8px;">
+          <h2 style="color: #d63384;">Alerta Chatbot Fantasías</h2>
+          <p>Se ha detectado una desconexión o fallo en la sesión de WhatsApp de la <strong>Sucursal ${branchId}</strong>:</p>
+          <p style="background: #f8d7da; padding: 12px; border-radius: 4px; font-weight: bold; color: #721c24;">
+            Evento: ${type}<br>Detalle: ${reason || 'Sin información adicional'}
+          </p>
+          <p>Si no se reconecta automáticamente en unos minutos, por favor ingresa al panel administrativo para escanear el código QR.</p>
+        </div>
+      `;
+
+      await emailService.sendEmail(targetEmail, subject, html);
+    } catch (err) {
+      logger.warn(`No se pudo enviar alerta de email para sucursal ${branchId}: ${err.message}`);
+    }
   }
 }
 

@@ -193,6 +193,22 @@ REGLA DE CAPTURA INTELIGENTE DE SOFÍA:
 1. Si un dato ya aparece registrado arriba (NO dice "PENDIENTE"), NO lo vuelvas a preguntar jamás.
 2. Si vas a cerrar la venta y hay datos en "⚠️ PENDIENTE POR CAPTURAR", pídelos amablemente antes de usar etiquetas de cierre.
 3. Si el cliente ya dio todos los datos necesarios, arma el resumen (producto + envío = total) y activa el pedido con [PEDIDO_CONTRAENTREGA: Producto] o [CERRAR_VENTA: Producto].`;
+
+    if (clientProfile.lastOrderId) {
+      prompt += `\n\n## ESTADO DEL ÚLTIMO PEDIDO DEL CLIENTE (#${clientProfile.lastOrderId}):
+- Estado actual: ${clientProfile.lastOrderStatus || 'PENDING'}
+- Número de Guía / Tracking: ${clientProfile.lastOrderTracking ? `*${clientProfile.lastOrderTracking}*` : 'En preparación para despacho (Aún no asignada)'}
+- Método de Pago: ${clientProfile.lastOrderPaymentMethod || 'Contraentrega'}
+- Productos: ${clientProfile.lastOrderProducts || 'Productos Fantasías'}
+- Valor Total: $${Number(clientProfile.lastOrderAmount || 0).toLocaleString('es-CO')} COP
+- Fecha de Orden: ${clientProfile.lastOrderDate || 'Reciente'}
+
+REGLA DE RASTREO Y GUÍA:
+Si el cliente pregunta "¿Dónde va mi pedido?", "¿Tienen guía?", "¿Cuándo llega mi paquete?", o por el estado de su compra:
+1. Infórmale amablemente el estado actual de su pedido #${clientProfile.lastOrderId}.
+2. Si ya tiene número de guía (${clientProfile.lastOrderTracking || 'ninguno'}), facilítaselo (*${clientProfile.lastOrderTracking}*) e indícale que viaja con la transportadora y empaque 100% discreto.
+3. Si aún no tiene número de guía, explícale que su pedido ya está registrado y en empaque/alistamiento, y que la guía se le compartirá tan pronto la transportadora recoja el paquete.`;
+    }
   }
 
   prompt += `\n\n${shippingService.promptSection(clientProfile?.city)}`;

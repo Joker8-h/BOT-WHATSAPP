@@ -20,7 +20,7 @@ class CampaignService {
   /**
    * Crea una nueva campaña
    */
-  async createCampaign({ name, message, targetFilter, scheduledAt }) {
+  async createCampaign({ name, message, targetFilter, scheduledAt, branchId }) {
     // Contar cuántos contactos aplican
     const whereFilter = this._buildFilter(targetFilter);
     const totalTargets = await prisma.contact.count({ where: whereFilter });
@@ -31,12 +31,13 @@ class CampaignService {
         message,
         targetFilter: targetFilter || {},
         totalTargets,
+        branchId: branchId ? parseInt(branchId, 10) : null,
         status: scheduledAt ? 'SCHEDULED' : 'DRAFT',
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
       },
     });
 
-    logger.info(`📢 Campaña creada: "${name}" (${totalTargets} contactos)`);
+    logger.info(`📢 Campaña creada: "${name}" (${totalTargets} contactos, sede: ${branchId || 'Global (1)'})`);
     return campaign;
   }
 
@@ -76,12 +77,10 @@ class CampaignService {
    * Envía mensajes de campaña con control anti-ban
    */
   async _sendCampaignMessages(campaignId, contacts, message, branchId) {
-    if (!branchId) {
-      logger.error(`❌ Campaña ${campaignId} abortada: No tiene branchId asignado.`);
-      return;
-    }
+    const targetBranch = branchId || 1;
+    logger.info(`📢 Ejecutando envíos de campaña ${campaignId} para ${contacts.length} contactos en sucursal ${targetBranch}`);
 
-    const results = await this.whatsappService.sendBulkMessages(branchId, contacts, message, 8000);
+    const results = await this.whatsappService.sendBulkMessages(targetBranch, contacts, message, 8000);
 
     const sentCount = results.filter(r => r.sent).length;
     const deliveredCount = sentCount; // Aproximación

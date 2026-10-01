@@ -403,7 +403,13 @@ class AIService {
       const lastOrder = contact?.id ? await prisma.order.findFirst({
         where: { contactId: contact.id },
         orderBy: { createdAt: 'desc' },
-        select: { shippingAddress: true, shippingCity: true }
+        include: {
+          items: {
+            include: {
+              product: { select: { name: true } }
+            }
+          }
+        }
       }) : null;
 
       const allBranches = await prisma.branch.findMany({
@@ -428,6 +434,13 @@ class AIService {
           totalSpent: contact?.totalSpent || 0,
           interests: contact?.interests,
           closestBranch: closestBranch ? `${closestBranch.name} (${closestBranch.address})` : 'nuestra sede principal',
+          lastOrderId: lastOrder?.id,
+          lastOrderStatus: lastOrder?.status,
+          lastOrderTracking: lastOrder?.trackingNumber,
+          lastOrderAmount: lastOrder?.amount,
+          lastOrderPaymentMethod: lastOrder?.paymentMethod,
+          lastOrderDate: lastOrder?.createdAt ? new Date(lastOrder.createdAt).toLocaleDateString('es-CO') : null,
+          lastOrderProducts: lastOrder?.items?.map(i => `${i.quantity}x ${i.product?.name || 'Producto'}`).join(', '),
           lastOrderAddress: lastOrder?.shippingAddress || contact?.address,
           lastOrderCity: lastOrder?.shippingCity || contact?.city,
           lastOrderNeighborhood: contact?.neighborhood,

@@ -701,6 +701,23 @@ class MessageController {
         logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por ${formatCOP(codQuote.total)} (envío ${formatCOP(codQuote.fee)}) — sin doble confirmación al cliente.`);
 
         await crmService.recordPurchase(contact.id, codQuote.total, conversation.id);
+
+        // Descontar inventario de cada producto vendido
+        for (const item of orderItems) {
+          try {
+            const prod = await prisma.product.findUnique({ where: { id: item.productId } });
+            if (prod) {
+              const newStock = Math.max(0, (prod.stock || 0) - (item.quantity || 1));
+              await prisma.product.update({
+                where: { id: prod.id },
+                data: { stock: newStock, isAvailable: newStock > 0 },
+              });
+              logger.info(`📉 [STOCK-COD] Stock actualizado para "${prod.name}" (ID ${prod.id}): ${prod.stock} -> ${newStock}`);
+            }
+          } catch (errStock) {
+            logger.error(`Error actualizando stock COD para producto ID ${item.productId}:`, errStock.message);
+          }
+        }
         await crmService.patchContext(conversation.id, (ctx) => {
           const next = { ...ctx };
           delete next.pedido;

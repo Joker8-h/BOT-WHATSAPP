@@ -124,6 +124,25 @@ export const updateConversationStatus = (id, status) => api(`/api/conversations/
 // ── Orders ──
 export const getOrders = (params = '') => api(`/api/orders?${params}`);
 export const updateOrderStatus = (id, data) => api(`/api/orders/${id}/status`, { method: 'PUT', body: JSON.stringify(data) });
+export const downloadOrdersCSV = async (params = '') => {
+  const token = getToken();
+  const headers = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}/api/orders/export-csv?${params}`, { headers });
+  if (!res.ok) throw new Error('Error al descargar el archivo CSV');
+
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const dateStr = new Date().toISOString().split('T')[0];
+  a.download = `pedidos_fantasias_${dateStr}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+};
 
 // ── Campaigns ──
 export const getCampaigns = () => api('/api/admin/campaigns');

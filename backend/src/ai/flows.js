@@ -20,6 +20,7 @@ const KEYWORDS = {
     'si quiero', 'lo quiero', 'los quiero', 'la quiero', 'lo llevo', 'si lo llevo', 'me lo llevo', 'los llevo', 'enviamelo', 'enviamelos', 'mandamelo', 'mandamelos',
     'dale', 'confirmo', 'de acuerdo', 'deacuerdo', 'ok compra', 'hagamos el pedido', 'quiero pedir', 'quiero comprar', 'lo compro', 'los compro', 'con el complemento', 'con los dos',
   ],
+  orderTracking: ['mi pedido', 'mi paquete', 'mi compra', 'numero de guia', 'la guia', 'tienen guia', 'tienen numero de guia', 'donde va mi pedido', 'estado de mi pedido', 'ya lo enviaron', 'cuando llega mi pedido', 'guia de envio', 'mi envio', 'rastreo'],
   price: ['precio', 'precios', 'cuanto', 'cuesta', 'valor', 'costo', 'costos'],
   shipping: ['envio', 'envios', 'domicilio', 'despacho', 'entregan', 'hacen envios', 'cuanto tarda', 'cuanto se demora', 'llega'],
   catalog: ['catalogo', 'productos', 'que tienen', 'que venden', 'que manejan'],
@@ -55,6 +56,7 @@ function detectFlow(message, context = {}) {
 
   if (hasAny(msg, KEYWORDS.objection)) return 'OBJECTION';
 
+  if (hasAny(msg, KEYWORDS.orderTracking)) return 'ORDER_TRACKING';
   if (hasAny(msg, KEYWORDS.price)) return 'STRATEGIC_DIRECTION';
   if (hasAny(msg, KEYWORDS.shipping)) return 'SHIPPING_INFO';
   if (hasAny(msg, KEYWORDS.store)) return 'PHYSICAL_STORE';
@@ -117,6 +119,13 @@ function getFlowInstructions(flow) {
 - "Lo voy a pensar": ancla la recomendación con nombre y precio y ofrece dejarla apartada hoy.
 - Termina con una pregunta fácil de responder que mantenga viva la venta.
 - Registra [OBJECION: tipo].`,
+
+    ORDER_TRACKING: `FLUJO ACTUAL: SEGUIMIENTO Y GUÍA DE PEDIDO
+- El cliente está preguntando por el estado de su pedido o el número de guía.
+- Revisa la sección ## ESTADO DEL ÚLTIMO PEDIDO DEL CLIENTE.
+- Si tiene pedido registrado: dale el estado actual de forma clara y amable. Si ya tiene número de guía, compárteselo (*guía*) e indícale que viaja con empaque 100% discreto.
+- Si aún no tiene guía asignada, dile con tranquilidad que su pedido ya está registrado y en empaque/alistamiento para ser entregado a la transportadora, y que apenas tengamos la guía se la compartiremos.
+- Si NO tiene ningún pedido registrado en el sistema, pídele amablemente su nombre completo o el comprobante para verificar con el área de despachos.`,
 
     SHIPPING_INFO: `FLUJO ACTUAL: INFORMACIÓN DE ENVÍO
 - Responde clara y brevemente con la INFORMACIÓN LOGÍSTICA (envío discreto, contraentrega solo en Popayán, Pitalito, Florencia y Yopal dentro de la ciudad, resto por transportadora con link de pago) y el COSTO DE ENVÍO que le corresponde según su ciudad.

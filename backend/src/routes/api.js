@@ -116,6 +116,7 @@ api.post('/store-catalog/sync', isAdmin, async (req, res) => {
 });
 
 api.get('/orders', (req, res) => adminController.getOrders(req, res));
+api.get('/orders/export-csv', (req, res) => adminController.exportOrdersCSV(req, res));
 api.put('/orders/:id/status', (req, res) => adminController.updateOrderStatus(req, res));
 api.get('/conversations', (req, res) => adminController.getConversations(req, res));
 api.get('/conversations/:id/messages', (req, res) => adminController.getConversationMessages(req, res));

@@ -497,7 +497,7 @@ class AdminController {
         prisma.order.findMany({
           where,
           include: {
-            contact: { select: { name: true, phone: true, city: true } },
+            contact: { select: { name: true, phone: true, city: true, address: true, neighborhood: true, deliveryPhone: true } },
             items: { include: { product: { select: { name: true, category: true, price: true } } } },
             branch: { select: { name: true } }
           },
@@ -510,6 +510,87 @@ class AdminController {
 
       res.json({ success: true, data: { orders, total, totalPages: Math.ceil(total / 30) } });
     } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
+  async exportOrdersCSV(req, res) {
+    try {
+      const { status } = req.query;
+      const { role } = req.user;
+      let branchId = req.user.branchId;
+      if (role === 'ADMIN' && req.query.branchId) branchId = parseInt(req.query.branchId);
+
+      const where = branchId ? { branchId } : {};
+      if (status) where.status = status;
+
+      const orders = await prisma.order.findMany({
+        where,
+        include: {
+          contact: { select: { name: true, phone: true, city: true, address: true, neighborhood: true, deliveryPhone: true } },
+          items: { include: { product: { select: { name: true } } } },
+          branch: { select: { name: true } }
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const escapeCSV = (field) => {
+        if (field === null || field === undefined) return '""';
+        const str = String(field).replace(/"/g, '""');
+        return `"${str}"`;
+      };
+
+      const headers = [
+        'ID Pedido',
+        'Fecha',
+        'Sucursal',
+        'Cliente',
+        'Teléfono Contacto',
+        'Teléfono Entrega',
+        'Ciudad',
+        'Dirección',
+        'Barrio',
+        'Productos',
+        'Total COP',
+        'Método Pago',
+        'Estado',
+        'Guía de Rastreo',
+        'Notas'
+      ];
+
+      const rows = orders.map(o => {
+        const productSummary = (o.items || [])
+          .map(item => `${item.quantity}x ${item.product?.name || 'Producto'}`)
+          .join(' + ');
+
+        return [
+          o.id,
+          new Date(o.createdAt).toLocaleString('es-CO'),
+          o.branch?.name || 'Sede Principal',
+          o.contact?.name || 'Cliente',
+          o.contact?.phone || '',
+          o.contact?.deliveryPhone || o.contact?.phone || '',
+          o.shippingCity || o.contact?.city || '',
+          o.shippingAddress || o.contact?.address || '',
+          o.contact?.neighborhood || '',
+          productSummary,
+          Number(o.amount || 0),
+          o.paymentMethod || 'CONTRAENTREGA',
+          o.status,
+          o.trackingNumber || '',
+          o.notes || ''
+        ].map(escapeCSV).join(',');
+      });
+
+      // UTF-8 BOM para soporte de tildes en Excel de Windows/Mac
+      const csvContent = '\ufeff' + [headers.map(escapeCSV).join(','), ...rows].join('\r\n');
+
+      const dateStr = new Date().toISOString().split('T')[0];
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="pedidos_fantasias_${dateStr}.csv"`);
+      return res.status(200).send(csvContent);
+    } catch (error) {
+      logger.error('Error exportando pedidos a CSV:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   }
@@ -609,7 +690,8 @@ class AdminController {
 
   async createCampaign(req, res) {
     try {
-      const campaign = await campaignService.createCampaign(req.body);
+      const branchId = req.user.branchId || req.body.branchId || 1;
+      const campaign = await campaignService.createCampaign({ ...req.body, branchId });
       res.json({ success: true, data: campaign });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
