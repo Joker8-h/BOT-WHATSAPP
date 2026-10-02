@@ -1,6 +1,6 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const logger = require('../utils/logger');
-const { antiBanDelay } = require('../utils/helpers');
+const { antiBanDelay, isPhoneBlocked } = require('../utils/helpers');
 const { prisma } = require('../config/database');
 const path = require('path');
 const fs = require('fs');
@@ -229,6 +229,11 @@ class WhatsAppService {
         const from = msg.from;
         if (!from || from === 'status@broadcast' || from.includes('@g.us') || from.includes('@broadcast')) return;
 
+        if (isPhoneBlocked(from) || isPhoneBlocked(msg.author) || isPhoneBlocked(msg._data?.from)) {
+          logger.info(`🚫 [WA-RAW] Mensaje ignorado de número bloqueado: ${from}`);
+          return;
+        }
+
         const body = msg.body || '';
 
         logger.info(`📩 [WA-RAW] Mensaje de ${from}: ${body?.substring(0, 20)}...`);
@@ -304,9 +309,7 @@ class WhatsAppService {
   }
 
   async sendMessage(branchId, to, text, options = {}) {
-    const blockedEnv = (process.env.BLOCKED_NUMBERS || '3106124802').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
-    const cleanTo = String(to).split('@')[0].split(':')[0].replace(/\D/g, '');
-    if (blockedEnv.some(b => cleanTo === b || cleanTo === '57' + b || cleanTo.endsWith(b))) {
+    if (isPhoneBlocked(to)) {
       logger.warn(`🚫 [SEND-BLOCKED] Intento de envío cancelado para número bloqueado: ${to}`);
       return false;
     }
@@ -381,6 +384,11 @@ class WhatsAppService {
   }
 
   async sendMedia(branchId, to, mediaSource, options = {}) {
+    if (isPhoneBlocked(to)) {
+      logger.warn(`🚫 [SEND-BLOCKED] Intento de envío de media cancelado para número bloqueado: ${to}`);
+      return false;
+    }
+
     const targetBranch = branchId ? parseInt(branchId) : 1;
     const client = this.clients.get(targetBranch) || this.clients.get(1);
     const session = this.sessions.get(targetBranch) || this.sessions.get(1);

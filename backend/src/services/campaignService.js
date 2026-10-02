@@ -4,6 +4,7 @@
 const { prisma } = require('../config/database');
 const cron = require('node-cron');
 const logger = require('../utils/logger');
+const { isPhoneBlocked } = require('../utils/helpers');
 
 class CampaignService {
   constructor() {
@@ -64,7 +65,8 @@ class CampaignService {
     const whereFilter = this._buildFilter(campaign.targetFilter);
     whereFilter.isActive = true;
     whereFilter.isBlocked = false;
-    const contacts = await prisma.contact.findMany({ where: whereFilter });
+    const allContacts = await prisma.contact.findMany({ where: whereFilter });
+    const contacts = allContacts.filter(c => !isPhoneBlocked(c.phone));
 
     // Enviar mensajes en background
     this._sendCampaignMessages(campaign.id, contacts, campaign.message, campaign.branchId)

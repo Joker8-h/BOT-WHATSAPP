@@ -13,7 +13,7 @@ const ownerAlertService = require('../services/ownerAlertService');
 const shippingService = require('../services/shippingService');
 const { mergeSaleState } = require('../ai/saleState');
 const { prisma } = require('../config/database');
-const { isWorkingHours, formatCOP } = require('../utils/helpers');
+const { isWorkingHours, formatCOP, isPhoneBlocked } = require('../utils/helpers');
 const crypto = require('crypto');
 
 // Ventana para agrupar ráfagas: el cliente suele escribir 2-3 mensajes seguidos
@@ -903,29 +903,8 @@ class MessageController {
     );
   }
 
-  /**
-   * Verifica si un JID, número o string pertenece a un número bloqueado.
-   * Maneja sufijos de dispositivo (:45), dominios (@c.us) y prefijo de país (57).
-   */
   _isPhoneBlocked(rawPhoneOrJid) {
-    if (!rawPhoneOrJid) return false;
-    const BLOCKED_NUMBERS = ['3106124802'];
-    
-    const rawStr = String(rawPhoneOrJid);
-    const beforeDomain = rawStr.split('@')[0];
-    const beforeDevice = beforeDomain.split(':')[0];
-    const digitsOnly = beforeDevice.replace(/\D/g, '');
-
-    return BLOCKED_NUMBERS.some(blocked => {
-      const bDigits = String(blocked).replace(/\D/g, '');
-      if (!bDigits) return false;
-      return (
-        digitsOnly === bDigits ||
-        digitsOnly === '57' + bDigits ||
-        (bDigits.length >= 10 && digitsOnly.endsWith(bDigits)) ||
-        rawStr.includes(bDigits)
-      );
-    });
+    return isPhoneBlocked(rawPhoneOrJid);
   }
 
   /**

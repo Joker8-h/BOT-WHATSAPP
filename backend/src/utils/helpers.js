@@ -147,6 +147,33 @@ function getRecentMessages(messages, limit = 20) {
   return messages.slice(-limit);
 }
 
+/**
+ * Verifica si un número, JID o string pertenece a un número bloqueado.
+ * Maneja sufijos de dispositivo (:45), dominios (@c.us, @s.whatsapp.net), y prefijo de país (57).
+ */
+function isPhoneBlocked(rawPhoneOrJid) {
+  if (!rawPhoneOrJid) return false;
+  const defaultBlocked = ['3106124802', '3153993910'];
+  const envBlocked = (process.env.BLOCKED_NUMBERS || '').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
+  const BLOCKED_NUMBERS = Array.from(new Set([...defaultBlocked, ...envBlocked]));
+
+  const rawStr = String(rawPhoneOrJid);
+  const beforeDomain = rawStr.split('@')[0];
+  const beforeDevice = beforeDomain.split(':')[0];
+  const digitsOnly = beforeDevice.replace(/\D/g, '');
+
+  return BLOCKED_NUMBERS.some(blocked => {
+    const bDigits = String(blocked).replace(/\D/g, '');
+    if (!bDigits) return false;
+    return (
+      digitsOnly === bDigits ||
+      digitsOnly === '57' + bDigits ||
+      (bDigits.length >= 10 && digitsOnly.endsWith(bDigits)) ||
+      rawStr.includes(bDigits)
+    );
+  });
+}
+
 module.exports = {
   randomDelay,
   antiBanDelay,
@@ -157,4 +184,5 @@ module.exports = {
   getRecentMessages,
   isWorkingHours,
   getColombiaParts,
+  isPhoneBlocked,
 };

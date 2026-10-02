@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
-const { isWorkingHours, formatCOP } = require('../utils/helpers');
+const { isWorkingHours, formatCOP, isPhoneBlocked } = require('../utils/helpers');
 const {
   classifyProduct, pickComplements, getRepurchaseTypes, pickProductOfType,
 } = require('../ai/salesKnowledge');
@@ -139,7 +139,7 @@ class PostSaleService {
       for (const order of dueOrders) {
         try {
           const contact = order.contact;
-          if (!contact || contact.isBlocked || contactedNow.has(contact.id)) continue;
+          if (!contact || contact.isBlocked || isPhoneBlocked(contact.phone) || contactedNow.has(contact.id)) continue;
 
           // Un pedido pendiente que no es contraentrega es un link sin pagar: no es una venta aún
           if (order.status === 'PENDING' && order.paymentMethod !== 'CONTRAENTREGA') continue;

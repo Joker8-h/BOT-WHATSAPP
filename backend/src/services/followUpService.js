@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
-const { isWorkingHours, formatCOP } = require('../utils/helpers');
+const { isWorkingHours, formatCOP, isPhoneBlocked } = require('../utils/helpers');
 const { OBJECTION_LABELS } = require('../ai/saleState');
 const { normalizeText, classifyProduct, pickProductOfType } = require('../ai/salesKnowledge');
 
@@ -161,7 +161,7 @@ class FollowUpService {
       for (const conv of candidates) {
         try {
           const contact = conv.contact;
-          if (!contact || contact.isBlocked) continue;
+          if (!contact || contact.isBlocked || isPhoneBlocked(contact.phone)) continue;
 
           const context = (conv.context && typeof conv.context === 'object') ? conv.context : {};
           if (context.pendingOfflineReply) continue;
