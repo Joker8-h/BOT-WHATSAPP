@@ -282,8 +282,39 @@ class AIService {
    * Selecciona los productos más relevantes para la conversación (por tipo de
    * producto, palabras del cliente y ficha de venta), en vez de ordenar por precio.
    */
-  selectRelevantProducts({ userMessage, messageHistory, sale, catalog, clientType }) {
+  selectRelevantProducts({ userMessage, messageHistory, sale, catalog, clientType, isMedia = false }) {
     if (!catalog?.length) return { products: [], mainProducts: [] };
+
+    // Si el cliente envía una imagen, proporcionamos una selección balanceada de todas las categorías
+    // principales con stock y fotos para que GPT-4o Vision pueda contrastar y emparejar la foto.
+    if (isMedia) {
+      const seen = new Set();
+      const visualProducts = [];
+      const priorityTypes = ['vibrador', 'succionador', 'dildo', 'masturbador', 'lubricante', 'lenceria', 'anillo', 'bala', 'plug', 'bondage'];
+
+      for (const t of priorityTypes) {
+        const matches = catalog.filter(p => p.stock > 0 && classifyProduct(p).includes(t));
+        // Priorizar los que tienen imagen cargada
+        const sorted = matches.sort((a, b) => (b.imageUrl ? 2 : 0) - (a.imageUrl ? 2 : 0));
+        for (const item of sorted.slice(0, 2)) {
+          if (!seen.has(item.id)) {
+            seen.add(item.id);
+            visualProducts.push(item);
+          }
+        }
+      }
+
+      // Rellenar con productos destacados
+      for (const p of catalog) {
+        if (visualProducts.length >= 18) break;
+        if (!seen.has(p.id) && p.stock > 0) {
+          seen.add(p.id);
+          visualProducts.push(p);
+        }
+      }
+
+      return { products: visualProducts, mainProducts: visualProducts.slice(0, 2) };
+    }
 
     const currentTypes = expandTypes(detectProductTypes(userMessage || ''));
     const recentUserText = messageHistory.filter(m => m.role === 'USER').slice(-4).map(m => m.content).join(' ');
@@ -387,7 +418,7 @@ class AIService {
       const catalog = await catalogService.getAllProducts(effectiveBranchId);
 
       const { products, mainProducts } = this.selectRelevantProducts({
-        userMessage, messageHistory, sale, catalog, clientType,
+        userMessage, messageHistory, sale, catalog, clientType, isMedia: !!mediaData,
       });
       const complementsText = formatComplementsSection(mainProducts, catalog);
       const catalogIndexText = buildCatalogIndex(catalog);
@@ -486,10 +517,13 @@ class AIService {
 
       // Manejo Multimodal (Vision)
       if (mediaData) {
+        const textPrompt = userMessage && userMessage !== '[Imagen]' && !userMessage.startsWith('[Imagen]')
+          ? userMessage
+          : 'He enviado esta foto de un producto. Por favor revísala con atención: dime si lo tenemos disponible en el catálogo de Fantasías (o qué alternativa/modelo directo de nuestro catálogo me recomiendas), su precio exacto y características.';
         messages.push({
           role: 'user',
           content: [
-            { type: 'text', text: userMessage || 'He enviado esta foto, ¿qué me puedes decir de ella respecto a tus productos?' },
+            { type: 'text', text: textPrompt },
             {
               type: 'image_url',
               image_url: {

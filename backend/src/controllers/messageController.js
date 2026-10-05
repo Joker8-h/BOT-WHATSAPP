@@ -11,6 +11,7 @@ const transcriptionService = require('../services/transcriptionService');
 const postSaleService = require('../services/postSaleService');
 const ownerAlertService = require('../services/ownerAlertService');
 const shippingService = require('../services/shippingService');
+const productImageService = require('../services/productImageService');
 const { mergeSaleState } = require('../ai/saleState');
 const { prisma } = require('../config/database');
 const { isWorkingHours, formatCOP, isPhoneBlocked } = require('../utils/helpers');
@@ -629,12 +630,28 @@ class MessageController {
         await crmService.saveMessage(conversation.id, 'ASSISTANT', '[Mensaje suprimido por validación de backend]', null, aiResult.tokensUsed);
       }
 
-      // Imágenes (máximo 3 para no saturar el chat)
-      if (actions.images?.length > 0) {
-        for (const imgUrl of actions.images.slice(0, 3)) {
-          const cleanUrl = imgUrl.replace(/^Media:\s*/i, '');
-          if (cleanUrl?.startsWith('http')) await whatsappService.sendMedia(branchId, chatId, cleanUrl);
+      // Imágenes: motor visual determinista (no depende solo de la etiqueta [IMAGEN])
+      try {
+        const freshCtx = savedContext || conversation?.context || {};
+        const toSend = await productImageService.pickImages({
+          actions,
+          aiText: aiResponseToSend || '',
+          userText: body,
+          sale: freshCtx.sale || {},
+          branchId,
+          alreadySent: freshCtx.sentImages || [],
+        });
+        const delivered = [];
+        for (const img of toSend) {
+          const ok = await whatsappService.sendMedia(branchId, chatId, img.url, { caption: img.caption });
+          if (ok) delivered.push(img.url);
+          else logger.warn(`⚠️ [IMG-ENGINE] No se pudo enviar la foto ${img.url}`);
         }
+        if (delivered.length) {
+          await crmService.patchContext(conversation.id, (ctx) => productImageService.rememberSent(ctx, delivered));
+        }
+      } catch (imgErr) {
+        logger.warn(`⚠️ [IMG-ENGINE] Error enviando fotos a ${chatId}: ${imgErr.message}`);
       }
 
       // ── CONTRAENTREGA ──────────────────────────────────────
@@ -680,6 +697,7 @@ class MessageController {
 
         const codCity = contactUpdates.city || contact.city || 'Por confirmar';
         const codQuote = shippingService.quote(totalAmount, codCity);
+        const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
         const order = await crmService.createOrder({
           contactId: contact.id,
           branchId,
@@ -697,8 +715,27 @@ class MessageController {
           ].filter(Boolean).join(' | '),
         });
 
-        // La IA ya informó al cliente que el pedido fue registrado: sin doble confirmación.
-        logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por ${formatCOP(codQuote.total)} (envío ${formatCOP(codQuote.fee)}) — sin doble confirmación al cliente.`);
+        logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por ${formatCOP(codQuote.total)} (envío ${formatCOP(codQuote.fee)}).`);
+
+        // Ticket oficial al cliente con los valores exactos calculados por el sistema
+        try {
+          const ticket = this._buildOrderTicket({
+            orderId: order.id,
+            items: orderItems,
+            productNames,
+            quote: codQuote,
+            name: contactUpdates.name || contact.name,
+            phone: deliveryPhone !== 'No proporcionado' ? deliveryPhone : (contact.phone || '').replace(/@[a-z.]+$/i, ''),
+            address: contactUpdates.address || contact.address,
+            neighborhood: contactUpdates.neighborhood || contact.neighborhood,
+            city: codCity,
+          });
+          await new Promise(r => setTimeout(r, 1200));
+          await whatsappService.sendMessage(branchId, chatId, ticket);
+          await crmService.saveMessage(conversation.id, 'ASSISTANT', ticket);
+        } catch (ticketErr) {
+          logger.warn(`⚠️ [CONTRAENTREGA] No se pudo enviar el ticket del pedido #${order.id}: ${ticketErr.message}`);
+        }
 
         await crmService.recordPurchase(contact.id, codQuote.total, conversation.id);
 
@@ -734,7 +771,6 @@ class MessageController {
         // Notificar al número central
         const cleanClientPhone = (contact.phone || chatId).replace(/@[a-z.]+$/i, '');
         const clientName = contact.name && contact.name !== 'Sin nombre' ? contact.name : `Cliente ${cleanClientPhone}`;
-        const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
         const finalAddr = contactUpdates.address || contact.address;
         const finalCityCOD = contactUpdates.city || contact.city;
         const hasAddr = finalAddr && finalAddr !== 'Por confirmar';
@@ -839,6 +875,37 @@ class MessageController {
         ownerAlertService.onEscalation({ contact, conversation, branchId, body, messageHistory })
           .catch(err => logger.warn(`⚠️ [OWNER-ALERT] escalation: ${err.message}`));
       }
+  }
+
+  /**
+   * Ticket oficial de un pedido contraentrega (valores exactos del sistema).
+   */
+  _buildOrderTicket({ orderId, items = [], productNames = [], quote, name, phone, address, neighborhood, city }) {
+    const valid = (v) => v && v !== 'Sin nombre' && v !== 'Por confirmar' && String(v).trim() !== '';
+    const lines = items.map((item, idx) => {
+      const label = String(productNames[idx] || 'Producto').replace(/\s+x\d+$/i, '');
+      const qty = item.quantity || 1;
+      return `• ${qty}x ${label}: ${formatCOP(Number(item.price) * qty)}`;
+    });
+    const addressLine = [address, valid(neighborhood) ? `Barrio ${neighborhood}` : null, city].filter(valid).join(', ');
+    return [
+      `🎉 *¡Tu pedido #${orderId} quedó registrado!* 🎉`,
+      '',
+      '📦 *RESUMEN DE TU COMPRA:*',
+      ...lines,
+      '──────────────',
+      `🛍️ Subtotal: ${formatCOP(quote.subtotal)}`,
+      `🚚 ${quote.label}${valid(city) ? ` (${city})` : ''}: ${formatCOP(quote.fee)}`,
+      `💰 *TOTAL A PAGAR AL RECIBIR: ${formatCOP(quote.total)}*`,
+      '',
+      '📍 *DATOS DE ENTREGA:*',
+      valid(name) ? `• Recibe: ${name}` : null,
+      valid(phone) ? `• Teléfono: ${phone}` : null,
+      addressLine ? `• Dirección: ${addressLine}` : null,
+      '',
+      '🤫 Empaque 100% discreto, sin logos ni nombre del contenido.',
+      'Te avisamos apenas vaya en camino. ¡Gracias por confiar en Fantasías! 💜',
+    ].filter(l => l !== null).join('\n');
   }
 
   /**

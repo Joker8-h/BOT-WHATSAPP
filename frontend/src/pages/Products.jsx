@@ -13,6 +13,7 @@ export default function Products() {
   const [products, setProducts] = useState([]);
   const [filter, setFilter] = useState('');
   const [catFilter, setCatFilter] = useState('');
+  const [imageFilter, setImageFilter] = useState('ALL');
   const [modal, setModal] = useState(null);
   const [stockModal, setStockModal] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
@@ -148,6 +149,15 @@ export default function Products() {
   const totalStock = products.reduce((s, p) => s + p.stock, 0);
   const totalValue = products.reduce((s, p) => s + Number(p.price) * p.stock, 0);
   const lowStock = products.filter(p => p.stock <= 5).length;
+  const withPhoto = products.filter(p => isValidUrl(p.imageUrl)).length;
+  const withoutPhoto = totalProducts - withPhoto;
+  const photoPercentage = totalProducts > 0 ? Math.round((withPhoto / totalProducts) * 100) : 0;
+
+  const displayedProducts = products.filter(p => {
+    if (imageFilter === 'NO_PHOTO') return !isValidUrl(p.imageUrl);
+    if (imageFilter === 'WITH_PHOTO') return isValidUrl(p.imageUrl);
+    return true;
+  });
 
   return (
     <div>
@@ -182,6 +192,18 @@ export default function Products() {
         <div className="metric-card accent-gold">
           <div className="metric-icon-wrap"><IconAlertTriangle /></div>
           <div><span className="metric-value" style={{ color: lowStock > 0 ? 'var(--red)' : 'inherit' }}>{lowStock}</span><span className="metric-label">Stock Crítico</span></div>
+        </div>
+        <div 
+          className={`metric-card ${withoutPhoto > 0 ? 'accent-gold' : 'accent-green'}`} 
+          style={{ cursor: 'pointer' }}
+          onClick={() => setImageFilter(imageFilter === 'NO_PHOTO' ? 'ALL' : 'NO_PHOTO')}
+          title="Haz clic para filtrar productos sin foto"
+        >
+          <div className="metric-icon-wrap" style={{ fontSize: '1.2rem' }}>📸</div>
+          <div>
+            <span className="metric-value">{withPhoto}/{totalProducts}</span>
+            <span className="metric-label">Fotos ({photoPercentage}%) {withoutPhoto > 0 ? `· ${withoutPhoto} sin foto` : '· Completo'}</span>
+          </div>
         </div>
       </div>
 
@@ -227,17 +249,48 @@ export default function Products() {
           <option value="">Todas las categorías</option>
           {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
+        <select className="filter-select" value={imageFilter} onChange={e => setImageFilter(e.target.value)}>
+          <option value="ALL">Todas las fotos ({totalProducts})</option>
+          <option value="NO_PHOTO">⚠️ Sin foto ({withoutPhoto})</option>
+          <option value="WITH_PHOTO">✅ Con foto ({withPhoto})</option>
+        </select>
       </div>
 
       <div className="products-grid">
-        {products.map(p => (
+        {displayedProducts.map(p => (
           <div key={p.id} className={`product-card ${p.isFeatured ? 'featured' : ''} ${p.isAvailable === false ? 'deactivated' : ''} ${p.stock === 0 ? 'out-of-stock' : p.stock <= 5 ? 'low-stock' : ''}`}>
-             <div className="product-image-container">
+             <div className="product-image-container" style={{ position: 'relative' }}>
               {isValidUrl(p.imageUrl) ? (
                 <img src={p.imageUrl} alt={p.name} className="product-thumb" referrerPolicy="no-referrer" onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.classList.add('image-broken'); }} />
               ) : (
-                <div className="product-thumb-placeholder">
+                <div className="product-thumb-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', padding: '0.5rem', textAlign: 'center' }}>
                   <IconProducts />
+                  <label htmlFor={`quick-img-${p.id}`} style={{ cursor: 'pointer', fontSize: '0.7rem', background: 'var(--purple)', color: '#fff', padding: '3px 8px', borderRadius: '4px', display: 'inline-block' }}>
+                    + Subir foto
+                  </label>
+                  <input
+                    id={`quick-img-${p.id}`}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      try {
+                        Swal.showLoading();
+                        const r = await uploadImage(file);
+                        if (r?.success) {
+                          await updateProduct(p.id, { imageUrl: r.url });
+                          Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Foto asignada', timer: 1500, showConfirmButton: false });
+                          load();
+                        } else {
+                          Swal.fire('Error', r?.error || 'No se pudo subir la foto', 'error');
+                        }
+                      } catch (err) {
+                        Swal.fire('Error', err.message, 'error');
+                      }
+                    }}
+                  />
                 </div>
               )}
             </div>
@@ -271,7 +324,7 @@ export default function Products() {
             </div>
           </div>
         ))}
-        {products.length === 0 && <p className="empty full-width">No hay productos. Importa tu Excel o crea uno manualmente.</p>}
+        {displayedProducts.length === 0 && <p className="empty full-width">No hay productos que coincidan con los filtros.</p>}
       </div>
 
       {modal && (

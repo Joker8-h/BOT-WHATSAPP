@@ -5,6 +5,7 @@ const ExcelJS = require('exceljs');
 const path = require('path');
 const logger = require('./logger');
 const cloudinary = require('../config/cloudinary');
+const { normalizeImageUrl } = require('../services/productImageService');
 
 /**
  * Sube un buffer de imagen a Cloudinary
@@ -78,7 +79,7 @@ async function parseExcel(filePath) {
           tempMapping.quantity = colNumber; matchCount++;
         } else if (text.includes('CATEG')) { 
           tempMapping.category = colNumber; matchCount++;
-        } else if (text.includes('JUGUETE') || text.includes('IMAGEN') || text.includes('FOTO')) { 
+        } else if (text.includes('JUGUETE') || text.includes('IMAGEN') || text.includes('FOTO') || text.includes('URL') || text.includes('LINK') || text.includes('MEDIA')) { 
           tempMapping.image = colNumber; matchCount++;
         }
       });
@@ -102,6 +103,7 @@ async function parseExcel(filePath) {
       const getCleanText = (val) => {
         if (!val) return '';
         if (typeof val === 'object') {
+          if (val.hyperlink) return String(val.hyperlink).trim();
           if (val.richText) return val.richText.map(t => t.text).join(' ');
           if (val.error) return ''; // Ignorar errores de fórmula como #VALUE!
           return val.result || val.text || '';
@@ -128,6 +130,35 @@ async function parseExcel(filePath) {
       const features = getCleanText(values[colMapping.features]);
       const category = colMapping.category ? getCleanText(values[colMapping.category]) : '';
 
+      // Extraer URL de imagen si viene como texto o hipervínculo
+      let imageUrl = null;
+      if (colMapping.image && values[colMapping.image]) {
+        const rawImgVal = values[colMapping.image];
+        const linkCandidate = (typeof rawImgVal === 'object' && rawImgVal?.hyperlink)
+          ? rawImgVal.hyperlink
+          : getCleanText(rawImgVal);
+        if (linkCandidate && /^https?:\/\//i.test(linkCandidate)) {
+          imageUrl = normalizeImageUrl(linkCandidate);
+        }
+      }
+
+      // Escanear otras columnas si colMapping.image no traía URL directa
+      if (!imageUrl && Array.isArray(values)) {
+        for (let c = 1; c < values.length; c++) {
+          const cell = values[c];
+          const textCandidate = (typeof cell === 'object' && cell?.hyperlink) ? cell.hyperlink : getCleanText(cell);
+          if (textCandidate && /^https?:\/\//i.test(textCandidate) && (
+            /\.(jpe?g|png|webp|gif)($|\?)/i.test(textCandidate) ||
+            /cloudinary\.com/i.test(textCandidate) ||
+            /drive\.google\.com/i.test(textCandidate) ||
+            /dropbox\.com/i.test(textCandidate)
+          )) {
+            imageUrl = normalizeImageUrl(textCandidate);
+            break;
+          }
+        }
+      }
+
       rowsData.push({
         rowNumber,
         name,
@@ -135,7 +166,7 @@ async function parseExcel(filePath) {
         stock,
         price,
         category,
-        imageUrl: null
+        imageUrl
       });
     });
 
