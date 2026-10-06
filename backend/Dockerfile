@@ -46,6 +46,7 @@ RUN npx prisma generate
 
 # Copiar el código del backend
 COPY backend/ .
+RUN node scripts/patchWwebjs.js
 
 # COPIAR EL FRONTEND YA CONSTRUIDO desde la Etapa 1
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

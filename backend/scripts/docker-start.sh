@@ -20,6 +20,10 @@ node seed.js
 echo "🏪 Poblando sedes y empleados..."
 node scripts/seedSedes.js
 
+# 2d. Aplicar parche multimedia whatsapp-web.js
+echo "🛡️ Aplicando parche multimedia whatsapp-web.js..."
+node scripts/patchWwebjs.js || echo "⚠️ Advertencia al aplicar parche whatsapp-web.js"
+
 # 3. Iniciar la aplicación
 echo "🚀 Iniciando servidor (whatsapp-web.js + Chromium)..."
 node --expose-gc server.js

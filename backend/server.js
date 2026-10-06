@@ -4,6 +4,7 @@
 //  ⚠️ Maneja dinero real — producción grade
 // ─────────────────────────────────────────────────────────
 require('dotenv').config();
+try { require('./scripts/patchWwebjs'); } catch (_) {}
 
 const express = require('express');
 const fs = require('fs');
