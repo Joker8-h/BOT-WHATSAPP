@@ -174,11 +174,88 @@ function isPhoneBlocked(rawPhoneOrJid) {
   });
 }
 
+/**
+ * Limpia un identificador de WhatsApp (JID, LID, o teléfono) extrayendo solo dígitos limpios
+ */
+function cleanPhoneDigits(raw) {
+  if (!raw) return '';
+  const str = String(raw).split('@')[0].split(':')[0];
+  return str.replace(/\D/g, '');
+}
+
+/**
+ * Formatea un número de teléfono en formato normal colombiano (ej: "316 657 5904").
+ * Elimina completamente cualquier ID técnico (@c.us, @lid, etc.).
+ */
+function formatDisplayPhone(raw, options = { withCountryCode: false }) {
+  if (!raw) return 'No registrado';
+  const rawStr = String(raw);
+  const digits = cleanPhoneDigits(rawStr);
+
+  // Si tiene 12 dígitos y empieza por 573 (móvil colombiano con código de país 57)
+  if (digits.length === 12 && digits.startsWith('573')) {
+    const colNumber = digits.slice(2);
+    const formatted = `${colNumber.slice(0, 3)} ${colNumber.slice(3, 6)} ${colNumber.slice(6)}`;
+    return options.withCountryCode ? `+57 ${formatted}` : formatted;
+  }
+
+  // Si tiene 10 dígitos y empieza por 3 (móvil colombiano estándar)
+  if (digits.length === 10 && digits.startsWith('3')) {
+    const formatted = `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+    return options.withCountryCode ? `+57 ${formatted}` : formatted;
+  }
+
+  // Si parece ser un ID técnico / LID de WhatsApp Web o no es un número celular real
+  if (rawStr.includes('@lid') || digits.length > 13) {
+    return 'Chat WhatsApp';
+  }
+
+  // Cualquier otro número numérico válido (7 a 11 dígitos)
+  if (digits.length >= 7) {
+    return digits;
+  }
+
+  return 'No registrado';
+}
+
+/**
+ * Genera el enlace directo a WhatsApp (https://wa.me/57...) únicamente si es un número válido.
+ */
+function formatWaLink(raw) {
+  if (!raw) return null;
+  const rawStr = String(raw);
+  if (rawStr.includes('@lid')) return null;
+
+  const digits = cleanPhoneDigits(rawStr);
+  if (digits.length < 10 || digits.length > 13) return null;
+
+  const canonical = digits.startsWith('57') ? digits : `57${digits}`;
+  return `https://wa.me/${canonical}`;
+}
+
+/**
+ * Retorna un nombre legible para el cliente, evitando cadenas técnicas como "Cliente 573166575904@c.us"
+ */
+function formatClientDisplayName(name, rawPhone) {
+  if (name && name !== 'Sin nombre' && !name.startsWith('Cliente 57') && !name.includes('@')) {
+    return name;
+  }
+  const displayPhone = formatDisplayPhone(rawPhone);
+  if (displayPhone && displayPhone !== 'No registrado' && displayPhone !== 'Chat WhatsApp') {
+    return `Cliente (${displayPhone})`;
+  }
+  return 'Cliente';
+}
+
 module.exports = {
   randomDelay,
   antiBanDelay,
   formatCOP,
   cleanPhone,
+  cleanPhoneDigits,
+  formatDisplayPhone,
+  formatWaLink,
+  formatClientDisplayName,
   getGreeting,
   truncate,
   getRecentMessages,

@@ -152,6 +152,39 @@ async function startServer() {
     const settingsService = require('./src/services/settingsService');
     await settingsService.load();
 
+    // 2c. Reactivar conversaciones atrapadas por falsos positivos y asegurar teléfono maestro
+    try {
+      const { prisma } = require('./src/config/database');
+      const unpaused = await prisma.conversation.updateMany({
+        where: {
+          status: 'PAUSED',
+          messages: {
+            some: {
+              role: 'ASSISTANT',
+              content: { contains: 'Soy Sofía' }
+            }
+          }
+        },
+        data: { status: 'ACTIVE' }
+      });
+      if (unpaused.count > 0) {
+        logger.info(`🔓 [STARTUP-CLEANUP] ${unpaused.count} conversaciones reactivadas de falsos positivos.`);
+      }
+
+      const masterPhone = process.env.ADMIN_PHONE || '573166575904';
+      await prisma.branch.updateMany({
+        where: {
+          OR: [
+            { notificationPhone: null },
+            { notificationPhone: '' }
+          ]
+        },
+        data: { notificationPhone: masterPhone }
+      });
+    } catch (startupCleanupErr) {
+      logger.warn(`⚠️ Error en limpieza inicial: ${startupCleanupErr.message}`);
+    }
+
     // 2. Inicializar WhatsApp
     logger.info('📱 Motor WhatsApp Multi-Branch listo (se inicia bajo demanda)');
     whatsappService.onMessage(async (msg, branchId) => {

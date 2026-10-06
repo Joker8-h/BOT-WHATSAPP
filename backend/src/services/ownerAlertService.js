@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
-const { formatCOP } = require('../utils/helpers');
+const { formatCOP, formatDisplayPhone, formatWaLink, formatClientDisplayName, cleanPhoneDigits } = require('../utils/helpers');
 const { normalizeText, containsPhrase } = require('../ai/salesKnowledge');
 const { OBJECTION_LABELS } = require('../ai/saleState');
 
@@ -70,14 +70,16 @@ class OwnerAlertService {
 
   // ── Utilidades de formato ─────────────────────────────
   _cleanPhone(phone) {
-    return String(phone || '').replace(/@[a-z.]+$/i, '').replace(/:\d+$/, '');
+    return cleanPhoneDigits(phone);
   }
 
   clientLabel(contact) {
-    const phone = this._cleanPhone(contact?.phone);
-    const name = contact?.name && contact.name !== 'Sin nombre' ? contact.name : 'Sin nombre';
-    const link = /^\d{8,15}$/.test(phone) ? `\n🔗 wa.me/${phone}` : '';
-    return `👤 *Cliente:* ${name}\n📱 *WhatsApp:* ${phone || 'desconocido'}${link}`;
+    const rawPhone = contact?.phone;
+    const phoneDisplay = formatDisplayPhone(rawPhone);
+    const nameDisplay = formatClientDisplayName(contact?.name, rawPhone);
+    const link = formatWaLink(rawPhone);
+    const linkLine = link ? `\n💬 *Chat directo:* ${link}` : '';
+    return `👤 *Cliente:* ${nameDisplay}\n📱 *WhatsApp:* ${phoneDisplay}${linkLine}`;
   }
 
   _truncate(text, max = 300) {
@@ -86,8 +88,7 @@ class OwnerAlertService {
   }
 
   waLink(phone) {
-    const clean = this._cleanPhone(phone);
-    return /^\d{8,15}$/.test(clean) ? `wa.me/${clean}` : null;
+    return formatWaLink(phone);
   }
 
   /**

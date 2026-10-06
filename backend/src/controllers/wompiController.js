@@ -5,7 +5,7 @@ const whatsappService = require('../services/whatsappService');
 const ownerAlertService = require('../services/ownerAlertService');
 const shippingService = require('../services/shippingService');
 const { decrypt } = require('../utils/encryption');
-const { formatCOP } = require('../utils/helpers');
+const { formatCOP, formatDisplayPhone, formatWaLink, formatClientDisplayName } = require('../utils/helpers');
 
 const DECLINE_STATUSES = ['DECLINED', 'ERROR', 'VOIDED'];
 
@@ -316,8 +316,10 @@ class WompiController {
     });
 
     await step('dueño', async () => {
-      const cleanPhone = this._cleanPhone(order.contact.phone);
-      const waLink = ownerAlertService.waLink(cleanPhone);
+      const rawPhone = order.contact.phone;
+      const displayPhone = formatDisplayPhone(rawPhone);
+      const clientName = formatClientDisplayName(order.contact.name, rawPhone);
+      const waLink = formatWaLink(rawPhone);
       const historyLine = await ownerAlertService.buyerHistoryLine(order.contactId);
       const itemsList = order.items.map(i => `- ${i.product.name} (x${i.quantity})`).join('\n');
       const subtotal = order.items.reduce((sum, i) => sum + Number(i.price) * i.quantity, 0);
@@ -327,7 +329,7 @@ class WompiController {
         : '';
       const extraNotes = String(order.notes || '').split(' | ').filter(n => n && !/^Env[ií]o /.test(n)).join(' | ');
       const neighborhoodInfo = order.contact.neighborhood ? `🏘️ *Barrio:* ${order.contact.neighborhood}\n` : '';
-      const deliveryPhone = order.contact.deliveryPhone || 'No proporcionado';
+      const deliveryPhone = formatDisplayPhone(order.contact.deliveryPhone);
       const hasAddress = order.shippingAddress && order.shippingAddress !== 'Por confirmar';
       const hasCity = order.shippingCity && order.shippingCity !== 'Por confirmar';
       const addressWarning = (!hasAddress || !hasCity)
@@ -337,8 +339,8 @@ class WompiController {
         `🧾 *Pedido:* #${order.id}\n` +
         `${shippingLine}` +
         `💰 *Total pagado:* ${formatCOP(order.amount)}\n` +
-        `👤 *Cliente:* ${order.contact.name || 'Sin nombre'}\n` +
-        `📱 *WhatsApp:* ${cleanPhone}\n` +
+        `👤 *Cliente:* ${clientName}\n` +
+        `📱 *WhatsApp:* ${displayPhone}\n` +
         `${waLink ? `💬 *Abrir chat:* ${waLink}\n` : ''}` +
         `${historyLine ? `${historyLine}\n` : ''}` +
         `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +

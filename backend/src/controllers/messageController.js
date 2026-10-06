@@ -14,7 +14,7 @@ const shippingService = require('../services/shippingService');
 const productImageService = require('../services/productImageService');
 const { mergeSaleState } = require('../ai/saleState');
 const { prisma } = require('../config/database');
-const { isWorkingHours, formatCOP, isPhoneBlocked } = require('../utils/helpers');
+const { isWorkingHours, formatCOP, isPhoneBlocked, formatDisplayPhone, formatWaLink, formatClientDisplayName, cleanPhoneDigits } = require('../utils/helpers');
 const crypto = require('crypto');
 
 // Ventana para agrupar ráfagas: el cliente suele escribir 2-3 mensajes seguidos
@@ -246,18 +246,23 @@ class MessageController {
       }
 
       if (conversation.status === 'ESCALATED' || conversation.status === 'PAUSED') {
-        // Si lleva más de 10 minutos escalado sin respuesta humana, reactivar automáticamente
+        // Si lleva más de 5 minutos o fue pausado por falso positivo del bot, reactivar automáticamente
         const lastAssistantMsg = [...(conversation.messages || [])].reverse().find(m => m.role === 'ASSISTANT');
         const minutesSinceLastResponse = lastAssistantMsg
           ? (Date.now() - new Date(lastAssistantMsg.createdAt).getTime()) / (1000 * 60)
           : 999;
 
-        if (minutesSinceLastResponse > 10) {
-          logger.info(`🔄 [AUTO-REACTIVATE] Chat ${chatId} escalado hace ${Math.round(minutesSinceLastResponse)}min sin respuesta humana. Reactivando bot.`);
+        const isFakeHuman = lastAssistantMsg?.content?.includes('Soy Sofía') ||
+          lastAssistantMsg?.content?.includes('asesora de Fantasías') ||
+          lastAssistantMsg?.content?.includes('Claro que sí');
+
+        if (minutesSinceLastResponse > 5 || isFakeHuman) {
+          logger.info(`🔄 [AUTO-REACTIVATE] Chat ${chatId} reactivado (minutos: ${Math.round(minutesSinceLastResponse)}, falso positivo: ${!!isFakeHuman}). Reactivando bot.`);
           await prisma.conversation.update({
             where: { id: conversation.id },
             data: { status: 'ACTIVE' }
           });
+          conversation.status = 'ACTIVE';
         } else {
           logger.info(`🤫 [MSG] Chat pausado/escalado para ${chatId} (${Math.round(minutesSinceLastResponse)}min). Esperando humano.`);
           await saveIncoming();
@@ -311,10 +316,20 @@ class MessageController {
       } catch { return false; }
     };
 
-    let matchedAdmin = allBranches.find(b => {
-      const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
-      return phone && phone === cleanPhone;
-    });
+    const MASTER_ADMINS = ['573166575904', '3166575904'];
+    const isMasterAdmin = MASTER_ADMINS.includes(cleanPhone) || cleanPhone.endsWith('3166575904');
+
+    let matchedAdmin = null;
+    if (isMasterAdmin) {
+      matchedAdmin = allBranches.find(b => b.id === (branchId || 1)) || allBranches[0] || { id: 1 };
+    }
+
+    if (!matchedAdmin) {
+      matchedAdmin = allBranches.find(b => {
+        const phone = b.notificationPhone?.replace(/[^0-9]/g, '');
+        return phone && phone === cleanPhone;
+      });
+    }
     if (!matchedAdmin) matchedAdmin = allBranches.find(b => lidMatches(b, cleanPhone));
     if (!matchedAdmin && msg._originalLid) {
       const originalClean = msg._originalLid.split('@')[0];
@@ -468,8 +483,10 @@ class MessageController {
           } else {
             logger.warn(`⚠️ [SAFETY-NET] No se pudo extraer el producto del texto. Se requerirá intervención manual.`);
             try {
+              const displayClientPhone = formatDisplayPhone(contact.phone);
+              const displayClientName = formatClientDisplayName(contact.name, contact.phone);
               await whatsappService.notifyPhone(branchId, 
-                `⚠️ *PEDIDO PERDIDO — ACCIÓN REQUERIDA*\n\nLa IA confirmó una venta en texto pero no registró el pedido.\n\n👤 *Cliente:* ${contact.name || 'Sin nombre'}\n📱 *WhatsApp:* ${contact.phone}\n\nTexto de la IA:\n"${(aiResult.response || '').substring(0, 300)}"`
+                `⚠️ *PEDIDO PERDIDO — ACCIÓN REQUERIDA*\n\nLa IA confirmó una venta en texto pero no registró el pedido.\n\n👤 *Cliente:* ${displayClientName}\n📱 *WhatsApp:* ${displayClientPhone}\n\nTexto de la IA:\n"${(aiResult.response || '').substring(0, 300)}"`
               );
             } catch (notifErr) {
               logger.error('Error notificando admin en SAFETY-NET:', notifErr);
@@ -682,8 +699,9 @@ class MessageController {
           await whatsappService.sendMessage(branchId, chatId, fallbackMsg);
           await crmService.saveMessage(conversation.id, 'ASSISTANT', fallbackMsg);
           
-          const cleanPhoneAlert = (contact.phone || chatId).replace(/@[a-z.]+$/i, '');
-          const nameLabelAlert = contact.name && contact.name !== 'Sin nombre' ? contact.name : `Cliente ${cleanPhoneAlert}`;
+          const rawClientPhone = contact.phone || chatId;
+          const cleanPhoneAlert = formatDisplayPhone(rawClientPhone);
+          const nameLabelAlert = formatClientDisplayName(contact.name, rawClientPhone);
           await whatsappService.notifyPhone(branchId, `⚠️ *ALERTA DE PEDIDO (Contraentrega)*\nEl bot no encontró los productos en la BD:\nProductos: ${actions.productsToSell.join(', ')}\nCliente: ${nameLabelAlert} (${cleanPhoneAlert})`);
 
           return;
@@ -769,8 +787,9 @@ class MessageController {
         await postSaleService.schedule(order.id);
 
         // Notificar al número central
-        const cleanClientPhone = (contact.phone || chatId).replace(/@[a-z.]+$/i, '');
-        const clientName = contact.name && contact.name !== 'Sin nombre' ? contact.name : `Cliente ${cleanClientPhone}`;
+        const rawClientPhone = contact.phone || chatId;
+        const displayClientPhone = formatDisplayPhone(rawClientPhone);
+        const clientName = formatClientDisplayName(contact.name, rawClientPhone);
         const finalAddr = contactUpdates.address || contact.address;
         const finalCityCOD = contactUpdates.city || contact.city;
         const hasAddr = finalAddr && finalAddr !== 'Por confirmar';
@@ -778,15 +797,16 @@ class MessageController {
         const addrWarning = (!hasAddr || !hasCity)
           ? `\n⚠️ *DIRECCIÓN PENDIENTE — CONTACTAR AL CLIENTE*\n`
           : '';
-        const waLink = ownerAlertService.waLink(cleanClientPhone);
+        const waLink = formatWaLink(rawClientPhone);
         const historyLine = await ownerAlertService.buyerHistoryLine(contact.id);
+        const deliveryPhoneClean = formatDisplayPhone(deliveryPhone);
         const centralMsg = `📦 *PEDIDO CONTRAENTREGA* 📦\n\n` +
           `🧾 *Pedido:* #${order.id}\n` +
           `👤 *Cliente:* ${clientName}\n` +
-          `📱 *WhatsApp:* ${cleanClientPhone}\n` +
+          `📱 *WhatsApp:* ${displayClientPhone}\n` +
           `${waLink ? `💬 *Abrir chat:* ${waLink}\n` : ''}` +
           `${historyLine ? `${historyLine}\n` : ''}` +
-          `📞 *Teléfono para entrega:* ${deliveryPhone}\n` +
+          `📞 *Teléfono para entrega:* ${deliveryPhoneClean}\n` +
           `📦 *Productos:* ${productNames.join(', ')}\n` +
           `${notFound.length ? `⚠️ *Sin identificar:* ${notFound.join(', ')}\n` : ''}` +
           `${shippingService.breakdownLines(codQuote)}\n` +
@@ -830,7 +850,10 @@ class MessageController {
           await whatsappService.sendMessage(branchId, chatId, fallbackMsg);
           await crmService.saveMessage(conversation.id, 'ASSISTANT', fallbackMsg);
           
-          await whatsappService.notifyPhone(branchId, `⚠️ *ALERTA DE PEDIDO (Wompi)*\nEl bot no encontró los productos en la BD:\nProductos: ${actions.productsToSell.join(', ')}\nCliente: ${contact.name} (${contact.phone})`);
+          const rawWompiPhone = contact.phone || chatId;
+          const cleanPhoneWompi = formatDisplayPhone(rawWompiPhone);
+          const nameLabelWompi = formatClientDisplayName(contact.name, rawWompiPhone);
+          await whatsappService.notifyPhone(branchId, `⚠️ *ALERTA DE PEDIDO (Wompi)*\nEl bot no encontró los productos en la BD:\nProductos: ${actions.productsToSell.join(', ')}\nCliente: ${nameLabelWompi} (${cleanPhoneWompi})`);
           return;
         }
 

@@ -1,6 +1,6 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const logger = require('../utils/logger');
-const { antiBanDelay, isPhoneBlocked } = require('../utils/helpers');
+const { antiBanDelay, isPhoneBlocked, cleanPhoneDigits } = require('../utils/helpers');
 const { prisma } = require('../config/database');
 const path = require('path');
 const fs = require('fs');
@@ -8,12 +8,16 @@ const axios = require('axios');
 const { removeChromiumLocks } = require('../utils/processCleanup');
 const emailService = require('./emailService');
 
+const DEFAULT_ADMIN_PHONE = process.env.ADMIN_PHONE || '573166575904';
+
 class WhatsAppService {
   constructor() {
     this.clients = new Map();
     this.sessions = new Map();
     this.pendingInits = new Set();
     this._botSentIds = new Set();
+    this._pendingSends = [];
+    this._recentBotTexts = new Map();
 
     this.messageHandler = null;
     this.manualLogout = new Set();
@@ -28,10 +32,77 @@ class WhatsAppService {
 
   _trackBotMessage(id) {
     if (!id) return;
-    if (this._botSentIds.size > 3000) {
-      this._botSentIds.clear();
+    if (!this._botSentIds) this._botSentIds = new Set();
+    if (this._botSentIds.size > 5000) {
+      const arr = Array.from(this._botSentIds).slice(2500);
+      this._botSentIds = new Set(arr);
     }
     this._botSentIds.add(id);
+  }
+
+  _recordPendingSend(to, text) {
+    const cleanPhone = String(to || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+    const cleanText = String(text || '').trim();
+    if (!this._pendingSends) this._pendingSends = [];
+    this._pendingSends.push({
+      cleanPhone,
+      text: cleanText,
+      at: Date.now()
+    });
+    if (cleanText) {
+      if (!this._recentBotTexts) this._recentBotTexts = new Map();
+      this._recentBotTexts.set(cleanText, Date.now());
+    }
+    const now = Date.now();
+    this._pendingSends = this._pendingSends.filter(s => now - s.at < 45000);
+    if (this._recentBotTexts.size > 300) {
+      for (const [txt, timestamp] of this._recentBotTexts.entries()) {
+        if (now - timestamp > 90000) {
+          this._recentBotTexts.delete(txt);
+        }
+      }
+    }
+  }
+
+  _isBotOutgoing(cleanPhone, msgText) {
+    const now = Date.now();
+    const cleanMsg = String(msgText || '').trim();
+
+    // 1. ¿Texto idéntico enviado por el bot recientemente?
+    if (cleanMsg && this._recentBotTexts && this._recentBotTexts.has(cleanMsg)) {
+      if (now - this._recentBotTexts.get(cleanMsg) < 90000) return true;
+    }
+
+    // 2. ¿Coincide con un envío pendiente del bot para este número?
+    if (this._pendingSends && this._pendingSends.length > 0) {
+      const matchIdx = this._pendingSends.findIndex(s => {
+        const phoneMatch = !s.cleanPhone || !cleanPhone ||
+          s.cleanPhone === cleanPhone ||
+          s.cleanPhone.endsWith(cleanPhone) ||
+          cleanPhone.endsWith(s.cleanPhone);
+        const textMatch = !s.text || !cleanMsg ||
+          s.text === cleanMsg ||
+          cleanMsg.startsWith(s.text.substring(0, 30)) ||
+          s.text.startsWith(cleanMsg.substring(0, 30));
+        return phoneMatch && (textMatch || (now - s.at < 25000));
+      });
+      if (matchIdx !== -1) {
+        this._pendingSends.splice(matchIdx, 1);
+        return true;
+      }
+    }
+
+    // 3. ¿El texto contiene firmas inequívocas de mensajes automáticos del bot?
+    if (cleanMsg && (
+      cleanMsg.includes('Soy Sofía') ||
+      cleanMsg.includes('asesora de Fantasías') ||
+      cleanMsg.includes('¡Tu pedido #') ||
+      cleanMsg.includes('link de pago seguro por')
+    )) {
+      return true;
+    }
+
+    return false;
   }
 
   get isReady() {
@@ -177,15 +248,39 @@ class WhatsAppService {
 
           const serializedId = msg.id?._serialized;
           if (serializedId && this._botSentIds.has(serializedId)) {
-            this._botSentIds.delete(serializedId);
+            // Ya registrado como mensaje del bot
             return;
           }
 
           const to = msg.to;
           if (!to || to === 'status@broadcast' || to.includes('@g.us') || to.includes('@broadcast')) return;
 
-          // Asesor humano respondió directamente en el WhatsApp del negocio
           const cleanPhone = to.split('@')[0].split(':')[0].replace(/\D/g, '');
+          const msgBody = (msg.body || '').trim();
+
+          // 1. ¿Es un mensaje propio del bot (reconocimiento proactivo antes de que termine el await)?
+          if (this._isBotOutgoing(cleanPhone, msgBody)) {
+            if (serializedId) this._trackBotMessage(serializedId);
+            return;
+          }
+
+          // 2. ¿El asesor está escribiendo un comando para reactivar el bot?
+          const resumeCmds = ['!bot', '#bot', '/bot', '!activar', '#activar', 'activar bot', '!auto'];
+          if (resumeCmds.includes(msgBody.toLowerCase())) {
+            const contact = await prisma.contact.findFirst({
+              where: { phone: { contains: cleanPhone.slice(-10) } }
+            });
+            if (contact) {
+              await prisma.conversation.updateMany({
+                where: { contactId: contact.id, status: { in: ['PAUSED', 'ESCALATED'] } },
+                data: { status: 'ACTIVE' }
+              });
+              logger.info(`🤖 [HUMAN-RESUME] Asesor reactivó el bot con comando "${msgBody}" para ${cleanPhone}`);
+            }
+            return;
+          }
+
+          // 3. Asesor humano respondió directamente en el WhatsApp del negocio
           logger.info(`🧑‍💼 [HUMAN-TAKEOVER] Mensaje manual de asesor detectado hacia ${cleanPhone} (Sucursal ${branchId}): "${(msg.body || '').substring(0, 30)}..."`);
 
           const contact = await prisma.contact.findFirst({
@@ -327,6 +422,9 @@ class WhatsAppService {
     }
 
     try {
+      // Registrar envío pendiente ANTES de cualquier retardo para evitar falsos positivos de takeover
+      this._recordPendingSend(to, text);
+
       logger.info(`📤 [SEND-INICIO] Enviando a ${to} (branch ${targetBranch}, texto ${text.length} chars)`);
       await antiBanDelay();
       logger.info(`📤 [SEND-POST-DELAY] Delay completado, preparando envío a ${to}`);
@@ -334,6 +432,7 @@ class WhatsAppService {
       logger.info(`📤 [SEND-JID] ChatID normalizado: ${chatId}`);
 
       const sendWithTimeout = async (chatId, messageText, timeoutMs = 60000) => {
+        this._recordPendingSend(chatId, messageText);
         const sent = await Promise.race([
           client.sendMessage(chatId, messageText),
           new Promise((_, reject) =>
@@ -363,6 +462,7 @@ class WhatsAppService {
 
         logger.info(`📤 [SEND-SPLIT] Mensaje dividido en ${parts.length} partes`);
         for (let i = 0; i < parts.length; i++) {
+          this._recordPendingSend(chatId, parts[i]);
           logger.info(`📤 [SEND-PART ${i + 1}/${parts.length}] Enviando parte ${i + 1} (${parts[i].length} chars) a ${chatId}`);
           await sendWithTimeout(chatId, parts[i]);
           logger.info(`📤 [SEND-PART ${i + 1}/${parts.length}] Parte ${i + 1} enviada OK`);
@@ -402,6 +502,7 @@ class WhatsAppService {
     }
 
     try {
+      this._recordPendingSend(to, options.caption || '[Media]');
       await antiBanDelay();
       const chatId = this._normalizeJid(to);
 
@@ -483,25 +584,30 @@ class WhatsAppService {
 
   async notifyPhone(branchId, message) {
     try {
-      const branch = await prisma.branch.findUnique({
-        where: { id: branchId },
-        select: { notificationPhone: true, notificationGroupName: true }
-      });
-
-      if (branch?.notificationPhone) {
-        const phone = branch.notificationPhone.replace(/[^0-9]/g, '');
-        const chatId = `${phone}@c.us`;
-        const sent = await this.sendMessage(branchId, chatId, message, { singleMessage: true });
-        if (!sent) {
-          logger.warn(`⚠️ Falló envío de notificación al teléfono ${phone} de sucursal ${branchId}`);
-        } else {
-          logger.info(`📱 Notificación enviada al teléfono ${phone} para sucursal ${branchId}`);
+      let phone = null;
+      if (branchId) {
+        const branch = await prisma.branch.findUnique({
+          where: { id: branchId },
+          select: { notificationPhone: true, notificationGroupName: true }
+        });
+        if (branch?.notificationPhone) {
+          phone = cleanPhoneDigits(branch.notificationPhone);
         }
-        return sent;
       }
 
-      logger.warn(`⚠️ Sucursal ${branchId} no tiene teléfono de notificación configurado.`);
-      return false;
+      // Si la sede no tiene teléfono configurado, enviar siempre al administrador maestro
+      if (!phone) {
+        phone = cleanPhoneDigits(DEFAULT_ADMIN_PHONE);
+      }
+
+      const chatId = `${phone}@c.us`;
+      const sent = await this.sendMessage(branchId || 1, chatId, message, { singleMessage: true });
+      if (!sent) {
+        logger.warn(`⚠️ Falló envío de notificación al teléfono ${phone} de sucursal ${branchId}`);
+      } else {
+        logger.info(`📱 Notificación enviada al teléfono ${phone} para sucursal ${branchId}`);
+      }
+      return sent;
     } catch (error) {
       logger.error(`Error en notifyPhone para sucursal ${branchId}:`, error);
       return false;
