@@ -422,8 +422,10 @@ class WhatsAppService {
 
             // 2. Garantizar que chat y chat.contact tengan 'id' válido para el memoizer de WhatsApp
             if (chat) {
+              const req = typeof window.require === 'function' ? window.require : null;
+              const contactStore = (req ? req('WAWebCollections')?.Contact : null) || window.Store?.Contact;
               if (!chat.contact && chat.id) {
-                const existing = window.Store?.Contact?.get(chat.id);
+                const existing = contactStore?.get?.(chat.id);
                 chat.contact = existing || { id: chat.id };
               }
               if (chat.contact && !chat.contact.id && chat.id) {
@@ -436,6 +438,33 @@ class WhatsAppService {
 
           return await originalSendMessage.apply(this, arguments);
         };
+
+        // 3. Parche directo en WAWebSendMsgChatAction.addAndSendMsgToChat si está disponible
+        try {
+          const req = typeof window.require === 'function' ? window.require : null;
+          const sendChatAction = (req ? req('WAWebSendMsgChatAction') : null) || window.Store?.SendMessage;
+          if (sendChatAction && typeof sendChatAction.addAndSendMsgToChat === 'function' && !sendChatAction._memoizePatched) {
+            const originalAddAndSend = sendChatAction.addAndSendMsgToChat;
+            sendChatAction.addAndSendMsgToChat = function(chat, message) {
+              try {
+                if (message && !message.id && message.__x_id) {
+                  message.id = message.__x_id;
+                }
+                if (chat) {
+                  const contactStore = (req ? req('WAWebCollections')?.Contact : null) || window.Store?.Contact;
+                  if (!chat.contact && chat.id) {
+                    chat.contact = contactStore?.get?.(chat.id) || { id: chat.id };
+                  }
+                  if (chat.contact && !chat.contact.id && chat.id) {
+                    chat.contact.id = chat.id;
+                  }
+                }
+              } catch (_) {}
+              return originalAddAndSend.apply(this, arguments);
+            };
+            sendChatAction._memoizePatched = true;
+          }
+        } catch (_) {}
 
         window.WWebJS._patchedSendMessageForMedia = true;
       });

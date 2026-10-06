@@ -36,8 +36,8 @@ function patchUtils() {
       return;
     }
 
-    const targetPattern = 'const [msgPromise, sendMsgResultPromise] = window.Store.SendMessage.addAndSendMsgToChat(chat, message);';
-    if (!content.includes(targetPattern)) {
+    const regex = /(const\s+\[msgPromise,\s*sendMsgResultPromise\]\s*=\s*window[\s\S]*?\.addAndSendMsgToChat\(chat,\s*message\);)/;
+    if (!regex.test(content)) {
       console.warn('⚠️ [PATCH-WWEBJS] No se encontró el punto de inserción en Utils.js');
       return;
     }
@@ -49,17 +49,23 @@ function patchUtils() {
             message.id = newMsgKey;
         }
         if (chat) {
-            if (!chat.contact && chat.id) {
-                const existing = window.Store?.Contact?.get(chat.id);
-                chat.contact = existing || { id: chat.id };
-            }
-            if (chat.contact && !chat.contact.id && chat.id) {
-                chat.contact.id = chat.id;
-            }
+            try {
+                const getContact = () => {
+                    const req = typeof window.require === 'function' ? window.require : null;
+                    return req?.('WAWebCollections')?.Contact?.get?.(chat.id) || window.Store?.Contact?.get?.(chat.id);
+                };
+                if (!chat.contact && chat.id) {
+                    const existing = getContact();
+                    chat.contact = existing || { id: chat.id };
+                }
+                if (chat.contact && !chat.contact.id && chat.id) {
+                    chat.contact.id = chat.id;
+                }
+            } catch (_) {}
         }
-        const [msgPromise, sendMsgResultPromise] = window.Store.SendMessage.addAndSendMsgToChat(chat, message);`;
+        $1`;
 
-    content = content.replace(targetPattern, patchCode);
+    content = content.replace(regex, patchCode);
     fs.writeFileSync(targetPath, content, 'utf8');
     console.log(`✅ [PATCH-WWEBJS] Parche aplicado exitosamente en ${targetPath}`);
   } catch (err) {
