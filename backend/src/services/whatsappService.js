@@ -18,6 +18,7 @@ class WhatsAppService {
     this._botSentIds = new Set();
     this._pendingSends = [];
     this._recentBotTexts = new Map();
+    this.lidToPhoneMap = new Map();
 
     this.messageHandler = null;
     this.manualLogout = new Set();
@@ -195,6 +196,7 @@ class WhatsAppService {
         logger.info(`✅ WhatsApp sucursal ${branchId} conectado!`);
         this.sessions.set(branchId, { isReady: true, qr: null, status: 'READY' });
         this.pendingInits.delete(branchId);
+        this._applyInjectedPatches(client).catch(() => {});
       });
 
       client.on('disconnected', async (reason) => {
@@ -397,6 +399,162 @@ class WhatsAppService {
     this.messageHandler = handler;
   }
 
+  /**
+   * Aplica un parche en caliente en el navegador Chromium de WhatsApp Web
+   * para prevenir el error:
+   * "Data passed to getter must include an id property (it's how we memoize) but got undefined"
+   */
+  async _applyInjectedPatches(client) {
+    if (!client?.pupPage) return;
+    try {
+      await client.pupPage.evaluate(() => {
+        if (!window.WWebJS) return;
+        if (window.WWebJS._patchedSendMessageForMedia) return;
+
+        const originalSendMessage = window.WWebJS.sendMessage;
+        window.WWebJS.sendMessage = async function(chat, content, options = {}) {
+          try {
+            // 1. Evitar que propiedades internas de media borren o sobreescriban 'id'
+            if (options && options.media) {
+              if (options.media.id !== undefined) delete options.media.id;
+              if (options.media.__x_id !== undefined) delete options.media.__x_id;
+            }
+
+            // 2. Garantizar que chat y chat.contact tengan 'id' válido para el memoizer de WhatsApp
+            if (chat) {
+              if (!chat.contact && chat.id) {
+                const existing = window.Store?.Contact?.get(chat.id);
+                chat.contact = existing || { id: chat.id };
+              }
+              if (chat.contact && !chat.contact.id && chat.id) {
+                chat.contact.id = chat.id;
+              }
+            }
+          } catch (e) {
+            console.warn('[PATCH] Error in pre-send check:', e);
+          }
+
+          return await originalSendMessage.apply(this, arguments);
+        };
+
+        window.WWebJS._patchedSendMessageForMedia = true;
+      });
+      logger.info('🛡️ [WA-PATCH] Parche de envío de multimedia para WhatsApp Web verificado en Chromium');
+    } catch (err) {
+      logger.warn(`⚠️ [WA-PATCH] No se pudo aplicar parche en Chromium: ${err.message}`);
+    }
+  }
+
+  /**
+   * Resuelve el JID de destino óptimo.
+   * Si es un ID de privacidad (@lid), intenta mapearlo al número de teléfono real (@c.us)
+   * para evitar fallos del motor interno de media en WhatsApp Web.
+   */
+  async resolveDestinationJid(branchId, to) {
+    if (!to) return to;
+    const raw = String(to).trim();
+    if (raw.includes('@c.us')) return raw;
+
+    if (raw.includes('@lid')) {
+      const cached = this.lidToPhoneMap.get(raw);
+      if (cached) {
+        logger.info(`🔍 [LID-RESOLVE] Destino obtenido desde caché: ${raw} -> ${cached}`);
+        return cached;
+      }
+
+      const targetBranch = branchId ? parseInt(branchId) : 1;
+      const client = this.clients.get(targetBranch) || this.clients.get(1);
+
+      if (client) {
+        // Intento 1: getContactLidAndPhone de whatsapp-web.js
+        try {
+          if (typeof client.getContactLidAndPhone === 'function') {
+            const list = await client.getContactLidAndPhone([raw]);
+            const pn = list?.[0]?.pn;
+            if (pn && pn.includes('@c.us')) {
+              logger.info(`🔍 [LID-RESOLVE] Resuelto vía getContactLidAndPhone: ${raw} -> ${pn}`);
+              this.lidToPhoneMap.set(raw, pn);
+              return pn;
+            }
+          }
+        } catch (e) {
+          logger.debug(`[LID-RESOLVE] getContactLidAndPhone no disponible para ${raw}: ${e.message}`);
+        }
+
+        // Intento 2: getContactById
+        try {
+          if (typeof client.getContactById === 'function') {
+            const contact = await client.getContactById(raw);
+            if (contact?.number && !contact.number.includes('lid') && contact.number.length >= 7) {
+              const clean = contact.number.replace(/\D/g, '');
+              const jid = `${clean}@c.us`;
+              logger.info(`🔍 [LID-RESOLVE] Resuelto vía getContactById: ${raw} -> ${jid}`);
+              this.lidToPhoneMap.set(raw, jid);
+              return jid;
+            }
+          }
+        } catch (e) {
+          logger.debug(`[LID-RESOLVE] getContactById falló para ${raw}: ${e.message}`);
+        }
+
+        // Intento 3: Inspeccionar en Puppeteer directamente
+        try {
+          if (client.pupPage) {
+            const directPn = await client.pupPage.evaluate((lid) => {
+              try {
+                if (window.Store?.LidUtils?.getPhoneNumber) {
+                  const res = window.Store.LidUtils.getPhoneNumber(lid);
+                  if (res) return res._serialized || String(res);
+                }
+                const contact = window.Store?.Contact?.get(lid);
+                if (contact?.phoneNumber) return contact.phoneNumber;
+              } catch (_) {}
+              return null;
+            }, raw);
+
+            if (directPn) {
+              const clean = directPn.replace(/\D/g, '');
+              if (clean.length >= 7) {
+                const jid = `${clean}@c.us`;
+                logger.info(`🔍 [LID-RESOLVE] Resuelto vía Store.LidUtils: ${raw} -> ${jid}`);
+                this.lidToPhoneMap.set(raw, jid);
+                return jid;
+              }
+            }
+          }
+        } catch (e) {
+          logger.debug(`[LID-RESOLVE] Puppeteer evaluation falló para ${raw}: ${e.message}`);
+        }
+      }
+
+      // Intento 4: Consultar en CRM Database por deliveryPhone
+      try {
+        const crmContact = await prisma.contact.findFirst({
+          where: {
+            OR: [
+              { phone: raw },
+              { phone: raw.replace('@lid', '') }
+            ]
+          }
+        });
+        if (crmContact?.deliveryPhone) {
+          const clean = crmContact.deliveryPhone.replace(/\D/g, '');
+          if (clean.length >= 10) {
+            const withPrefix = clean.startsWith('57') ? clean : `57${clean}`;
+            const jid = `${withPrefix}@c.us`;
+            logger.info(`🔍 [LID-RESOLVE] Resuelto vía CRM deliveryPhone: ${raw} -> ${jid}`);
+            this.lidToPhoneMap.set(raw, jid);
+            return jid;
+          }
+        }
+      } catch (e) {
+        logger.debug(`[LID-RESOLVE] CRM lookup falló para ${raw}: ${e.message}`);
+      }
+    }
+
+    return this._normalizeJid(raw);
+  }
+
   _normalizeJid(to) {
     if (to.includes('@')) return to;
     const clean = to.replace(/\D/g, '');
@@ -504,62 +662,115 @@ class WhatsAppService {
     try {
       this._recordPendingSend(to, options.caption || '[Media]');
       await antiBanDelay();
-      const chatId = this._normalizeJid(to);
 
-      logger.info(`🖼️ Preparando envío de media para ${chatId} desde branch ${branchId}`);
+      // Resolver destinatario óptimo (mapea @lid a @c.us si es posible)
+      const resolvedJid = await this.resolveDestinationJid(targetBranch, to);
+      const chatId = resolvedJid || this._normalizeJid(to);
+
+      logger.info(`🖼️ Preparando envío de media para ${chatId} (original: ${to}) desde branch ${branchId}`);
+
+      // Aplicar parche preventivo de memoize en Chromium
+      await this._applyInjectedPatches(client);
+
+      let mediaBuffer;
+      let mimetype;
+      let filename = 'file';
 
       if (mediaSource.startsWith('http')) {
         try {
           const headResp = await axios.head(mediaSource, { timeout: 5000 });
           if (headResp.status !== 200) {
             logger.warn(`⚠️ Media URL no accesible (${headResp.status}): ${mediaSource}`);
-            return false;
+            return await this._sendMediaFallback(branchId, to, mediaSource, options.caption);
           }
         } catch (headErr) {
           logger.warn(`⚠️ Media URL no responde: ${mediaSource} — ${headErr.message}`);
-          return false;
+          return await this._sendMediaFallback(branchId, to, mediaSource, options.caption);
         }
 
         const response = await axios.get(mediaSource, { responseType: 'arraybuffer', timeout: 15000 });
-        const buffer = Buffer.from(response.data);
-        const mimetype = response.headers['content-type'] || 'image/png';
-        const base64 = buffer.toString('base64');
-
-        let sentMedia;
-        if (options.isAudio) {
-          const media = new MessageMedia('audio/mp4', base64, 'audio.mp4');
-          sentMedia = await client.sendMessage(chatId, media, { sendAudioAsVoice: true });
-        } else if (mimetype.startsWith('image/')) {
-          const media = new MessageMedia(mimetype, base64, 'image');
-          sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
-        } else if (mimetype.startsWith('video/')) {
-          const media = new MessageMedia(mimetype, base64, 'video');
-          sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
-        } else {
-          const fileName = mediaSource.split('/').pop() || 'file';
-          const media = new MessageMedia(mimetype, base64, fileName);
-          sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
-        }
-        if (sentMedia?.id?._serialized) this._trackBotMessage(sentMedia.id._serialized);
+        mediaBuffer = Buffer.from(response.data);
+        mimetype = response.headers['content-type'] || 'image/png';
+        filename = mediaSource.split('/').pop()?.split('?')[0] || 'imagen.jpg';
       } else {
-        const buffer = fs.readFileSync(mediaSource);
-        const base64 = buffer.toString('base64');
+        mediaBuffer = fs.readFileSync(mediaSource);
         const ext = path.extname(mediaSource).toLowerCase();
         const mimeTypes = {
           '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
           '.gif': 'image/gif', '.webp': 'image/webp', '.mp4': 'video/mp4',
           '.pdf': 'application/pdf'
         };
-        const mimetype = mimeTypes[ext] || 'image/png';
-        const media = new MessageMedia(mimetype, base64, path.basename(mediaSource));
-        const sentMedia = await client.sendMessage(chatId, media, { caption: options.caption || '' });
-        if (sentMedia?.id?._serialized) this._trackBotMessage(sentMedia.id._serialized);
+        mimetype = mimeTypes[ext] || 'image/png';
+        filename = path.basename(mediaSource);
       }
 
-      logger.info(`📤 Media enviado exitosamente a ${chatId}`);
+      const base64 = mediaBuffer.toString('base64');
+      const media = new MessageMedia(mimetype, base64, filename);
+
+      let sentMedia = null;
+      let sendSuccess = false;
+
+      // Intento 1: Envío normal de MessageMedia
+      try {
+        const sendOptions = { caption: options.caption || '' };
+        if (options.isAudio) sendOptions.sendAudioAsVoice = true;
+
+        sentMedia = await client.sendMessage(chatId, media, sendOptions);
+        if (sentMedia?.id?._serialized) this._trackBotMessage(sentMedia.id._serialized);
+        sendSuccess = true;
+        logger.info(`📤 Media enviado exitosamente a ${chatId}`);
+      } catch (firstErr) {
+        logger.warn(`⚠️ Error en primer intento de envío de media a ${chatId}: ${firstErr.message}`);
+
+        // Intento 2: Si falló en chatId resuelto o LID, intentar envío como documento
+        try {
+          logger.info(`🔄 [SEND-MEDIA-RETRY] Intentando envío como documento a ${chatId}...`);
+          sentMedia = await client.sendMessage(chatId, media, {
+            caption: options.caption || '',
+            sendMediaAsDocument: true
+          });
+          if (sentMedia?.id?._serialized) this._trackBotMessage(sentMedia.id._serialized);
+          sendSuccess = true;
+          logger.info(`📤 Media enviado exitosamente como documento a ${chatId}`);
+        } catch (docErr) {
+          logger.warn(`⚠️ Intento como documento también falló: ${docErr.message}`);
+        }
+      }
+
+      // Si ambos intentos con MessageMedia fallaron (ej. bug del memoizer de WhatsApp Web en LIDs)
+      // Activar Fallback de Entrega Garantizada (Layer 4):
+      if (!sendSuccess) {
+        logger.info(`📸 [MEDIA-FALLBACK] Activando envío garantizado de foto mediante enlace enriquecido para ${to}`);
+        return await this._sendMediaFallback(branchId, to, mediaSource, options.caption);
+      }
+
       return true;
     } catch (error) {
-      logger.warn(`⚠️ Error enviando media (Source: ${mediaSource}) a ${to}: ${error.message}`);
+      logger.warn(`⚠️ Error general enviando media (Source: ${mediaSource}) a ${to}: ${error.message}`);
+      return await this._sendMediaFallback(branchId, to, mediaSource, options.caption);
+    }
+  }
+
+  /**
+   * Fallback garantizado cuando WhatsApp Web no puede procesar el blob multimedia:
+   * Envía el mensaje con la URL directa de la imagen (Cloudinary) y su descripción,
+   * permitiendo que WhatsApp genere la vista previa de enlace enriquecida y el cliente
+   * reciba la foto sin falta.
+   */
+  async _sendMediaFallback(branchId, to, mediaSource, caption = '') {
+    try {
+      if (!mediaSource.startsWith('http')) return false;
+      const captionText = caption ? `\n\n${caption}` : '';
+      const fallbackMsg = `📸 *Foto del producto:*\n${mediaSource}${captionText}`;
+      logger.info(`📲 [SEND-MEDIA-FALLBACK] Entregando enlace de imagen a ${to}`);
+      const ok = await this.sendMessage(branchId, to, fallbackMsg);
+      if (ok) {
+        logger.info(`✅ [SEND-MEDIA-FALLBACK-OK] Foto entregada con éxito como enlace enriquecido a ${to}`);
+        return true;
+      }
+      return false;
+    } catch (fallbackErr) {
+      logger.error(`❌ [SEND-MEDIA-FALLBACK-ERR] Error entregando enlace alternativo a ${to}:`, fallbackErr);
       return false;
     }
   }

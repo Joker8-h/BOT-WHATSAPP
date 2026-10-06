@@ -16,7 +16,8 @@
     "simulate": "node scripts/simulateSale.js",
     "docker:build": "docker-compose build",
     "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down"
+    "docker:down": "docker-compose down",
+    "postinstall": "node scripts/patchWwebjs.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

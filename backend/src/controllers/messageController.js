@@ -213,6 +213,19 @@ class MessageController {
         logger.info(`📱 [PUSH-NAME] Nombre capturado automáticamente de WhatsApp: "${pushName}" para ${chatId}`);
       }
 
+      // Si es un ID de privacidad (LID), resolver su número de teléfono real para CRM y envíos
+      if (chatId.includes('@lid')) {
+        whatsappService.resolveDestinationJid(branchId, chatId).then(async (resolved) => {
+          if (resolved && resolved.includes('@c.us')) {
+            const resolvedDigits = resolved.split('@')[0].replace(/\D/g, '');
+            if (!contact.deliveryPhone && resolvedDigits.length >= 10) {
+              await crmService.updateContactInfo(contact.id, { deliveryPhone: resolvedDigits }).catch(() => {});
+              logger.info(`📱 [LID-MAPPED] Teléfono real vinculado para contacto LID ${chatId}: ${resolvedDigits}`);
+            }
+          }
+        }).catch(() => {});
+      }
+
       if (body) {
         const preExtracted = this._extractCustomerDataFromText(body);
         if (Object.keys(preExtracted).length > 0) {
