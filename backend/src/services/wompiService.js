@@ -2,13 +2,73 @@ const axios = require('axios');
 const crypto = require('crypto');
 const logger = require('../utils/logger');
 const { prisma } = require('../config/database');
-const { decrypt } = require('../utils/encryption');
+const { decrypt, encrypt } = require('../utils/encryption');
 
 class WompiService {
   constructor() {
-    // La URL base se determinará dinámicamente según la llave detectada
     this.sandboxUrl = 'https://sandbox.wompi.co/v1';
-    this.productionUrl = 'https://api.wompi.co/v1';
+    this.productionUrl = process.env.WOMPI_API_URL || 'https://production.wompi.co/v1';
+  }
+
+  /**
+   * Resuelve credenciales de Wompi de manera robusta:
+   * 1. Prioridad: Variables de entorno (WOMPI_PRIVATE_KEY, WOMPI_PUBLIC_KEY, etc.)
+   * 2. Sucursal en Base de Datos
+   * Si las llaves están en entorno pero la BD no las tiene, sincroniza automáticamente la BD.
+   */
+  async getCredentials(branchId = 1) {
+    let privateKey = process.env.WOMPI_PRIVATE_KEY?.trim() || null;
+    let publicKey = process.env.WOMPI_PUBLIC_KEY?.trim() || null;
+    let integritySecret = process.env.WOMPI_INTEGRITY_SECRET?.trim() || null;
+    let eventsSecret = process.env.WOMPI_EVENTS_SECRET?.trim() || null;
+
+    // Si faltan en ENV, buscar en la BD
+    if (!privateKey) {
+      try {
+        const masterBranchId = branchId ? parseInt(branchId) : 1;
+        const branch = await prisma.branch.findUnique({
+          where: { id: masterBranchId },
+          select: { wompiPrivateKey: true, wompiPublicKey: true, wompiIntegritySecret: true, wompiEventsSecret: true }
+        });
+
+        if (branch) {
+          if (branch.wompiPrivateKey) privateKey = decrypt(branch.wompiPrivateKey)?.trim();
+          if (branch.wompiPublicKey) publicKey = decrypt(branch.wompiPublicKey)?.trim();
+          if (branch.wompiIntegritySecret) integritySecret = decrypt(branch.wompiIntegritySecret)?.trim();
+          if (branch.wompiEventsSecret) eventsSecret = decrypt(branch.wompiEventsSecret)?.trim();
+        }
+      } catch (err) {
+        logger.warn(`⚠️ Error leyendo credenciales Wompi de BD: ${err.message}`);
+      }
+    } else {
+      // Si están en variables de entorno, sincronizar en BD en segundo plano
+      this._syncEnvCredentialsToDb().catch(() => {});
+    }
+
+    return { privateKey, publicKey, integritySecret, eventsSecret };
+  }
+
+  async _syncEnvCredentialsToDb() {
+    try {
+      const pKey = process.env.WOMPI_PRIVATE_KEY?.trim();
+      if (!pKey) return;
+      const b1 = await prisma.branch.findUnique({ where: { id: 1 }, select: { wompiPrivateKey: true } });
+      if (!b1?.wompiPrivateKey) {
+        const pubKey = process.env.WOMPI_PUBLIC_KEY?.trim();
+        const intSec = process.env.WOMPI_INTEGRITY_SECRET?.trim();
+        const evSec = process.env.WOMPI_EVENTS_SECRET?.trim();
+        const data = {};
+        if (pKey) data.wompiPrivateKey = encrypt(pKey);
+        if (pubKey) data.wompiPublicKey = encrypt(pubKey);
+        if (intSec) data.wompiIntegritySecret = encrypt(intSec);
+        if (evSec) data.wompiEventsSecret = encrypt(evSec);
+
+        await prisma.branch.updateMany({
+          data
+        });
+        logger.info('💳 Credenciales de Wompi de variables de entorno persistidas en las sedes de la BD');
+      }
+    } catch (_) {}
   }
 
   /**
@@ -16,26 +76,20 @@ class WompiService {
    */
   async generatePaymentLink({ branchId, amount, name, description, reference }) {
     try {
-      // 1. Obtener credenciales de la sucursal MAESTRA (Sucursal 1)
-      const masterBranchId = 1;
-      const branch = await prisma.branch.findUnique({
-        where: { id: masterBranchId },
-        select: { wompiPrivateKey: true, wompiPublicKey: true, wompiIntegritySecret: true }
-      });
+      const creds = await this.getCredentials(branchId);
+      const privateKey = creds.privateKey;
 
-      if (!branch || !branch.wompiPrivateKey) {
-        throw new Error(`La sucursal maestra (${masterBranchId}) no tiene configurado Wompi`);
+      if (!privateKey) {
+        throw new Error(`Wompi no está configurado (falta WOMPI_PRIVATE_KEY en variables de entorno o BD)`);
       }
 
-      // Desencriptar llave privada y determinar URL
-      const privateKey = decrypt(branch.wompiPrivateKey).trim();
+      // Determinar URL base
       const isProd = privateKey.startsWith('prv_prod_');
-      const activeUrl = isProd ? this.productionUrl : this.sandboxUrl;
+      const activeUrl = isProd ? (process.env.WOMPI_API_URL || this.productionUrl) : this.sandboxUrl;
 
-      logger.info(`💳 Generando link en ambiente: ${isProd ? 'PRODUCCIÓN' : 'SANDBOX'}`);
+      logger.info(`💳 Generando link de pago en ambiente: ${isProd ? 'PRODUCCIÓN' : 'SANDBOX'} (${activeUrl})`);
 
-      // 2. Crear el link de pago en Wompi
-      // Nota: El monto en Wompi se envía en centavos
+      // Monto en centavos
       const amountInCents = Math.round(parseFloat(amount) * 100);
 
       const payload = {

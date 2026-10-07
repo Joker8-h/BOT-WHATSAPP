@@ -950,7 +950,7 @@ class AdminController {
       
       // Validar que tenga Wompi configurado antes de permitir el canal de ventas
       const branch = await prisma.branch.findUnique({ where: { id: branchId } });
-      if (!branch?.wompiPrivateKey) {
+      if (!branch?.wompiPrivateKey && !process.env.WOMPI_PRIVATE_KEY) {
         return res.status(400).json({ 
           success: false, 
           error: 'Seguridad: Debes configurar y guardar tus llaves de Wompi antes de activar el bot de ventas.' 
@@ -1017,17 +1017,18 @@ class AdminController {
         }
       });
 
+      const hasEnv = !!(process.env.WOMPI_PRIVATE_KEY && process.env.WOMPI_PUBLIC_KEY);
       res.json({
         success: true,
         data: {
           wompiMerchantId: branch?.wompiMerchantId ? '••••••••••••••••' : '',
-          wompiPublicKey: branch?.wompiPublicKey ? '••••••••••••••••' : '',
-          wompiPrivateKey: branch?.wompiPrivateKey ? '••••••••••••••••' : '',
-          wompiIntegritySecret: branch?.wompiIntegritySecret ? '••••••••••••••••' : '',
-          wompiEventsSecret: branch?.wompiEventsSecret ? '••••••••••••••••' : '',
+          wompiPublicKey: (branch?.wompiPublicKey || process.env.WOMPI_PUBLIC_KEY) ? '••••••••••••••••' : '',
+          wompiPrivateKey: (branch?.wompiPrivateKey || process.env.WOMPI_PRIVATE_KEY) ? '••••••••••••••••' : '',
+          wompiIntegritySecret: (branch?.wompiIntegritySecret || process.env.WOMPI_INTEGRITY_SECRET) ? '••••••••••••••••' : '',
+          wompiEventsSecret: (branch?.wompiEventsSecret || process.env.WOMPI_EVENTS_SECRET) ? '••••••••••••••••' : '',
           notificationPhone: branch?.notificationPhone || '',
           notificationGroupName: branch?.notificationGroupName || '',
-          isConfigured: !!(branch?.wompiPrivateKey && branch?.wompiPublicKey)
+          isConfigured: !!(branch?.wompiPrivateKey && branch?.wompiPublicKey) || hasEnv
         }
       });
     } catch (error) {

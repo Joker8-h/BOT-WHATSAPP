@@ -123,6 +123,27 @@ async function seedSedes() {
     console.log(`  👤 ${saved.name} — ${saved.role} (Sede ${saved.branchId})`);
   }
 
+  // ── CONFIGURACIÓN AUTOMÁTICA DE WOMPI DESDE ENV ──
+  const { encrypt } = require('../src/utils/encryption');
+  const wompiPrivate = process.env.WOMPI_PRIVATE_KEY?.trim();
+  const wompiPublic = process.env.WOMPI_PUBLIC_KEY?.trim();
+  const wompiIntegrity = process.env.WOMPI_INTEGRITY_SECRET?.trim();
+  const wompiEvents = process.env.WOMPI_EVENTS_SECRET?.trim();
+
+  if (wompiPrivate && wompiPublic) {
+    const wompiData = {
+      wompiPrivateKey: encrypt(wompiPrivate),
+      wompiPublicKey: encrypt(wompiPublic),
+    };
+    if (wompiIntegrity) wompiData.wompiIntegritySecret = encrypt(wompiIntegrity);
+    if (wompiEvents) wompiData.wompiEventsSecret = encrypt(wompiEvents);
+
+    await prisma.branch.updateMany({
+      data: wompiData
+    });
+    console.log('💳 Wompi: Credenciales sincronizadas en todas las sedes.');
+  }
+
   console.log('\n✅ Seed de sedes y empleados completado.');
   process.exit(0);
 }
