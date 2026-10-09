@@ -185,6 +185,10 @@ class WhatsAppService {
 
       client.on('qr', (qrCode) => {
         logger.info(`📱 QR Generado para sucursal ${branchId}`);
+        try {
+          const qrcodeTerminal = require('qrcode-terminal');
+          qrcodeTerminal.generate(qrCode, { small: true });
+        } catch (_) {}
         this.sessions.set(branchId, {
           ...this.sessions.get(branchId),
           qr: qrCode,
