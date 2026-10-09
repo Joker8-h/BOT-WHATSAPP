@@ -27,6 +27,8 @@ class SofiaAIError extends Error {
   }
 }
 
+let lastRateLimitTimestamp = 0;
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -124,6 +126,7 @@ async function callChatWithFallback(messages, opts = {}) {
         const isTimeout = err.message && err.message.includes('timeout');
 
         if (rateLimited) {
+          lastRateLimitTimestamp = Date.now();
           logger.warn(`⚠️ [RATE_LIMIT] ${model} rate-limited (intento ${attempt + 1}/${maxRetriesForModel}): ${err.message?.substring(0, 120)}`);
           // Si es rate-limit, esperar y pasar al siguiente modelo directamente (no reintentar mismo modelo mucho)
           if (attempt < maxRetriesForModel - 1) {
@@ -246,6 +249,10 @@ const SEARCH_STOPWORDS = new Set([
 ]);
 
 class AIService {
+  get lastRateLimitAt() {
+    return lastRateLimitTimestamp;
+  }
+
   /**
    * Genera un audio a partir de texto usando OpenAI TTS
    * @param {string} text - El texto que Sofía dirá

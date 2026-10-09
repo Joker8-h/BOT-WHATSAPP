@@ -614,11 +614,15 @@ class WhatsAppService {
 
       logger.info(`📤 [SEND-INICIO] Enviando a ${to} (branch ${targetBranch}, texto ${text.length} chars)`);
       await antiBanDelay();
-      logger.info(`📤 [SEND-POST-DELAY] Delay completado, preparando envío a ${to}`);
-      const chatId = this._normalizeJid(to);
-      logger.info(`📤 [SEND-JID] ChatID normalizado: ${chatId}`);
+      // Resolver destinatario óptimo (mapea @lid a @c.us si es posible)
+      const resolvedJid = await this.resolveDestinationJid(targetBranch, to);
+      const chatId = resolvedJid || this._normalizeJid(to);
+      logger.info(`📤 [SEND-JID] ChatID normalizado: ${chatId} (original: ${to})`);
 
-      const sendWithTimeout = async (chatId, messageText, timeoutMs = 60000) => {
+      const isLid = chatId.endsWith('@lid');
+      const defaultTimeout = isLid ? 15000 : 60000;
+
+      const sendWithTimeout = async (chatId, messageText, timeoutMs = defaultTimeout) => {
         this._recordPendingSend(chatId, messageText);
         const sent = await Promise.race([
           client.sendMessage(chatId, messageText),

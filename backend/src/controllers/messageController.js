@@ -645,11 +645,21 @@ class MessageController {
       logger.info(`📤 [MSG-DEBUG] aiResponseToSend: ${aiResponseToSend ? 'SÍ tiene respuesta' : 'NULL — sin respuesta'}, shouldContraEntrega=${actions.shouldCreateContraEntrega}, shouldCloseSale=${actions.shouldCloseSale}, missingAddress=${missingAddress}, missingCity=${missingCity}`);
 
       if (aiResponseToSend) {
+        // Protección contra repetición: Si la IA está en fallback (sin créditos o rate limit),
+        // no repetir la misma plantilla si ya se le envió al cliente recientemente
+        if (aiResult?.isFallback || aiResult?.flow === 'FALLBACK_RATE_LIMIT') {
+          const lastAssistant = (messageHistory || []).slice().reverse().find(m => m.role === 'ASSISTANT');
+          if (lastAssistant && lastAssistant.content && (lastAssistant.content.includes('alta demanda') || lastAssistant.content.includes('Sofía retoma'))) {
+            logger.warn(`🤫 [ANTI-REPEAT] Omitiendo repetición de plantilla de respaldo para ${chatId}`);
+            return;
+          }
+        }
+
         const responseParts = this.splitMessageNaturally(aiResponseToSend);
         
         logger.info(`📤 [MSG-SEND] Preparando envío de ${responseParts.length} partes a ${chatId} (branch ${branchId})`);
         for (let i = 0; i < responseParts.length; i++) {
-          await whatsappService.sendMessage(branchId, chatId, responseParts[i]);
+          await whatsappService.sendMessage(branchId, chatId, responseParts[i], { singleMessage: true });
           if (i < responseParts.length - 1) {
             await new Promise(r => setTimeout(r, 1200));
           }

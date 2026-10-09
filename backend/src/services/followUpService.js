@@ -133,6 +133,11 @@ class FollowUpService {
       return;
     }
 
+    if (this.aiService?.lastRateLimitAt && (Date.now() - this.aiService.lastRateLimitAt) < 15 * 60 * 1000) {
+      logger.info('⏸️ [FollowUp-SKIP] IA en pausa por rate-limit/saldo agotado recientemente. Omitiendo ciclo de seguimiento.');
+      return;
+    }
+
     logger.info('🔔 Iniciando proceso de follow-up inteligente...');
     const crmService = require('./crmService');
     const catalogService = require('./catalogService');
@@ -209,7 +214,13 @@ class FollowUpService {
             if (sent) await crmService.saveMessage(conv.id, 'ASSISTANT', text);
           }
 
-          if (!sent) continue;
+          if (!sent) {
+            await crmService.patchContext(conv.id, (ctx) => ({
+              ...ctx,
+              lastOutreachAt: now.toISOString(),
+            }));
+            continue;
+          }
 
           await crmService.patchContext(conv.id, (ctx) => ({
             ...ctx,
