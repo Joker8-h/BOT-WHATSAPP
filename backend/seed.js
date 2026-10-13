@@ -7,39 +7,45 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Sembrando base de datos...');
 
-  // 1. Crear Sucursal Central (Infraestructura SaaS)
-  const mainBranch = await prisma.branch.upsert({
-    where: { id: 1 },
-    update: {
-      notificationPhone: '573126279506'
-    },
-    create: {
-      name: 'Fantasías Central',
-      city: 'Administración Global',
-      address: 'N/A',
-      phone: '0000000000',
-      notificationPhone: '573126279506',
-      isActive: true,
-      isAuthorized: true
-    }
-  });
-  console.log('✅ Infraestructura base creada: Fantasías Central');
+  // 1. Sede base id=1: la crea seedSedes.js (Popayán). Aquí solo garantizar que exista
+  // para el admin, sin pisar nombre/dirección ni teléfonos configurados en el panel.
+  let mainBranch = await prisma.branch.findUnique({ where: { id: 1 } });
+  if (!mainBranch) {
+    mainBranch = await prisma.branch.create({
+      data: {
+        id: 1,
+        name: 'Fantasías Central',
+        city: 'Administración Global',
+        address: 'N/A',
+        phone: '0000000000',
+        notificationPhone: process.env.ADMIN_PHONE || '573126279506',
+        isActive: true,
+        isAuthorized: true
+      }
+    });
+  }
+  console.log('✅ Infraestructura base verificada (sede 1).');
 
-  // Configurar teléfono de notificaciones en todas las sedes
-  await prisma.branch.updateMany({
-    data: { notificationPhone: '573126279506' }
+  // Rellenar SOLO sedes sin teléfono (nunca pisar lo configurado en el panel)
+  const fallbackPhone = process.env.ADMIN_PHONE || '573126279506';
+  const filled = await prisma.branch.updateMany({
+    where: { OR: [{ notificationPhone: null }, { notificationPhone: '' }] },
+    data: { notificationPhone: fallbackPhone }
   });
-  console.log('🔔 Teléfono de notificaciones y alarmas configurado a 573126279506 para todas las sedes.');
+  if (filled.count) console.log(`🔔 Teléfono de notificaciones rellenado en ${filled.count} sede(s) vacía(s).`);
 
   // 2. Crear Admin Master
   const adminUsername = process.env.ADMIN_USERNAME || 'admin';
   const adminPassword = process.env.ADMIN_PASSWORD || 'Fantasias2024!';
+  if (!process.env.ADMIN_PASSWORD) {
+    console.error('⚠️ SEGURIDAD: ADMIN_PASSWORD no definido, usando default público. Defínelo en Railway ya.');
+  }
   const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
   const adminUser = await prisma.user.upsert({
     where: { username: adminUsername },
     update: {
-        password: hashedPassword,
+        // No tocar password aquí: si se cambió en el panel, cada redeploy lo revertiría
         role: 'ADMIN',
         isApproved: true,
         branchId: mainBranch.id

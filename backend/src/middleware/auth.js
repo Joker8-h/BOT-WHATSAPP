@@ -4,7 +4,19 @@
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fantasias_default_secret';
+/**
+ * Secreto JWT de fuente única. Falla en arranque si no es seguro:
+ * cualquiera con el default público del repo podría firmar tokens ADMIN.
+ */
+function getJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32 || secret === 'fantasias_default_secret' || secret === 'fantasias_jwt_secret_change_me_in_production') {
+    throw new Error('JWT_SECRET inválido: define uno de mínimo 32 caracteres únicos (ver backend/.env.example)');
+  }
+  return secret;
+}
+
+const JWT_SECRET = getJwtSecret();
 
 /**
  * Middleware de autenticación global
@@ -41,15 +53,29 @@ const isAdmin = (req, res, next) => {
 };
 
 /**
+ * Restringe a uno o varios roles (deny-by-default).
+ * Uso: requireRole('ADMIN','MANAGER')
+ */
+const requireRole = (...roles) => (req, res, next) => {
+  if (req.user && roles.includes(req.user.role)) return next();
+  return res.status(403).json({ success: false, error: 'Acceso restringido: rol insuficiente' });
+};
+
+/**
  * Middleware para asegurar que el gestor solo acceda a su propia sucursal
- * (El Admin puede acceder a todas)
+ * (El Admin puede acceder a todas).
+ * Sin branchId explícito, los no-ADMIN quedan atados a su propia sede (req.branchId).
  */
 const checkBranchAccess = (req, res, next) => {
   const requestedBranchId = parseInt(req.params.branchId || req.body.branchId || req.query.branchId);
-  
-  if (!requestedBranchId) return next();
 
   if (req.user.role === 'ADMIN') return next();
+
+  if (!requestedBranchId) {
+    // Sin sede pedida: forzar la propia (evita bypass en rutas :id)
+    req.branchId = req.user.branchId;
+    return next();
+  }
 
   if (req.user.branchId === requestedBranchId) {
     next();
@@ -58,8 +84,10 @@ const checkBranchAccess = (req, res, next) => {
   }
 };
 
-module.exports = { 
-  authenticateToken, 
-  isAdmin, 
-  checkBranchAccess 
+module.exports = {
+  authenticateToken,
+  isAdmin,
+  requireRole,
+  checkBranchAccess,
+  getJwtSecret,
 };

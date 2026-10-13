@@ -6,27 +6,37 @@ const logger = require('../utils/logger');
 
 class CRMService {
   /**
-   * Busca o crea un contacto por número de teléfono DENTRO de una sucursal
+   * Busca o crea un contacto por número de teléfono DENTRO de una sucursal.
+   * Único por (phone, branchId): el mismo cliente en 2 sedes tiene 2 fichas.
    */
   async findOrCreateContact(phone, branchId, name = null) {
+    const bId = branchId ? parseInt(branchId, 10) : 1;
     try {
-      // El teléfono es ahora único globalmente en el CRM
       let contact = await prisma.contact.findUnique({
-        where: { phone },
+        where: { phone_branchId: { phone, branchId: bId } },
       });
 
       if (!contact) {
-        contact = await prisma.contact.create({
-          data: {
-            phone,
-            branchId,
-            name: name || null,
-            clientType: 'NUEVO',
-            confidenceLevel: 'BAJO',
-            purchaseStage: 'CURIOSO',
-          },
-        });
-        logger.info(`👤 Nuevo contacto creado en sucursal ${branchId}: ${phone}`);
+        try {
+          contact = await prisma.contact.create({
+            data: {
+              phone,
+              branchId: bId,
+              name: name || null,
+              clientType: 'NUEVO',
+              confidenceLevel: 'BAJO',
+              purchaseStage: 'CURIOSO',
+            },
+          });
+          logger.info(`👤 Nuevo contacto creado en sucursal ${bId}: ${phone}`);
+        } catch (createErr) {
+          // Carrera: dos mensajes simultáneos del mismo número nuevo (P2002) → releer
+          if (createErr?.code === 'P2002') {
+            contact = await prisma.contact.findUnique({
+              where: { phone_branchId: { phone, branchId: bId } },
+            });
+          } else throw createErr;
+        }
       } else {
         // Actualizar último mensaje y nombre si no tenía
         const updates = { lastMessageAt: new Date() };
@@ -39,7 +49,7 @@ class CRMService {
 
       return contact;
     } catch (error) {
-      logger.error(`Error en findOrCreateContact (Branch ${branchId}):`, error);
+      logger.error(`Error en findOrCreateContact (Branch ${bId}):`, error);
       throw error;
     }
   }

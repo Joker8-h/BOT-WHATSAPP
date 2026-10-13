@@ -212,7 +212,8 @@ model Contact {
   conversations   Conversation[]
   orders          Order[]
 
-  @@unique([phone]) // El teléfono es único globalmente
+  @@unique([phone, branchId]) // Teléfono único POR SEDE (multi-tenant real)
+  @@index([phone])
   @@index([city])
   @@index([clientType])
   @@index([isActive])

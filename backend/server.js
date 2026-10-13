@@ -54,16 +54,22 @@ app.use(express.urlencoded({ extended: true }));
 const externalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 600,
-  keyGenerator: (req) => req.headers['x-forwarded-for'] || req.ip,
   message: { success: false, error: 'Demasiadas solicitudes, intenta más tarde' },
 });
 app.use('/api/v1', externalLimiter, externalApiRoutes);
+
+// ─── Login con límite estricto anti brute-force ───
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: { success: false, error: 'Demasiados intentos de login, espera 15 minutos' },
+});
+app.use('/api/auth/login', loginLimiter);
 
 // ─── Rutas API y Pagos (Rate limit + JWT) ───
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 6000,
-  keyGenerator: (req) => req.headers['x-forwarded-for'] || req.ip,
   message: { success: false, error: 'Demasiadas solicitudes, intenta más tarde' },
 });
 app.use('/api', apiLimiter);

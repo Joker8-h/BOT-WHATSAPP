@@ -22,8 +22,9 @@ class CampaignService {
    * Crea una nueva campaña
    */
   async createCampaign({ name, message, targetFilter, scheduledAt, branchId }) {
-    // Contar cuántos contactos aplican
-    const whereFilter = this._buildFilter(targetFilter);
+    const bId = branchId ? parseInt(branchId, 10) : 1;
+    // Contar cuántos contactos aplican DENTRO de la sede (una campaña nunca barre otras sedes)
+    const whereFilter = this._buildFilter(targetFilter, bId);
     const totalTargets = await prisma.contact.count({ where: whereFilter });
 
     const campaign = await prisma.campaign.create({
@@ -32,13 +33,13 @@ class CampaignService {
         message,
         targetFilter: targetFilter || {},
         totalTargets,
-        branchId: branchId ? parseInt(branchId, 10) : null,
+        branchId: bId,
         status: scheduledAt ? 'SCHEDULED' : 'DRAFT',
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
       },
     });
 
-    logger.info(`📢 Campaña creada: "${name}" (${totalTargets} contactos, sede: ${branchId || 'Global (1)'})`);
+    logger.info(`📢 Campaña creada: "${name}" (${totalTargets} contactos, sede: ${bId})`);
     return campaign;
   }
 
@@ -61,8 +62,8 @@ class CampaignService {
       data: { status: 'RUNNING', startedAt: new Date() },
     });
 
-    // Obtener contactos objetivo
-    const whereFilter = this._buildFilter(campaign.targetFilter);
+    // Obtener contactos objetivo DENTRO de la sede de la campaña
+    const whereFilter = this._buildFilter(campaign.targetFilter, campaign.branchId || 1);
     whereFilter.isActive = true;
     whereFilter.isBlocked = false;
     const allContacts = await prisma.contact.findMany({ where: whereFilter });
@@ -101,10 +102,11 @@ class CampaignService {
   }
 
   /**
-   * Construye filtro Prisma desde el target
+   * Construye filtro Prisma desde el target, siempre acotado a la sede.
    */
-  _buildFilter(targetFilter) {
+  _buildFilter(targetFilter, branchId = null) {
     const where = {};
+    if (branchId) where.branchId = parseInt(branchId, 10);
     if (!targetFilter) return where;
 
     if (targetFilter.city) where.city = targetFilter.city;
@@ -123,7 +125,7 @@ class CampaignService {
    * Inicia el scheduler de campañas programadas
    */
   startScheduler() {
-    // Cada 5 minutos, revisar si hay campañas programadas
+    // Cada 5 minutos, revisar si hay campañas programadas (hora Colombia)
     cron.schedule('*/5 * * * *', async () => {
       try {
         const pendingCampaigns = await prisma.campaign.findMany({
@@ -140,16 +142,17 @@ class CampaignService {
       } catch (error) {
         logger.error('Error en scheduler de campañas:', error);
       }
-    });
+    }, { scheduled: true, timezone: 'America/Bogota' });
 
     logger.info('⏰ Scheduler de campañas iniciado');
   }
 
   /**
-   * Obtiene todas las campañas
+   * Obtiene campañas (opcionalmente acotadas a una sede para MANAGER).
    */
-  async getCampaigns() {
+  async getCampaigns(branchId = null) {
     return prisma.campaign.findMany({
+      where: branchId ? { branchId: parseInt(branchId, 10) } : {},
       orderBy: { createdAt: 'desc' },
     });
   }

@@ -4,6 +4,7 @@ async function seedSedes() {
   console.log('🌱 Sembrando sedes y empleados...\n');
 
   // ── SEDE POPAYÁN ──
+  // notificationPhone: solo en create + relleno de vacíos abajo (nunca pisar el panel)
   const popayan = await prisma.branch.upsert({
     where: { id: 1 },
     update: {
@@ -11,7 +12,6 @@ async function seedSedes() {
       referencePoint: 'Sobre la misma cuadra del Gimnasio de la Salud',
       notes: null,
       storeFrontDesc: null,
-      notificationPhone: '573126279506',
     },
     create: {
       id: 1,
@@ -34,7 +34,6 @@ async function seedSedes() {
       address: 'Calle 18 # 10-04, Barrio Centro',
       referencePoint: 'Sobre la misma cuadra de la transportadora ENVÍA',
       storeFrontDesc: 'Fachada de dos pisos muy grande de color negro',
-      notificationPhone: '573126279506',
       notes: null,
     },
     create: {
@@ -58,7 +57,6 @@ async function seedSedes() {
     update: {
       address: 'Cll 14 7 24, Barrio Guaduales',
       notes: 'Aunque estamos funcionando de manera provisional y unificada con el local Pink Rouse, tenemos la mayoría de nuestros productos listos para entregar. Las personas pueden ir a este punto a comprar o también entregamos a domicilio.',
-      notificationPhone: '573126279506',
       referencePoint: null,
       storeFrontDesc: null,
     },
@@ -83,7 +81,6 @@ async function seedSedes() {
       address: 'Calle 9 # 23-52, Barrio Centro',
       referencePoint: 'Frente al restaurante Rapi Roy',
       storeFrontDesc: 'Fachada amplia de cristal y pared de color negro',
-      notificationPhone: '573126279506',
       notes: 'Estamos próximos a trasladarnos, estamos en búsqueda de local para mejorar nuestras instalaciones para beneficio de nuestros clientes. En caso de que sepa de un local de aproximadamente 100 a 200 metros cuadrados agradeceríamos. Si no, nos instalamos en una bodega provisional y seguimos entregando a domicilio mientras nos ubicamos bien.',
     },
     create: {
@@ -138,11 +135,20 @@ async function seedSedes() {
     if (wompiIntegrity) wompiData.wompiIntegritySecret = encrypt(wompiIntegrity);
     if (wompiEvents) wompiData.wompiEventsSecret = encrypt(wompiEvents);
 
+    // Solo sedes sin credenciales propias (nunca pisar llaves por sede del panel)
     await prisma.branch.updateMany({
+      where: { wompiPrivateKey: null },
       data: wompiData
     });
-    console.log('💳 Wompi: Credenciales sincronizadas en todas las sedes.');
+    console.log('💳 Wompi: Credenciales ENV aplicadas solo a sedes sin llaves propias.');
   }
+
+  // Rellenar teléfonos de notificación vacíos (nunca pisar el panel)
+  const masterPhone = process.env.ADMIN_PHONE || '573166575904';
+  await prisma.branch.updateMany({
+    where: { OR: [{ notificationPhone: null }, { notificationPhone: '' }] },
+    data: { notificationPhone: masterPhone },
+  });
 
   console.log('\n✅ Seed de sedes y empleados completado.');
   process.exit(0);

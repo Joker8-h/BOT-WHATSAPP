@@ -12,7 +12,10 @@ const { checkBranchAccess } = require('../middleware/auth');
  */
 router.get('/', checkBranchAccess, async (req, res) => {
   try {
-    const branchId = req.user.branchId || parseInt(req.query.branchId);
+    // MANAGER solo su sede; ADMIN debe explicitarla (o usa la propia si la tiene)
+    const branchId = req.user.role !== 'ADMIN'
+      ? req.user.branchId
+      : (parseInt(req.query.branchId) || req.user.branchId);
     
     if (!branchId) {
       return res.status(400).json({ success: false, error: 'Sucursal no identificada' });
@@ -36,7 +39,10 @@ router.get('/', checkBranchAccess, async (req, res) => {
 router.post('/', checkBranchAccess, async (req, res) => {
   try {
     const { phone, name, branchId: reqBranchId } = req.body;
-    const branchId = req.user.branchId || parseInt(reqBranchId);
+    // MANAGER solo su sede (el body no puede inyectar otra)
+    const branchId = req.user.role !== 'ADMIN'
+      ? req.user.branchId
+      : (parseInt(reqBranchId) || req.user.branchId);
 
     if (!phone || !branchId) {
       return res.status(400).json({ success: false, error: 'Teléfono y sucursal son requeridos' });
@@ -72,6 +78,12 @@ router.post('/', checkBranchAccess, async (req, res) => {
 router.delete('/:id', checkBranchAccess, async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Ownership: verificar que el acceso pertenece a una sede visible antes de borrar
+    const where = { id: parseInt(id) };
+    if (req.user.role !== 'ADMIN') where.branchId = req.user.branchId;
+    const existing = await prisma.employeeAccess.findFirst({ where });
+    if (!existing) return res.status(404).json({ success: false, error: 'Acceso no encontrado' });
 
     await prisma.employeeAccess.delete({
       where: { id: parseInt(id) }

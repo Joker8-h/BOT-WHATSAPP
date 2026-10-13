@@ -11,7 +11,7 @@ const paymentController = require('../controllers/paymentController');
 const wompiController = require('../controllers/wompiController');
 const metricsController = require('../controllers/metricsController');
 const employeeController = require('../controllers/employeeController');
-const { authenticateToken, isAdmin, checkBranchAccess } = require('../middleware/auth');
+const { authenticateToken, isAdmin, checkBranchAccess, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -48,6 +48,7 @@ router.post('/payment/wompi-webhook', (req, res) => wompiController.handleWebhoo
 // ── API Admin (Protegida) ──
 const api = express.Router();
 api.use(authenticateToken); // Todas las rutas /api requieren JWT
+api.use(checkBranchAccess); // Atar no-ADMIN a su sede (req.branchId) por defecto
 
 // Perfil y Sesión
 api.get('/auth/me', authController.getMe);

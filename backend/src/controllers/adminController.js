@@ -189,7 +189,7 @@ class AdminController {
       const contactId = parseInt(req.params.id);
       
       const where = { id: contactId };
-      if (role === 'MANAGER') where.branchId = branchId;
+      if (role !== 'ADMIN') where.branchId = branchId;
 
       const contact = await prisma.contact.findFirst({
         where,
@@ -217,7 +217,7 @@ class AdminController {
       const { category, available, search } = req.query;
       const { branchId, role } = req.user;
       
-      const where = role === 'MANAGER' ? { branchId } : {};
+      const where = role !== 'ADMIN' ? { branchId } : {};
 
       if (category) where.category = category;
       if (available === 'true') where.isAvailable = true;
@@ -299,7 +299,7 @@ class AdminController {
       const { branchId, role } = req.user;
       
       const where = { id };
-      if (role === 'MANAGER') where.branchId = branchId;
+      if (role !== 'ADMIN') where.branchId = branchId;
 
       const existing = await prisma.product.findFirst({ where });
       if (!existing) {
@@ -347,7 +347,7 @@ class AdminController {
       const { branchId, role } = req.user;
 
       const where = { id };
-      if (role === 'MANAGER') where.branchId = branchId;
+      if (role !== 'ADMIN') where.branchId = branchId;
 
       const product = await prisma.product.findFirst({ where });
       if (!product) return res.status(404).json({ success: false, error: 'Producto no encontrado' });
@@ -372,7 +372,7 @@ class AdminController {
       const { stock, adjustment, reason } = req.body;
 
       const where = { id };
-      if (role === 'MANAGER') where.branchId = branchId;
+      if (role !== 'ADMIN') where.branchId = branchId;
 
       const product = await prisma.product.findFirst({ where });
       if (!product) return res.status(404).json({ success: false, error: 'Producto no encontrado' });
@@ -602,7 +602,7 @@ class AdminController {
       const { status, trackingNumber, shippingAddress } = req.body;
 
       const where = { id };
-      if (role === 'MANAGER') where.branchId = branchId;
+      if (role !== 'ADMIN') where.branchId = branchId;
 
       const existing = await prisma.order.findFirst({ where });
       if (!existing) return res.status(404).json({ success: false, error: 'Orden no encontrada' });
@@ -642,8 +642,17 @@ class AdminController {
 
   async getConversationMessages(req, res) {
     try {
+      const convId = parseInt(req.params.id);
+      const { branchId, role } = req.user;
+
+      // Ownership: un MANAGER solo lee conversaciones de su sede (evita IDOR por ID enumerado)
+      if (role !== 'ADMIN') {
+        const conv = await prisma.conversation.findFirst({ where: { id: convId, branchId }, select: { id: true } });
+        if (!conv) return res.status(404).json({ success: false, error: 'Conversación no encontrada' });
+      }
+
       const messages = await prisma.message.findMany({
-        where: { conversationId: parseInt(req.params.id) },
+        where: { conversationId: convId },
         orderBy: { createdAt: 'asc' },
       });
       res.json({ success: true, data: messages });
@@ -659,7 +668,7 @@ class AdminController {
       const { branchId, role } = req.user;
 
       const where = { id };
-      if (role === 'MANAGER') where.branchId = branchId;
+      if (role !== 'ADMIN') where.branchId = branchId;
 
       const conversation = await prisma.conversation.findFirst({ where });
       if (!conversation) return res.status(404).json({ success: false, error: 'Conversación no encontrada' });
@@ -681,7 +690,8 @@ class AdminController {
   // ═══════════════════════════════════════
   async getCampaigns(req, res) {
     try {
-      const campaigns = await campaignService.getCampaigns();
+      const branchId = req.user.role !== 'ADMIN' ? req.user.branchId : (req.query.branchId || null);
+      const campaigns = await campaignService.getCampaigns(branchId);
       res.json({ success: true, data: campaigns });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -690,7 +700,10 @@ class AdminController {
 
   async createCampaign(req, res) {
     try {
-      const branchId = req.user.branchId || req.body.branchId || 1;
+      // MANAGER siempre en su sede (el body no puede inyectar otra); ADMIN puede especificar
+      const branchId = req.user.role !== 'ADMIN'
+        ? req.user.branchId
+        : (req.body.branchId || req.user.branchId || 1);
       const campaign = await campaignService.createCampaign({ ...req.body, branchId });
       res.json({ success: true, data: campaign });
     } catch (error) {
@@ -700,7 +713,13 @@ class AdminController {
 
   async executeCampaign(req, res) {
     try {
-      const result = await campaignService.executeCampaign(parseInt(req.params.id));
+      const campaignId = parseInt(req.params.id);
+      // Ownership: un MANAGER solo ejecuta campañas de su sede
+      if (req.user.role !== 'ADMIN') {
+        const camp = await prisma.campaign.findFirst({ where: { id: campaignId, branchId: req.user.branchId }, select: { id: true } });
+        if (!camp) return res.status(404).json({ success: false, error: 'Campaña no encontrada' });
+      }
+      const result = await campaignService.executeCampaign(campaignId);
       res.json({ success: true, data: result });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
@@ -713,7 +732,10 @@ class AdminController {
   async sendManualMessage(req, res) {
     try {
       const { phone, message } = req.body;
-      const { branchId } = req.user;
+      const branchId = req.user.branchId || req.body.branchId || 1;
+      if (req.user.role !== 'ADMIN' && branchId !== req.user.branchId) {
+        return res.status(403).json({ success: false, error: 'No puedes enviar desde otra sucursal' });
+      }
       if (!phone || !message) {
         return res.status(400).json({ success: false, error: 'phone y message son requeridos' });
       }

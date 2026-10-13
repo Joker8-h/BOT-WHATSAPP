@@ -6,8 +6,9 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const logger = require('../utils/logger');
 const emailService = require('../services/emailService');
+const { getJwtSecret } = require('../middleware/auth');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'fantasias_default_secret';
+const JWT_SECRET = getJwtSecret();
 
 /**
  * Registro de nueva sucursal y gestor
@@ -26,6 +27,20 @@ exports.register = async (req, res) => {
   } = req.body;
 
   try {
+    // 0. Validaciones básicas (aunque la ruta esté desactivada, el controller no debe aceptar basura)
+    if (!username || String(username).trim().length < 3) {
+      return res.status(400).json({ success: false, error: 'Usuario mínimo 3 caracteres' });
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email))) {
+      return res.status(400).json({ success: false, error: 'Email inválido' });
+    }
+    if (!password || String(password).length < 8) {
+      return res.status(400).json({ success: false, error: 'Contraseña mínima 8 caracteres' });
+    }
+    if (!branchName || !city) {
+      return res.status(400).json({ success: false, error: 'Sucursal y ciudad son obligatorias' });
+    }
+
     // 1. Verificar si el usuario ya existe
     const existingUser = await prisma.user.findFirst({
       where: { OR: [{ username }, { email }] }
@@ -122,16 +137,16 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, error: 'Credenciales inválidas' });
     }
 
-    // 4. Generar Token
+    // 4. Generar Token (1h: ventana corta limita el daño si un token se filtra)
     const token = jwt.sign(
-      { 
-        userId: user.id, 
-        username: user.username, 
-        role: user.role, 
-        branchId: user.branchId 
-      }, 
-      JWT_SECRET, 
-      { expiresIn: '3h' }
+      {
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        branchId: user.branchId
+      },
+      JWT_SECRET,
+      { expiresIn: '1h' }
     );
 
     res.json({
