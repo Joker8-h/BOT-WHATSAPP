@@ -128,13 +128,24 @@ async function callChatWithFallback(messages, opts = {}) {
             model,
             messages,
             temperature: provider === 'groq' ? Math.min(temperature, 0.4) : temperature,
-            max_tokens,
+            max_tokens: provider === 'groq' ? Math.max(max_tokens, 500) : max_tokens,
+            // gpt-oss en Groq son modelos reasoning: effort low deja tokens para el contenido real
+            ...(provider === 'groq' ? { reasoning_effort: 'low' } : {}),
             ...(response_format ? { response_format } : {}),
           });
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error(`${provider} timeout: la respuesta tardó más de 30 segundos`)), 30000)
           );
           const completion = await Promise.race([completionPromise, timeoutPromise]);
+          // Modelos reasoning (gpt-oss en Groq) pueden devolver content vacío si el
+          // razonamiento consumió los tokens: reintentar con el siguiente modelo
+          const content = completion?.choices?.[0]?.message?.content;
+          if ((!content || !String(content).trim()) && provider === 'groq') {
+            logger.warn(`⚠️ [FALLBACK] ${provider}:${model} devolvió contenido vacío (reasoning sin content). Probando siguiente.`);
+            lastError = new Error('Groq: contenido vacío (reasoning consumió tokens)');
+            await sleep(500);
+            break;
+          }
           if (mIdx > 0 || provider === 'groq') logger.info(`✅ [FALLBACK-OK] ${provider}:${model} respondió correctamente`);
           if (completion) completion._provider = provider;
           if (completion) completion._modelUsed = model;

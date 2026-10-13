@@ -45,8 +45,8 @@ if (process.env.GROQ_API_KEY) {
   console.warn('⚠️ GROQ_API_KEY no definido — fallback Groq deshabilitado (solo OpenAI)');
 }
 
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-const GROQ_FALLBACK_MODELS = (process.env.GROQ_FALLBACK_MODELS || 'llama-3.1-8b-instant,mixtral-8x7b-32768')
+const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+const GROQ_FALLBACK_MODELS = (process.env.GROQ_FALLBACK_MODELS || 'openai/gpt-oss-20b,qwen/qwen3.8-27b')
   .split(',')
   .map(m => m.trim())
   .filter(Boolean);
