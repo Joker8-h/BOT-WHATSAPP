@@ -370,13 +370,14 @@ class CatalogService {
   }
 
   /**
-   * Invalida la caché de una sucursal
+   * Invalida la caché de una sucursal (acepta "1" o 1: la clave interna es int).
    */
   invalidateCache(branchId) {
-    if (branchId) {
-      this._caches.delete(branchId);
-    } else {
+    if (branchId === undefined || branchId === null) {
       this._caches.clear();
+    } else {
+      const key = /^\d+$/.test(String(branchId)) ? parseInt(branchId, 10) : branchId;
+      this._caches.delete(key);
     }
   }
 }

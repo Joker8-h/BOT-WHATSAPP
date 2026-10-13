@@ -31,7 +31,14 @@ class StoreCatalogService {
   get config() {
     const flag = String(process.env.STORE_PRODUCTS_API || 'on').toLowerCase();
     const enabled = !['off', 'false', '0', 'no'].includes(flag);
-    const url = String(process.env.STORE_PRODUCTS_API_URL || DEFAULT_API_URL).split('?')[0].trim();
+    // Conservar query firmada (?token=...) pero sin paginación propia
+    let url = String(process.env.STORE_PRODUCTS_API_URL || DEFAULT_API_URL).trim();
+    try {
+      const u = new URL(url);
+      u.searchParams.delete('page');
+      u.searchParams.delete('limit');
+      url = u.toString();
+    } catch (_) {}
     const branchIds = String(process.env.STORE_PRODUCTS_BRANCH_IDS || '1')
       .split(',').map(n => parseInt(n.trim(), 10)).filter(Number.isFinite);
     return { enabled, url, branchIds };

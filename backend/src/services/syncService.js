@@ -56,11 +56,27 @@ class SyncService {
       logger.info(`📡 Sincronizando fuente: ${source.name} (Sede: ${source.branch.name})...`);
       
       const downloadUrl = this.getDirectDownloadUrl(source.url);
-      const response = await axios({
-        url: downloadUrl,
-        method: 'GET',
-        responseType: 'stream'
-      });
+      // Descarga con timeout + reintentos (un corte a mitad deja xlsx corrupto)
+      let response = null;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          response = await axios({
+            url: downloadUrl,
+            method: 'GET',
+            responseType: 'stream',
+            timeout: 30000,
+            maxRedirects: 5,
+          });
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          logger.warn(`⚠️ [SYNC] Descarga ${source.name} intento ${attempt}/3: ${e.message?.substring(0, 100)}`);
+          await new Promise(r => setTimeout(r, 1500 * attempt));
+        }
+      }
+      if (!response) throw lastErr || new Error('Descarga sin respuesta');
 
       const writer = fs.createWriteStream(tempPath);
       response.data.pipe(writer);

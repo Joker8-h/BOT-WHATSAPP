@@ -24,17 +24,20 @@ const logger = winston.createLogger({
         })
       ),
     }),
-    new winston.transports.File({
-      filename: path.join(__dirname, '../../logs/error.log'),
-      level: 'error',
-      maxsize: 5242880,
-      maxFiles: 5,
-    }),
-    new winston.transports.File({
-      filename: path.join(__dirname, '../../logs/combined.log'),
-      maxsize: 10485760,
-      maxFiles: 10,
-    }),
+    // Ficheros solo en desarrollo: en Railway el FS es efímero y se pierde igual
+    ...(process.env.NODE_ENV === 'production' ? [] : [
+      new winston.transports.File({
+        filename: path.join(__dirname, '../../logs/error.log'),
+        level: 'error',
+        maxsize: 5242880,
+        maxFiles: 5,
+      }),
+      new winston.transports.File({
+        filename: path.join(__dirname, '../../logs/combined.log'),
+        maxsize: 10485760,
+        maxFiles: 10,
+      }),
+    ]),
   ],
 });
 

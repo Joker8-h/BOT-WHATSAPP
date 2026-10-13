@@ -10,9 +10,13 @@ const MAX_AUDIO_BYTES = 24 * 1024 * 1024; // límite de la API: 25 MB
 class TranscriptionService {
   constructor() {
     this.client = this._buildClient();
+    this.groqClient = this._buildGroqClient();
     this.model = process.env.TRANSCRIPTION_MODEL || 'whisper-1';
-    if (!this.client) {
-      logger.warn('⚠️ [VOICE] Transcripción deshabilitada: se necesita una clave de OpenAI directa (OPENAI_API_KEY o OPENAI_TRANSCRIPTION_API_KEY). OpenRouter no soporta Whisper.');
+    this.groqModel = process.env.GROQ_TRANSCRIPTION_MODEL || 'whisper-large-v3-turbo';
+    if (!this.client && !this.groqClient) {
+      logger.warn('⚠️ [VOICE] Transcripción deshabilitada: se necesita OPENAI_API_KEY/OPENAI_TRANSCRIPTION_API_KEY directa o GROQ_API_KEY.');
+    } else if (!this.client && this.groqClient) {
+      logger.info('🎙️ [VOICE] Transcripción por Groq (OpenAI no disponible).');
     }
   }
 
@@ -38,7 +42,16 @@ class TranscriptionService {
   }
 
   isAvailable() {
-    return !!this.client;
+    return !!(this.client || this.groqClient);
+  }
+
+  /**
+   * Cliente Groq OpenAI-compatible para transcribir si OpenAI falla o no existe.
+   */
+  _buildGroqClient() {
+    if (!process.env.GROQ_API_KEY) return null;
+    const baseURL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
+    return new OpenAI({ apiKey: process.env.GROQ_API_KEY, baseURL, timeout: 60000, maxRetries: 1 });
   }
 
   isAudio(msg, media) {
@@ -61,7 +74,7 @@ class TranscriptionService {
    * Devuelve el texto o null si no fue posible.
    */
   async transcribe(media) {
-    if (!this.client || !media?.data) return null;
+    if ((!this.client && !this.groqClient) || !media?.data) return null;
     try {
       const buffer = Buffer.from(media.data, 'base64');
       if (buffer.length > MAX_AUDIO_BYTES) {
@@ -71,16 +84,38 @@ class TranscriptionService {
       const mimetype = (media.mimetype || 'audio/ogg').split(';')[0].trim();
       const file = await toFile(buffer, `nota.${this._extensionFor(mimetype)}`, { type: mimetype });
 
-      const result = await this.client.audio.transcriptions.create({
-        file,
-        model: this.model,
-        language: 'es',
-        prompt: 'Conversación de WhatsApp en español de Colombia con una tienda de productos íntimos: lubricante, retardante, vibrador, lencería, feromonas, contraentrega, Nequi.',
-      });
+      // 1. OpenAI Whisper (prompt de dominio íntimo)
+      if (this.client) {
+        try {
+          const result = await this.client.audio.transcriptions.create({
+            file,
+            model: this.model,
+            language: 'es',
+            prompt: 'Conversación de WhatsApp en español de Colombia con una tienda de productos íntimos: lubricante, retardante, vibrador, lencería, feromonas, contraentrega, Nequi.',
+          });
+          const text = (result?.text || '').trim();
+          if (text) {
+            logger.info(`🎙️ [VOICE] Nota de voz transcrita por OpenAI (${text.length} caracteres)`);
+            return text;
+          }
+        } catch (openaiErr) {
+          logger.warn(`⚠️ [VOICE] Whisper OpenAI falló (${openaiErr.message?.substring(0, 100)}), probando Groq...`);
+        }
+      }
 
-      const text = (result?.text || '').trim();
-      logger.info(`🎙️ [VOICE] Nota de voz transcrita (${text.length} caracteres)`);
-      return text || null;
+      // 2. Fallback Groq (sin prompt custom: no todos los endpoints lo aceptan)
+      if (this.groqClient) {
+        const result = await this.groqClient.audio.transcriptions.create({
+          file,
+          model: this.groqModel,
+          language: 'es',
+          response_format: 'json',
+        });
+        const text = (result?.text || '').trim();
+        logger.info(`🎙️ [VOICE] Nota de voz transcrita por Groq (${text.length} caracteres)`);
+        return text || null;
+      }
+      return null;
     } catch (error) {
       logger.error(`❌ [VOICE] Error transcribiendo nota de voz: ${error.message}`);
       return null;

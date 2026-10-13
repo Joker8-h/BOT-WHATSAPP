@@ -35,6 +35,8 @@ RUN apt-get update && apt-get install -y \
 # Variables de entorno para Puppeteer (usar Chromium del sistema)
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV CHROMIUM_PATH=/usr/bin/chromium
+# Zona horaria Colombia (crons 9-18 Lun-Sáb y campañas programadas)
+ENV TZ=America/Bogota
 
 # Instalar dependencias del backend (incluye whatsapp-web.js + puppeteer)
 COPY backend/package*.json ./

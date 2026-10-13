@@ -32,8 +32,8 @@ async function importProducts() {
   try {
     await connectDatabase();
 
-    // 1. Parsear Excel
-    const rawData = parseExcel(excelPath);
+    // 1. Parsear Excel (parseExcel es async y retorna { rows, colMapping })
+    const { rows: rawData } = await parseExcel(excelPath);
     console.log(`📊 Filas leídas: ${rawData.length}`);
 
     // Mostrar primeras columnas detectadas
@@ -69,14 +69,19 @@ async function importProducts() {
       }
     }
 
-    // 4. Marcar productos estrella (el más caro de cada categoría)
+    // 4. Marcar productos estrella (el más caro de cada categoría, por sede si se indicó)
     const categories = ['CONEXION_PAREJA', 'EXPLORACION_SUAVE', 'SORPRESAS_DISCRETAS', 'EXPERIENCIAS_INTENSAS'];
     for (const cat of categories) {
       const topProduct = await prisma.product.findFirst({
-        where: { category: cat, isAvailable: true },
+        where: { category: cat, isAvailable: true, ...(defaultBranchId ? { branchId: defaultBranchId } : {}) },
         orderBy: { price: 'desc' },
       });
       if (topProduct) {
+        // Limpiar estrella previa de la categoría/sede antes de coronar (evita acumulación eterna)
+        await prisma.product.updateMany({
+          where: { category: cat, ...(defaultBranchId ? { branchId: defaultBranchId } : {}) },
+          data: { isFeatured: false },
+        });
         await prisma.product.update({
           where: { id: topProduct.id },
           data: { isFeatured: true },

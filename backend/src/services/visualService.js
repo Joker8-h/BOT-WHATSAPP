@@ -15,10 +15,17 @@ class VisualService {
    */
   generateOrderTicket(order) {
     const { products, total, clientName, city } = order;
-    
+    const cloudName = cloudinary.config().cloud_name;
+    if (!cloudName) throw new Error('Cloudinary sin cloud_name: no se puede generar el ticket');
+
+    // Escapar overlays: espacios/acentos/#/%, rompen la URL de transformación
+    const esc = (s) => encodeURIComponent(
+      String(s || '').toUpperCase().replace(/[#/,%]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 90)
+    ).replace(/!/g, '%21').replace(/'/g, '%27').replace(/\(/g, '%28').replace(/\)/g, '%29');
+
     // Limitar productos para que quepan
-    const items = products.slice(0, 5).map(p => 
-      `${p.quantity}x ${p.name.substring(0, 20)}... $${formatCOP(p.price * p.quantity)}`
+    const items = products.slice(0, 5).map(p =>
+      `${p.quantity}x ${esc(String(p.name).substring(0, 20))} ${formatCOP(p.price * p.quantity)}`
     ).join('%0A'); // %0A es salto de línea en URL
 
     // Construir transformaciones de Cloudinary (Texto superpuesto)
@@ -26,23 +33,23 @@ class VisualService {
     const transformations = [
       `w_600,h_900,c_fill`, // Tamaño base
       // Encabezado
-      `l_text:Inter_28_bold:RESUMEN DE PEDIDO,co_rgb:FFFFFF,g_north,y_150`,
+      `l_text:Inter_28_bold:${esc('RESUMEN DE PEDIDO')},co_rgb:FFFFFF,g_north,y_150`,
       // Nombre Cliente
-      `l_text:Inter_20_bold:CLIENTE: ${clientName.toUpperCase()},co_rgb:FFD700,g_north_west,x_60,y_230`,
+      `l_text:Inter_20_bold:${esc('CLIENTE: ' + clientName)},co_rgb:FFD700,g_north_west,x_60,y_230`,
       // Ciudad
-      `l_text:Inter_18:CIUDAD: ${city.toUpperCase()},co_rgb:FFFFFF,g_north_west,x_60,y_260`,
+      `l_text:Inter_18:${esc('CIUDAD: ' + city)},co_rgb:FFFFFF,g_north_west,x_60,y_260`,
       // Línea divisoria
       `l_text:Inter_18:____________________________________,co_rgb:FFD700,g_north,y_290`,
       // Productos
       `l_text:Inter_18_light:${items},co_rgb:FFFFFF,g_north_west,x_60,y_340`,
       // Total
-      `l_text:Inter_24_bold:TOTAL PRODUCTOS: $${formatCOP(total)},co_rgb:FFD700,g_south,y_250`,
+      `l_text:Inter_24_bold:${esc('TOTAL PRODUCTOS: ' + formatCOP(total))},co_rgb:FFD700,g_south,y_250`,
       // Nota Envío
-      `l_text:Inter_16_italic:EL ENVIO SE PAGA AL RECIBIR,co_rgb:FFFFFF,g_south,y_200`,
+      `l_text:Inter_16_italic:${esc('EL ENVIO SE PAGA AL RECIBIR')},co_rgb:FFFFFF,g_south,y_200`,
     ].join('/');
 
     // Retorna la URL final combinando la base y las transformaciones
-    return `https://res.cloudinary.com/${cloudinary.config().cloud_name}/image/upload/${transformations}/${this.baseImagePublicId}.jpg`;
+    return `https://res.cloudinary.com/${cloudName}/image/upload/${transformations}/${this.baseImagePublicId}.jpg`;
   }
 
   /**

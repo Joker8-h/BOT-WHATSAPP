@@ -30,7 +30,11 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB max (un xlsx mayor es anómalo)
+  fileFilter: (req, file, cb) => {
+    const ok = /\.(xlsx|xls|csv)$/i.test(file.originalname || '');
+    cb(ok ? null : new Error('Solo se permiten .xlsx, .xls o .csv'), ok);
+  },
 });
 
 // ── Rutas Públicas (Auth y Pagos) ──

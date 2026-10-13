@@ -10,9 +10,13 @@ const logger = require('../utils/logger');
 
 // Configuración de Multer: Almacenamiento temporal en memoria
 const storage = multer.memoryStorage();
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 } // Límite de 5MB
+  limits: { fileSize: 5 * 1024 * 1024 }, // Límite de 5MB
+  fileFilter: (req, file, cb) => {
+    const ok = /^image\//.test(file.mimetype || '') || /\.(png|jpe?g|gif|webp|avif)$/i.test(file.originalname || '');
+    cb(ok ? null : new Error('Solo se permiten imágenes'), ok);
+  },
 });
 
 /**

@@ -8,10 +8,9 @@ sleep 5
 echo "🧹 Limpiando transacciones Wompi duplicadas..."
 node scripts/dedupeWompiTx.js || echo "⚠️ No se pudieron limpiar duplicados de Wompi; el arranque sigue"
 
-# 2b. Sincronizar el esquema de Prisma con la DB (sin borrar datos)
-# migrate deploy es seguro en prod; db push solo como fallback inicial
-echo "🔄 Sincronizando esquema de base de datos..."
-npx prisma migrate deploy || npx prisma db push
+# 2b. Migrar el esquema de Prisma (fail-fast: nunca db push en prod, ocultaría drift)
+echo "🔄 Migrando base de datos..."
+npx prisma migrate deploy || { echo "❌ migrate deploy falló — revisa el drift antes de continuar"; exit 1; }
 
 # 2b. Ejecutar semillas (Seed) para crear admin y sucursal base
 echo "🌱 Ejecutando semillas (Seed)..."

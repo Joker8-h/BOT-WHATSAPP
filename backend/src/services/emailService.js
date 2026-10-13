@@ -30,8 +30,10 @@ class EmailService {
    */
   async sendEmail(to, subject, html) {
     if (!this.transporter) {
-      logger.info(`📧 [Simulación Email] Para: ${to} | Asunto: ${subject}`);
-      return true;
+      // Sin EMAIL_HOST no se envía nada: devolver false para que el llamador lo sepa
+      // (antes retornaba true simulado y las alertas creían que el correo salió).
+      logger.error(`❌ [EMAIL-NO-CONFIG] No enviado a ${to} | Asunto: ${subject}. Define EMAIL_HOST/USER/PASS.`);
+      return false;
     }
 
     try {
