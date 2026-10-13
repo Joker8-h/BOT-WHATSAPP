@@ -95,6 +95,25 @@ class CatalogService {
     let name = String(rawName || '').trim().replace(/[*_]/g, '').trim();
     let quantity = 1;
 
+    // Cantidad en prosa española ("quiero dos lubricantes", "un par", "media docena")
+    const WORD_NUMBERS = {
+      'un par': 2, 'par': 2, 'docena': 12, 'media docena': 6,
+      'uno': 1, 'un': 1, 'una': 1, 'dos': 2, 'tres': 3, 'cuatro': 4, 'cinco': 5,
+      'seis': 6, 'siete': 7, 'ocho': 8, 'nueve': 9, 'diez': 10,
+    };
+    const lower = ` ${name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')} `;
+    for (const [word, qty] of Object.entries(WORD_NUMBERS)) {
+      // Solo tras verbo de pedido o al inicio ("dos lubricantes", "quiero dos...")
+      const rx = new RegExp(`(?:^|quiero|quieres|llevo|lleva|dame|deme|necesito|pido|pide|me das|son|serian)\\s+${word}\\b`);
+      if (rx.test(lower)) {
+        quantity = qty;
+        name = name.replace(new RegExp(`\\b${word}\\b`, 'i'), '').replace(/\s+/g, ' ').trim();
+        // Limpiar verbo/de colgado ("quiero lubricantes" → "lubricantes")
+        name = name.replace(/^(quiero|quieres|llevo|lleva|llevame|dame|deme|necesito|pido|pide|me das|son|serian|de|del)\s+/i, '').trim();
+        break;
+      }
+    }
+
     const patterns = [
       /^(.+?)\s*\(?\s*[x×]\s*(\d{1,2})\s*\)?$/i,   // "Producto x2" / "Producto (x2)"
       /^\s*(\d{1,2})\s*[x×]\s*(.+)$/i,             // "2x Producto"
