@@ -1,4 +1,4 @@
-const { openai, MODEL, MODEL_CHAIN, groq, GROQ_CHAIN, PROVIDER_ORDER } = require('../config/openai');
+const { openai, MODEL, MODEL_CHAIN, groq, GROQ_CHAIN, PROVIDER_ORDER, gemini, GEMINI_CHAIN } = require('../config/openai');
 const { buildSystemPrompt, buildEmployeePrompt, buildAdminPrompt } = require('../ai/personality');
 const { detectFlow, getFlowInstructions } = require('../ai/flows');
 const { classifyClient, getRecommendedCategories } = require('../ai/decisionEngine');
@@ -116,10 +116,10 @@ function getFallbackTemplate(type = 'chat') {
 
 /**
  * Llama a chat.completions con fallback de modelos y proveedores.
- * Fase 1: OpenAI MODEL_CHAIN. Fase 2 (solo texto): Groq GROQ_CHAIN si OPENAI se agota.
+ * Orden: OpenAI MODEL_CHAIN → secundarios (gemini, groq) solo texto.
  * - En 429 hace backoff y pasa al siguiente modelo
  * - En 5xx/timeout reintenta mismo modelo 1 vez antes de cambiar
- * - Whisper/TTS/visión NUNCA van a Groq (se manejan fuera de aquí)
+ * - Whisper/TTS/visión NUNCA van a secundarios (se manejan fuera de aquí)
  */
 async function callChatWithFallback(messages, opts = {}) {
   const { temperature = 0.3, max_tokens = 900, response_format } = opts;
@@ -129,27 +129,30 @@ async function callChatWithFallback(messages, opts = {}) {
     Array.isArray(m.content) && m.content.some(c => c.type === 'image_url')
   );
 
-  // Short-circuit: si OpenAI acaba de dar rate-limit hace <60s, ir directo a Groq (texto simple)
+  // Short-circuit: si OpenAI acaba de dar rate-limit hace <60s, ir directo a secundarios
   const openaiCooling = Date.now() - lastRateLimitTimestamp < 60000;
 
-  const order = (PROVIDER_ORDER && PROVIDER_ORDER.length ? PROVIDER_ORDER : ['openai', 'groq']);
+  const order = (PROVIDER_ORDER && PROVIDER_ORDER.length ? PROVIDER_ORDER : ['openai', 'gemini', 'groq']);
+  const clients = { openai, gemini, groq };
+  const chains = { openai: MODEL_CHAIN, gemini: GEMINI_CHAIN, groq: GROQ_CHAIN };
+  const hasSecondary = !!gemini || !!groq;
 
   for (const provider of order) {
-    if (provider === 'groq' && hasVision) continue; // Groq no hace visión
-    const client = provider === 'groq' ? groq : openai;
-    const chain = provider === 'groq' ? GROQ_CHAIN : MODEL_CHAIN;
-    if (!client) continue;
-    if (provider === 'openai' && openaiCooling && groq && !hasVision) continue; // saltar OpenAI en cooldown
+    if (provider !== 'openai' && hasVision) continue; // secundarios no hacen visión
+    const client = clients[provider] || openai;
+    const chain = chains[provider] || MODEL_CHAIN;
+    if (provider !== 'openai' && !client) continue;
+    if (provider === 'openai' && openaiCooling && hasSecondary && !hasVision) continue; // saltar OpenAI en cooldown
 
     for (let mIdx = 0; mIdx < chain.length; mIdx++) {
       const model = chain[mIdx];
-      // Groq: 2 intentos (normal + slim tras 413). OpenAI: 1 (falla rápido al siguiente).
+      // Groq: 2 intentos (normal + slim tras 413). Resto: 1 (falla rápido al siguiente).
       const maxRetriesForModel = provider === 'groq' ? 2 : 1;
       let useSlim = false;
 
       for (let attempt = 0; attempt < maxRetriesForModel; attempt++) {
         try {
-          if (mIdx > 0 || provider === 'groq') {
+          if (mIdx > 0 || provider !== 'openai') {
             logger.warn(`🔄 [FALLBACK] Probando ${provider}:${model} (paso ${mIdx + 1}/${chain.length})${useSlim ? ' [slim]' : ''}`);
           }
           const effectiveMessages = (provider === 'groq' && useSlim) ? slimMessagesForGroq(messages) : messages;
@@ -161,7 +164,8 @@ async function callChatWithFallback(messages, opts = {}) {
             max_tokens: provider === 'groq' ? Math.min(Math.max(max_tokens, 400), 600) : max_tokens,
             // gpt-oss en Groq son modelos reasoning: effort low deja tokens para el contenido real
             ...(provider === 'groq' ? { reasoning_effort: 'low' } : {}),
-            ...(response_format ? { response_format } : {}),
+            // response_format solo OpenAI/Groq (la capa OpenAI de Gemini lo soporta parcial)
+            ...(response_format && provider !== 'gemini' ? { response_format } : {}),
           });
           const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error(`${provider} timeout: la respuesta tardó más de 30 segundos`)), 30000)
@@ -176,7 +180,7 @@ async function callChatWithFallback(messages, opts = {}) {
             await sleep(500);
             break;
           }
-          if (mIdx > 0 || provider === 'groq') logger.info(`✅ [FALLBACK-OK] ${provider}:${model} respondió correctamente`);
+          if (mIdx > 0 || provider !== 'openai') logger.info(`✅ [FALLBACK-OK] ${provider}:${model} respondió correctamente`);
           if (completion) completion._provider = provider;
           if (completion) completion._modelUsed = model;
           return completion;
@@ -199,17 +203,17 @@ async function callChatWithFallback(messages, opts = {}) {
           }
 
           // Error no recuperable en OpenAI -> no reintentar, escalar.
-          // En Groq: 413 (request grande para el tier) reintenta UNA vez con prompt
-          // adelgazado; 400 (parámetro no soportado) pasa al siguiente modelo.
-          if (provider === 'groq') {
-            const isTooLarge = err.status === 413 || /too large|payload too large/i.test(err.message || '');
+          // En secundarios: 413 de Groq reintenta UNA vez con prompt adelgazado;
+          // cualquier otro error pasa al siguiente modelo sin tumbar la cadena.
+          if (provider !== 'openai') {
+            const isTooLarge = provider === 'groq' && (err.status === 413 || /too large|payload too large/i.test(err.message || ''));
             if (isTooLarge && !useSlim) {
               logger.warn(`⚠️ [FALLBACK] groq:${model} 413 — reintentando con prompt adelgazado`);
               useSlim = true;
               await sleep(500);
               continue;
             }
-            logger.warn(`⚠️ [FALLBACK] groq:${model} error ${err.status || err.message?.substring(0, 80)} — probando siguiente modelo`);
+            logger.warn(`⚠️ [FALLBACK] ${provider}:${model} error ${err.status || err.message?.substring(0, 80)} — probando siguiente modelo`);
             await sleep(500);
             break;
           }

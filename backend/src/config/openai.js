@@ -52,10 +52,33 @@ const GROQ_FALLBACK_MODELS = (process.env.GROQ_FALLBACK_MODELS || 'openai/gpt-os
   .filter(Boolean);
 const GROQ_CHAIN = [GROQ_MODEL, ...GROQ_FALLBACK_MODELS.filter(m => m !== GROQ_MODEL)];
 
-// Orden de proveedores: openai,groq (permite invertir en pruebas con AI_PROVIDER_ORDER=groq,openai)
-const PROVIDER_ORDER = (process.env.AI_PROVIDER_ORDER || 'openai,groq')
+// ─── Gemini (secundario junto a Groq, solo chat de texto) ───
+// Entra si OpenAI se agota. Capa OpenAI-compatible oficial de Google.
+// NOTA privacidad: el tier gratuito de Gemini usa los prompts para entrenar.
+const GEMINI_BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/';
+let gemini = null;
+if (process.env.GEMINI_API_KEY) {
+  gemini = new OpenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    baseURL: GEMINI_BASE_URL,
+    timeout: 30000,
+    maxRetries: 0,
+  });
+} else {
+  console.warn('⚠️ GEMINI_API_KEY no definido — fallback Gemini deshabilitado');
+}
+
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const GEMINI_FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || 'gemini-3.1-flash-lite,gemini-flash-lite-latest,gemini-3.5-flash,gemini-3.8-flash')
+  .split(/[,\s]+/)
+  .map(m => m.trim())
+  .filter(Boolean);
+const GEMINI_CHAIN = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS.filter(m => m !== GEMINI_MODEL)];
+
+// Orden de proveedores: openai → gemini → groq (AI_PROVIDER_ORDER lo puede cambiar)
+const PROVIDER_ORDER = (process.env.AI_PROVIDER_ORDER || 'openai,gemini,groq')
   .split(/[,\s]+/)
   .map(s => s.trim().toLowerCase())
   .filter(Boolean);
 
-module.exports = { openai, MODEL, MODEL_CHAIN, FALLBACK_MODELS, groq, GROQ_MODEL, GROQ_CHAIN, GROQ_FALLBACK_MODELS, PROVIDER_ORDER, GROQ_BASE_URL };
+module.exports = { openai, MODEL, MODEL_CHAIN, FALLBACK_MODELS, groq, GROQ_MODEL, GROQ_CHAIN, GROQ_FALLBACK_MODELS, PROVIDER_ORDER, GROQ_BASE_URL, gemini, GEMINI_MODEL, GEMINI_CHAIN, GEMINI_FALLBACK_MODELS, GEMINI_BASE_URL };
