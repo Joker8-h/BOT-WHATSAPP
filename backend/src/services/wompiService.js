@@ -22,8 +22,8 @@ class WompiService {
     let integritySecret = process.env.WOMPI_INTEGRITY_SECRET?.trim() || null;
     let eventsSecret = process.env.WOMPI_EVENTS_SECRET?.trim() || null;
 
-    // Si faltan en ENV, buscar en la BD
-    if (!privateKey) {
+    // Merge campo por campo: lo que falte en ENV se completa desde la BD (no se ignora todo)
+    if (!privateKey || !publicKey || !integritySecret || !eventsSecret) {
       try {
         const masterBranchId = branchId ? parseInt(branchId) : 1;
         const branch = await prisma.branch.findUnique({
@@ -32,15 +32,16 @@ class WompiService {
         });
 
         if (branch) {
-          if (branch.wompiPrivateKey) privateKey = decrypt(branch.wompiPrivateKey)?.trim();
-          if (branch.wompiPublicKey) publicKey = decrypt(branch.wompiPublicKey)?.trim();
-          if (branch.wompiIntegritySecret) integritySecret = decrypt(branch.wompiIntegritySecret)?.trim();
-          if (branch.wompiEventsSecret) eventsSecret = decrypt(branch.wompiEventsSecret)?.trim();
+          if (!privateKey && branch.wompiPrivateKey) privateKey = decrypt(branch.wompiPrivateKey)?.trim() || null;
+          if (!publicKey && branch.wompiPublicKey) publicKey = decrypt(branch.wompiPublicKey)?.trim() || null;
+          if (!integritySecret && branch.wompiIntegritySecret) integritySecret = decrypt(branch.wompiIntegritySecret)?.trim() || null;
+          if (!eventsSecret && branch.wompiEventsSecret) eventsSecret = decrypt(branch.wompiEventsSecret)?.trim() || null;
         }
       } catch (err) {
         logger.warn(`⚠️ Error leyendo credenciales Wompi de BD: ${err.message}`);
       }
-    } else {
+    }
+    if (privateKey) {
       // Si están en variables de entorno, sincronizar en BD en segundo plano
       this._syncEnvCredentialsToDb().catch(() => {});
     }
@@ -63,10 +64,11 @@ class WompiService {
         if (intSec) data.wompiIntegritySecret = encrypt(intSec);
         if (evSec) data.wompiEventsSecret = encrypt(evSec);
 
-        await prisma.branch.updateMany({
+        await prisma.branch.update({
+          where: { id: 1 },
           data
         });
-        logger.info('💳 Credenciales de Wompi de variables de entorno persistidas en las sedes de la BD');
+        logger.info('💳 Credenciales de Wompi de variables de entorno persistidas en la sede 1 de la BD (sin tocar otras sedes)');
       }
     } catch (_) {}
   }
@@ -184,14 +186,22 @@ class WompiService {
     if (!paymentLinkId) return null;
     const env = String(environment || 'prod').toLowerCase();
     const isTest = ['test', 'sandbox', 'test_sandbox'].includes(env);
-    const base = isTest ? this.sandboxUrl : this.productionUrl;
-    try {
-      const response = await axios.get(`${base}/payment_links/${encodeURIComponent(paymentLinkId)}`, { timeout: 8000 });
-      return response.data?.data || null;
-    } catch (error) {
-      logger.warn(`⚠️ Wompi: no se pudo consultar el link ${paymentLinkId}: ${error.response?.status || error.message}`);
-      return null;
+    const bases = isTest ? [this.sandboxUrl, this.productionUrl] : [this.productionUrl, this.sandboxUrl];
+    // Probar con auth (algunas cuentas exigen Bearer) y sin auth como fallback
+    const privateKey = process.env.WOMPI_PRIVATE_KEY?.trim();
+    for (const base of bases) {
+      for (const headers of (privateKey ? [{ Authorization: `Bearer ${privateKey}` }] : [{}]).concat([{}])) {
+        try {
+          const response = await axios.get(`${base}/payment_links/${encodeURIComponent(paymentLinkId)}`, { headers, timeout: 8000 });
+          if (response.data?.data) return response.data.data;
+        } catch (error) {
+          if (error.response?.status === 401 || error.response?.status === 404) continue;
+          logger.warn(`⚠️ Wompi: no se pudo consultar el link ${paymentLinkId} en ${base}: ${error.response?.status || error.message}`);
+          break;
+        }
+      }
     }
+    return null;
   }
 }
 

@@ -196,6 +196,12 @@ class WompiController {
         logger.info(`ℹ️ Wompi: transacción ${transaction.id} ya tenía pedido. No se crea ni se avisa otra vez.`);
         return;
       }
+      // Fallo determinista (FK/BD): avisar al dueño, Wompi reintentará pero ya hay alerta
+      await ownerAlertService.onPaymentOrphan({
+        branchId: conversation.branchId,
+        transaction,
+        reason: `createOrder falló para ${reference}: ${error.message}`,
+      });
       throw error;
     }
 
@@ -213,14 +219,15 @@ class WompiController {
     });
 
     const paid = (transaction.amount_in_cents || 0) / 100;
-    if (Math.abs(paid - Number(order.amount)) > 1) {
+    const mismatch = Math.abs(paid - Number(order.amount)) > 1;
+    if (mismatch) {
       await ownerAlertService.onPaymentMismatch({
         branchId: order.branchId, contact: order.contact,
         expected: Number(order.amount), paid, transactionId: transaction.id,
       });
     }
 
-    await this._afterApproved(order, transaction, convId);
+    await this._afterApproved(order, transaction, convId, { mismatch });
   }
 
   async _handleLegacyOrder(orderId, transaction) {
@@ -243,7 +250,7 @@ class WompiController {
         const updated = await prisma.order.updateMany({
           where: {
             id: orderId,
-            status: { not: 'PAID' },
+            status: { in: ['PENDING', 'PAYMENT_SENT'] },
             OR: [{ wompiTransactionId: null }, { wompiTransactionId: transaction.id }],
           },
           data: { status: 'PAID', wompiTransactionId: transaction.id },
@@ -264,6 +271,11 @@ class WompiController {
       const chatId = `${this._cleanPhone(order.contact.phone)}@c.us`;
       const declineMsg = `❌ *Pago Rechazado* \n\nHola, tu pago por ${formatCOP(order.amount)} no ha podido ser procesado.`;
       await whatsappService.sendMessage(order.branchId, chatId, declineMsg).catch(() => {});
+      // Cerrar la orden pendiente para que no quede colgada como PAYMENT_SENT eterna
+      await prisma.order.updateMany({
+        where: { id: orderId, status: { in: ['PENDING', 'PAYMENT_SENT'] } },
+        data: { status: 'CANCELLED' },
+      }).catch(() => {});
       await ownerAlertService.onPaymentDeclined({
         contact: order.contact, conversation: null, branchId: order.branchId,
         amount: Number(order.amount), reference: String(orderId),
@@ -275,20 +287,42 @@ class WompiController {
    * Efectos de un pago aprobado. Cada paso es independiente: si uno falla,
    * los demás se ejecutan igual y el webhook responde 200 (la orden ya quedó registrada).
    */
-  async _afterApproved(order, transaction, conversationId) {
+  async _afterApproved(order, transaction, conversationId, { mismatch = false } = {}) {
     const step = async (name, fn) => {
       try { await fn(); } catch (error) { logger.error(`❌ Wompi post-pago [${name}] orden ${order.id}:`, error.message); }
     };
 
+    // Si hay mismatch de monto: NO mover stock ni avisar "YA PAGÓ" como despacho.
+    // Se marca en revisión y el dueño decide (evita despachar con subpago).
+    if (mismatch) {
+      await prisma.order.update({ where: { id: order.id }, data: { status: 'PENDING' } }).catch(() => {});
+      logger.warn(`⚠️ Wompi: orden ${order.id} en revisión por monto distinto — stock intacto hasta confirmar`);
+    }
+
     await step('stock', async () => {
+      if (mismatch) return;
       const googleSheetsService = require('../services/googleSheetsService');
       for (const item of order.items) {
-        const newStock = Math.max(0, item.product.stock - item.quantity);
+        // Decremento atómico: evita oversell con webhooks concurrentes
+        const res = await prisma.product.updateMany({
+          where: { id: item.product.id, stock: { gte: item.quantity } },
+          data: { stock: { decrement: item.quantity } },
+        });
+        if (res.count === 0) {
+          logger.warn(`⚠️ Wompi post-pago [stock] sin stock suficiente para ${item.product.name} (orden ${order.id})`);
+          await ownerAlertService.onPaymentMismatch({
+            branchId: order.branchId, contact: order.contact,
+            expected: Number(order.amount), paid: (transaction.amount_in_cents || 0) / 100,
+            transactionId: `${transaction.id}-sin-stock`,
+          }).catch(() => {});
+          continue;
+        }
+        const fresh = await prisma.product.findUnique({ where: { id: item.product.id }, select: { stock: true } });
         await prisma.product.update({
           where: { id: item.product.id },
-          data: { stock: newStock, isAvailable: newStock > 0 },
-        });
-        await googleSheetsService.updateStock(item.product.id, newStock);
+          data: { isAvailable: (fresh?.stock ?? 0) > 0 },
+        }).catch(() => {});
+        await googleSheetsService.updateStock(item.product.id, fresh?.stock ?? 0);
       }
     });
 

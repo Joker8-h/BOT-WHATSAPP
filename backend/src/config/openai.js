@@ -30,4 +30,32 @@ const FALLBACK_MODELS = (process.env.FALLBACK_MODELS || 'gpt-4o-mini,gpt-4o-mini
 // Todos los modelos a probar en orden (primario + fallbacks sin duplicar)
 const MODEL_CHAIN = [MODEL, ...FALLBACK_MODELS.filter(m => m !== MODEL)];
 
-module.exports = { openai, MODEL, MODEL_CHAIN, FALLBACK_MODELS };
+// ─── Groq (proveedor secundario OpenAI-compatible, solo chat de texto) ───
+// Whisper/TTS/visión siempre quedan en OpenAI. Groq entra solo si OpenAI se agota.
+const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
+let groq = null;
+if (process.env.GROQ_API_KEY) {
+  groq = new OpenAI({
+    apiKey: process.env.GROQ_API_KEY,
+    baseURL: GROQ_BASE_URL,
+    timeout: 30000,
+    maxRetries: 0,
+  });
+} else {
+  console.warn('⚠️ GROQ_API_KEY no definido — fallback Groq deshabilitado (solo OpenAI)');
+}
+
+const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_FALLBACK_MODELS = (process.env.GROQ_FALLBACK_MODELS || 'llama-3.1-8b-instant,mixtral-8x7b-32768')
+  .split(',')
+  .map(m => m.trim())
+  .filter(Boolean);
+const GROQ_CHAIN = [GROQ_MODEL, ...GROQ_FALLBACK_MODELS.filter(m => m !== GROQ_MODEL)];
+
+// Orden de proveedores: openai,groq (permite invertir en pruebas con AI_PROVIDER_ORDER=groq,openai)
+const PROVIDER_ORDER = (process.env.AI_PROVIDER_ORDER || 'openai,groq')
+  .split(/[,\s]+/)
+  .map(s => s.trim().toLowerCase())
+  .filter(Boolean);
+
+module.exports = { openai, MODEL, MODEL_CHAIN, FALLBACK_MODELS, groq, GROQ_MODEL, GROQ_CHAIN, GROQ_FALLBACK_MODELS, PROVIDER_ORDER, GROQ_BASE_URL };

@@ -10,7 +10,7 @@ const KEYWORDS = {
   help: ['humano', 'hablar con alguien', 'hablar con una persona', 'persona real', 'administrador', 'reclamo', 'queja', 'jefe', 'gerente', 'quejarme', 'supervisor'],
   replyToContact: ['escribiste', 'vi tu mensaje', 'vi el mensaje', 'veo tu mensaje', 'recien veo', 'no te habia visto', 'me mandaste', 'me enviaste', 'te respondo'],
   objection: [
-    'caro', 'cara', 'costoso', 'costosa', 'muy caro', 'no tengo plata', 'no me alcanza', 'mas barato', 'mas barata', 'mas economico', 'mas economica', 'algo barato', 'barato', 'barata',
+    'caro', 'cara', 'costoso', 'costosa', 'muy caro', 'no tengo plata', 'no me alcanza', 'mas economico', 'mas economica',
     'lo pienso', 'lo voy a pensar', 'voy a pensar', 'dejame pensarlo', 'dejeme pensarlo', 'despues te escribo', 'despues te aviso', 'luego te escribo', 'luego te aviso', 'otro dia', 'mas adelante',
     'no se si le guste', 'no se si le va a gustar', 'no estoy seguro', 'no estoy segura', 'no conozco', 'me da pena', 'me da verguenza', 'es discreto', 'discreto', 'discreta', 'discrecion',
     'si funciona', 'funciona de verdad', 'si sirve', 'es bueno',
@@ -52,14 +52,19 @@ function detectFlow(message, context = {}) {
   if (looksLikeAddress) return 'CLOSING';
 
   if (hasAny(msg, KEYWORDS.confirmSale)) return 'CLOSING';
-  if (hasAny(msg, KEYWORDS.payment)) return 'CLOSING';
 
-  if (hasAny(msg, KEYWORDS.objection)) return 'OBJECTION';
-
+  // Precio/envío/tienda ANTES que objeción: "cuánto cuesta / me parece caro" primero da precio,
+  // "busco algo barato" es presupuesto inicial, no objeción.
   if (hasAny(msg, KEYWORDS.orderTracking)) return 'ORDER_TRACKING';
   if (hasAny(msg, KEYWORDS.price)) return 'STRATEGIC_DIRECTION';
   if (hasAny(msg, KEYWORDS.shipping)) return 'SHIPPING_INFO';
   if (hasAny(msg, KEYWORDS.store)) return 'PHYSICAL_STORE';
+
+  // Objeción solo si ya hay producto de interés, o si es objeción real (no presupuesto)
+  if (hasAny(msg, KEYWORDS.objection) && (sale.interestProducts?.length || hasAny(msg, ['caro', 'cara', 'costoso', 'pensarlo', 'pensar', 'discreto', 'discreta', 'discrecion', 'pena', 'verguenza']))) return 'OBJECTION';
+
+  // Pago temprano sin producto no es cierre: solo es cierre si ya hay interés o confirmación
+  if (hasAny(msg, KEYWORDS.payment) && (sale.interestProducts?.length || hasAny(msg, KEYWORDS.confirmSale))) return 'CLOSING';
 
   // Cliente directo: menciona un tipo de producto concreto → recomendar ya
   if (detectProductTypes(msg).length > 0) return 'RECOMMEND';

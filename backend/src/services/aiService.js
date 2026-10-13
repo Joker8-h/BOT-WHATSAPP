@@ -1,4 +1,4 @@
-const { openai, MODEL, MODEL_CHAIN } = require('../config/openai');
+const { openai, MODEL, MODEL_CHAIN, groq, GROQ_CHAIN, PROVIDER_ORDER } = require('../config/openai');
 const { buildSystemPrompt, buildEmployeePrompt, buildAdminPrompt } = require('../ai/personality');
 const { detectFlow, getFlowInstructions } = require('../ai/flows');
 const { classifyClient, getRecommendedCategories } = require('../ai/decisionEngine');
@@ -89,67 +89,77 @@ function getFallbackTemplate(type = 'chat') {
 }
 
 /**
- * Llama a openai.chat.completions.create con fallback de modelos y retry con backoff.
- * - Prueba MODEL_CHAIN en orden (gpt-4o -> gpt-4o-mini -> etc)
+ * Llama a chat.completions con fallback de modelos y proveedores.
+ * Fase 1: OpenAI MODEL_CHAIN. Fase 2 (solo texto): Groq GROQ_CHAIN si OPENAI se agota.
  * - En 429 hace backoff y pasa al siguiente modelo
  * - En 5xx/timeout reintenta mismo modelo 1 vez antes de cambiar
+ * - Whisper/TTS/visión NUNCA van a Groq (se manejan fuera de aquí)
  */
 async function callChatWithFallback(messages, opts = {}) {
-  const { temperature = 0.7, max_tokens = 600, response_format } = opts;
+  const { temperature = 0.3, max_tokens = 900, response_format } = opts;
   let lastError = null;
 
-  for (let mIdx = 0; mIdx < MODEL_CHAIN.length; mIdx++) {
-    const model = MODEL_CHAIN[mIdx];
-    const maxRetriesForModel = 2; // intentos por modelo
+  const hasVision = messages.some(m =>
+    Array.isArray(m.content) && m.content.some(c => c.type === 'image_url')
+  );
 
-    for (let attempt = 0; attempt < maxRetriesForModel; attempt++) {
-      try {
-        if (mIdx > 0 && attempt === 0) {
-          logger.warn(`🔄 [FALLBACK] Modelo ${MODEL} agotado. Probando siguiente modelo: ${model} (intento ${mIdx + 1}/${MODEL_CHAIN.length})`);
-        }
-        const completionPromise = openai.chat.completions.create({
-          model,
-          messages,
-          temperature,
-          max_tokens,
-          ...(response_format ? { response_format } : {}),
-        });
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('OpenAI timeout: la respuesta tardó más de 30 segundos')), 30000)
-        );
-        const completion = await Promise.race([completionPromise, timeoutPromise]);
-        if (mIdx > 0) logger.info(`✅ [FALLBACK-OK] Modelo ${model} respondió correctamente`);
-        return completion;
-      } catch (err) {
-        lastError = err;
-        const rateLimited = isRateLimitError(err);
-        const isTimeout = err.message && err.message.includes('timeout');
+  // Short-circuit: si OpenAI acaba de dar rate-limit hace <60s, ir directo a Groq (texto simple)
+  const openaiCooling = Date.now() - lastRateLimitTimestamp < 60000;
 
-        if (rateLimited) {
-          lastRateLimitTimestamp = Date.now();
-          logger.warn(`⚠️ [RATE_LIMIT] ${model} rate-limited (intento ${attempt + 1}/${maxRetriesForModel}): ${err.message?.substring(0, 120)}`);
-          // Si es rate-limit, esperar y pasar al siguiente modelo directamente (no reintentar mismo modelo mucho)
-          if (attempt < maxRetriesForModel - 1) {
+  const order = (PROVIDER_ORDER && PROVIDER_ORDER.length ? PROVIDER_ORDER : ['openai', 'groq']);
+
+  for (const provider of order) {
+    if (provider === 'groq' && hasVision) continue; // Groq no hace visión
+    const client = provider === 'groq' ? groq : openai;
+    const chain = provider === 'groq' ? GROQ_CHAIN : MODEL_CHAIN;
+    if (!client) continue;
+    if (provider === 'openai' && openaiCooling && groq && !hasVision) continue; // saltar OpenAI en cooldown
+
+    for (let mIdx = 0; mIdx < chain.length; mIdx++) {
+      const model = chain[mIdx];
+      const maxRetriesForModel = 1; // 1 intento/modelo en 429 (pasar rápido al siguiente)
+
+      for (let attempt = 0; attempt < maxRetriesForModel; attempt++) {
+        try {
+          if (mIdx > 0 || provider === 'groq') {
+            logger.warn(`🔄 [FALLBACK] Probando ${provider}:${model} (paso ${mIdx + 1}/${chain.length})`);
+          }
+          const completionPromise = client.chat.completions.create({
+            model,
+            messages,
+            temperature: provider === 'groq' ? Math.min(temperature, 0.4) : temperature,
+            max_tokens,
+            ...(response_format ? { response_format } : {}),
+          });
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`${provider} timeout: la respuesta tardó más de 30 segundos`)), 30000)
+          );
+          const completion = await Promise.race([completionPromise, timeoutPromise]);
+          if (mIdx > 0 || provider === 'groq') logger.info(`✅ [FALLBACK-OK] ${provider}:${model} respondió correctamente`);
+          if (completion) completion._provider = provider;
+          if (completion) completion._modelUsed = model;
+          return completion;
+        } catch (err) {
+          lastError = err;
+          const rateLimited = isRateLimitError(err);
+          const isTimeout = err.message && err.message.includes('timeout');
+
+          if (rateLimited) {
+            lastRateLimitTimestamp = Date.now();
+            logger.warn(`⚠️ [RATE_LIMIT] ${provider}:${model}: ${err.message?.substring(0, 120)}`);
             await sleep(getRetryAfterMs(err, attempt));
-            continue;
-          } else {
-            // Agotados los intentos de este modelo -> siguiente modelo
+            break; // siguiente modelo / proveedor
+          }
+
+          if (isTimeout || err.status >= 500) {
+            logger.warn(`⚠️ [RETRY] ${provider}:${model} error transitorio (${err.message?.substring(0, 80)})`);
             await sleep(getRetryAfterMs(err, attempt));
             break;
           }
-        }
 
-        if (isTimeout || err.status >= 500) {
-          logger.warn(`⚠️ [RETRY] ${model} error transitorio (${err.message?.substring(0, 80)}), reintentando ${attempt + 1}/${maxRetriesForModel}`);
-          if (attempt < maxRetriesForModel - 1) {
-            await sleep(getRetryAfterMs(err, attempt));
-            continue;
-          }
-          break;
+          // Error no recuperable -> no reintentar, probar siguiente modelo solo si es 429-like
+          throw wrapOpenRouterError(err);
         }
-
-        // Error no recuperable -> no reintentar, probar siguiente modelo solo si es 429-like
-        throw wrapOpenRouterError(err);
       }
     }
   }
@@ -543,10 +553,10 @@ class AIService {
         messages.push({ role: 'user', content: userMessage });
       }
 
-      // 9. Llamar a OpenAI con fallback + retry
+      // 9. Llamar a OpenAI/Groq con fallback + retry (cierre determinista)
       let completion;
       try {
-        completion = await callChatWithFallback(messages, { temperature: 0.7, max_tokens: 600 });
+        completion = await callChatWithFallback(messages, { temperature: 0.3, max_tokens: 900 });
       } catch (err) {
         const wrapped = err.code === 'RATE_LIMIT' ? err : wrapOpenRouterError(err);
         if (wrapped.code === 'RATE_LIMIT') {
@@ -829,57 +839,58 @@ Responde SOLO con el texto del mensaje.`;
 
     if (/\[ESCALAR\]/i.test(response)) actions.shouldEscalate = true;
     if (/\bdomicilio\b/i.test(response) && response.length < 500) actions.deliveryOption = 'DOMICILIO';
-    
-    const nameMatch = response.match(/\[CAPTURAR_NOMBRE:\s*(.+?)\]/i);
-    if (nameMatch) {
-      actions.capturedName = nameMatch[1].trim();
+
+    // Capturas: última ocurrencia gana (la IA a veces corrige ciudad/nombre en el mismo mensaje)
+    const lastTag = (tag) => {
+      const re = new RegExp(`\\[${tag}:\\s*(.+?)\\]`, 'gi');
+      let m; let last = null;
+      while ((m = re.exec(response)) !== null) last = m[1].trim();
+      return last;
+    };
+
+    const capturedName = lastTag('CAPTURAR_NOMBRE');
+    if (capturedName) actions.capturedName = capturedName;
+
+    const capturedCity = lastTag('CAPTURAR_CIUDAD');
+    if (capturedCity) actions.capturedCity = capturedCity;
+
+    const capturedAddress = lastTag('CAPTURAR_DIRECCION');
+    if (capturedAddress) actions.capturedAddress = capturedAddress;
+
+    const capturedFull = lastTag('CAPTURAR_NOMBRE_COMPLETO');
+    if (capturedFull) actions.capturedFullName = capturedFull;
+
+    const capturedLikes = lastTag('CAPTURAR_GUSTOS');
+    if (capturedLikes) actions.capturedInterests = capturedLikes;
+
+    const capturedBarrio = lastTag('CAPTURAR_BARRIO');
+    if (capturedBarrio) actions.capturedNeighborhood = capturedBarrio;
+
+    const capturedPhoneRaw = lastTag('CAPTURAR_TELEFONO_ENTREGA');
+    if (capturedPhoneRaw) {
+      const digits = capturedPhoneRaw.replace(/\D/g, '').slice(-10);
+      if (digits.length === 10 && digits.startsWith('3')) actions.capturedDeliveryPhone = digits;
     }
 
-    const cityMatch = response.match(/\[CAPTURAR_CIUDAD:\s*(.+?)\]/i);
-    if (cityMatch) {
-      actions.capturedCity = cityMatch[1].trim();
+    const capturedPayRaw = response.match(/\[(?:CAPTURAR_METODO_PAGO|METODO_PAGO):\s*(.+?)\]/i);
+    if (capturedPayRaw) {
+      const v = capturedPayRaw[1].trim().toLowerCase();
+      // Vocabulario controlado: todo lo online va a wompi
+      if (/contra|efectivo|recibir|pagar.*casa/.test(v)) actions.capturedPaymentMethod = 'contraentrega';
+      else if (/wompi|nequi|daviplata|pse|tarjeta|transferencia|link|online|cuotas/.test(v)) actions.capturedPaymentMethod = 'wompi';
+      else actions.capturedPaymentMethod = capturedPayRaw[1].trim();
     }
 
-    const addressMatch = response.match(/\[CAPTURAR_DIRECCION:\s*(.+?)\]/i);
-    if (addressMatch) {
-      actions.capturedAddress = addressMatch[1].trim();
-    }
+    const splitProducts = (raw) => raw.split(/[,;\n]+|\s+y\s+/i).map(p => p.trim()).filter(Boolean);
 
-    const fullNameMatch = response.match(/\[CAPTURAR_NOMBRE_COMPLETO:\s*(.+?)\]/i);
-    if (fullNameMatch) {
-      actions.capturedFullName = fullNameMatch[1].trim();
-    }
-
-    const interestsMatch = response.match(/\[CAPTURAR_GUSTOS:\s*(.+?)\]/i);
-    if (interestsMatch) {
-      actions.capturedInterests = interestsMatch[1].trim();
-    }
-
-    const neighborhoodMatch = response.match(/\[CAPTURAR_BARRIO:\s*(.+?)\]/i);
-    if (neighborhoodMatch) {
-      actions.capturedNeighborhood = neighborhoodMatch[1].trim();
-    }
-
-    const deliveryPhoneMatch = response.match(/\[CAPTURAR_TELEFONO_ENTREGA:\s*(.+?)\]/i);
-    if (deliveryPhoneMatch) {
-      actions.capturedDeliveryPhone = deliveryPhoneMatch[1].trim();
-    }
-
-    const paymentMethodMatch = response.match(/\[(?:CAPTURAR_METODO_PAGO|METODO_PAGO):\s*(.+?)\]/i);
-    if (paymentMethodMatch) {
-      actions.capturedPaymentMethod = paymentMethodMatch[1].trim();
-    }
-
-    const splitProducts = (raw) => raw.split(',').map(p => p.trim()).filter(Boolean);
-
-    const saleMatch = response.match(/\[CERRAR_VENTA:\s*(.+?)\]/i);
+    const saleMatch = response.match(/\[CERRAR_VENTA:\s*(.+?)\]/i) || response.match(/\[LINK_PAGO:\s*(.+?)\]/i);
     if (saleMatch) {
       actions.shouldCloseSale = true;
       actions.wompiProducts = splitProducts(saleMatch[1]);
       actions.productsToSell = actions.wompiProducts;
     }
 
-    const contraMatch = response.match(/\[PEDIDO_CONTRAENTREGA:\s*(.+?)\]/i);
+    const contraMatch = response.match(/\[PEDIDO_CONTRAENTREGA:\s*(.+?)\]/i) || response.match(/\[CONTRAENTREGA:\s*(.+?)\]/i);
     if (contraMatch) {
       actions.shouldCreateContraEntrega = true;
       actions.contraProducts = splitProducts(contraMatch[1]);
@@ -921,7 +932,7 @@ Responde SOLO con el texto del mensaje.`;
 
   cleanResponse(response) {
     return response
-      .replace(/\[([A-ZÁÉÍÓÚÑ_]+)(:[^\]]*?)?\]/gi, '')
+      .replace(/\[(?:ESCALAR|CERRAR_VENTA|LINK_PAGO|PEDIDO_CONTRAENTREGA|CONTRAENTREGA|CAPTURAR_[A-Z_]+|METODO_PAGO|INTERES_PRODUCTO|OBJECION|COMPLEMENTO_OFRECIDO|IMAGEN)(:[^\]]*?)?\]/gi, '')
       .replace(/\*\*(.+?)\*\*/g, '*$1*')
       .replace(/(?<!\*)\*(?!\*)/g, (match, offset, str) => {
         return match;

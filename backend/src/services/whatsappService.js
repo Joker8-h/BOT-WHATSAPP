@@ -122,8 +122,10 @@ class WhatsAppService {
         return;
       }
 
-      logger.info('✨ Iniciando sesión maestra (Sucursal 1)...');
-      await this.initializeBranch(1);
+      logger.info(`✨ Autostart de ${authorizedBranches.length} sucursal(es) autorizada(s)...`);
+      for (const b of authorizedBranches) {
+        await this.initializeBranch(b.id).catch((e) => logger.warn(`⚠️ No se pudo autostart sucursal ${b.id}: ${e.message}`));
+      }
     } catch (error) {
       logger.error('❌ Error en el proceso de autostart:', error);
     }
@@ -151,7 +153,9 @@ class WhatsAppService {
     logger.info(`🚀 [WA-INIT] Iniciando whatsapp-web.js para sucursal: ${branchId}`);
 
     try {
-      const sessionDir = path.join(this.authDir, `branch_${branchId}`);
+      // LocalAuth: dataPath=authDir + clientId=branch_X → .wwebjs_auth/session-branch_X
+      // (antes usaba subcarpeta branch_X + clientId y generaba doble anidado)
+      const sessionDir = path.join(this.authDir, `session-branch_${branchId}`);
       if (!fs.existsSync(sessionDir)) {
         fs.mkdirSync(sessionDir, { recursive: true });
       }
@@ -159,11 +163,20 @@ class WhatsAppService {
       // 🧹 Liberar candados huérfanos de Chromium sin borrar la sesión de WhatsApp
       removeChromiumLocks(sessionDir);
 
-      this.sessions.set(branchId, { isReady: false, qr: null, status: 'INITIALIZING' });
+      // Migrar sesión antigua branch_X/session-branch_X si existe (evita pedir QR de nuevo)
+      try {
+        const legacyDir = path.join(this.authDir, `branch_${branchId}`, `session-branch_${branchId}`);
+        if (fs.existsSync(legacyDir) && !fs.existsSync(path.join(sessionDir, 'Default'))) {
+          fs.cpSync(legacyDir, sessionDir, { recursive: true });
+          logger.info(`📦 [WA-MIGRATE] Sesión migrada de branch_${branchId}/ a session-branch_${branchId}`);
+        }
+      } catch (_) {}
+
+      this.sessions.set(branchId, { isReady: false, qr: null, qrAt: null, status: 'INITIALIZING' });
 
       const client = new Client({
         authStrategy: new LocalAuth({
-          dataPath: sessionDir,
+          dataPath: this.authDir,
           clientId: `branch_${branchId}`
         }),
         puppeteer: {
@@ -192,14 +205,16 @@ class WhatsAppService {
         this.sessions.set(branchId, {
           ...this.sessions.get(branchId),
           qr: qrCode,
+          qrAt: Date.now(),
           status: 'WAITING_QR'
         });
       });
 
       client.on('ready', () => {
         logger.info(`✅ WhatsApp sucursal ${branchId} conectado!`);
-        this.sessions.set(branchId, { isReady: true, qr: null, status: 'READY' });
+        this.sessions.set(branchId, { isReady: true, qr: null, qrAt: null, status: 'READY' });
         this.pendingInits.delete(branchId);
+        this.initCooldown.delete(branchId);
         this._applyInjectedPatches(client).catch(() => {});
       });
 
@@ -215,18 +230,24 @@ class WhatsAppService {
           logger.info(`🛑 Desconexión MANUAL de sucursal ${branchId}. No se reconectará.`);
           this.manualLogout.delete(branchId);
         } else {
-          logger.info(`🔄 Desconexión accidental. Reconectando sucursal ${branchId} en 5s...`);
+          logger.info(`🔄 Desconexión accidental. Reconectando sucursal ${branchId} en 11s...`);
           setTimeout(() => {
+            this.initCooldown.delete(branchId);
+            this.pendingInits.delete(branchId);
             this.initializeBranch(branchId).catch(err =>
               logger.error(`Error re-inicializando tras desconexión en ${branchId}:`, err)
             );
-          }, 5000);
+          }, 11000);
         }
       });
 
       client.on('auth_failure', (message) => {
         logger.warn(`⚠️ Auth failure para sucursal ${branchId}: ${message}`);
-        this.sessions.set(branchId, { isReady: false, qr: null, status: 'AUTH_FAILURE' });
+        this.sessions.set(branchId, { isReady: false, qr: null, qrAt: null, status: 'AUTH_FAILURE' });
+        // Liberar guards para que el reintento no quede bloqueado por pendingInits/cooldown
+        this.clients.delete(branchId);
+        this.pendingInits.delete(branchId);
+        this.initCooldown.delete(branchId);
 
         this._sendSessionAlert(branchId, message, 'AUTH_FAILURE').catch(() => {});
 
@@ -271,8 +292,9 @@ class WhatsAppService {
           }
 
           // 2. ¿El asesor está escribiendo un comando para reactivar el bot?
-          const resumeCmds = ['!bot', '#bot', '/bot', '!activar', '#activar', 'activar bot', '!auto'];
-          if (resumeCmds.includes(msgBody.toLowerCase())) {
+          const cmd = msgBody.trim().toLowerCase();
+          const isResumeCmd = cmd.startsWith('!bot') || cmd.startsWith('#bot') || cmd.startsWith('/bot') || cmd.startsWith('!activar') || cmd.startsWith('#activar') || cmd.startsWith('activar bot') || cmd.startsWith('!auto');
+          if (isResumeCmd) {
             const contact = await prisma.contact.findFirst({
               where: { phone: { contains: cleanPhone.slice(-10) } }
             });
@@ -872,13 +894,15 @@ class WhatsAppService {
 
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
-      const chatId = `${contact.phone}@c.us`;
+      const digits = String(contact.phone || '').replace(/\D/g, '').slice(-10);
+      if (!digits) { results.push({ phone: contact.phone, sent: false, error: 'sin teléfono' }); continue; }
+      const chatId = `${digits}@c.us`;
 
       try {
         const jitter = Math.floor(Math.random() * 2000);
         await new Promise(resolve => setTimeout(resolve, delayMs + jitter));
 
-        const sent = await this.sendMessage(1, chatId, message);
+        const sent = await this.sendMessage(branchId, chatId, message);
         results.push({ phone: contact.phone, sent });
 
         if ((i + 1) % 5 === 0) {
@@ -893,10 +917,10 @@ class WhatsAppService {
     return results;
   }
 
-  async destroyBranch(branchId) {
+  async destroyBranch(branchId, { logout = false } = {}) {
     const client = this.clients.get(branchId);
     if (client) {
-      logger.info(`🗑️ Destruyendo instancia de WhatsApp para sucursal ${branchId}...`);
+      logger.info(`🗑️ Destruyendo instancia de WhatsApp para sucursal ${branchId} (logout=${logout})...`);
       this.manualLogout.add(branchId);
 
       try {
@@ -906,21 +930,25 @@ class WhatsAppService {
         logger.warn(`⚠️ No se pudo destruir limpiamente sucursal ${branchId}:`, e.message);
       }
 
-      const sessDir = path.join(this.authDir, `branch_${branchId}`);
-      try {
-        if (fs.existsSync(sessDir)) {
-          fs.rmSync(sessDir, { recursive: true });
+      // Solo borrar credenciales en logout explícito; en apagado/redeploy se conserva la sesión
+      if (logout) {
+        for (const dir of [path.join(this.authDir, `session-branch_${branchId}`), path.join(this.authDir, `branch_${branchId}`)]) {
+          try {
+            if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true });
+          } catch (e) {
+            logger.warn(`No se pudo limpiar sesión de sucursal ${branchId}`);
+          }
         }
-      } catch (e) {
-        logger.warn(`No se pudo limpiar sesión de sucursal ${branchId}`);
       }
 
       this.clients.delete(branchId);
-      this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
+      this.pendingInits.delete(branchId);
+      this.initCooldown.delete(branchId);
+      this.sessions.set(branchId, { isReady: false, qr: null, qrAt: null, status: logout ? 'LOGGED_OUT' : 'DISCONNECTED' });
       return true;
     }
 
-    this.sessions.set(branchId, { isReady: false, qr: null, status: 'DISCONNECTED' });
+    this.sessions.set(branchId, { isReady: false, qr: null, qrAt: null, status: 'DISCONNECTED' });
     return false;
   }
 
@@ -942,7 +970,7 @@ class WhatsAppService {
     try {
       const alertEmail = process.env.ALERT_EMAIL || process.env.ADMIN_EMAIL;
       const adminUser = await prisma.user.findFirst({
-        where: { role: 'SUPER_ADMIN' },
+        where: { role: 'ADMIN' },
         select: { email: true }
       });
       const targetEmail = alertEmail || adminUser?.email;

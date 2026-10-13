@@ -424,21 +424,27 @@ class MessageController {
         
         // Detectar si es pago por Wompi/transferencia (NO contraentrega)
         const isWompiPayment = (
-          aiText.includes('link') || aiText.includes('wompi') || 
+          aiText.includes('link') || aiText.includes('wompi') ||
           aiText.includes('transferencia') || aiText.includes('pago online') ||
           aiText.includes('pago seguro') || aiText.includes('link de pago') ||
-          aiText.includes('nequi') || aiText.includes('daviplata')
+          aiText.includes('nequi') || aiText.includes('daviplata') ||
+          aiText.includes('pse') || aiText.includes('tarjeta') || aiText.includes('cuotas')
         );
 
         const impliesContraentrega = !isWompiPayment && (
-          (aiText.includes('registrar tu pedido') || aiText.includes('contra entrega') || aiText.includes('contraentrega') || aiText.includes('pagar en efectivo') || aiText.includes('pago en efectivo')) &&
+          (aiText.includes('registrar tu pedido') || aiText.includes('contra entrega') || aiText.includes('contraentrega') || aiText.includes('pagar en efectivo') || aiText.includes('pago en efectivo') || aiText.includes('pago contra entrega')) &&
           (aiText.includes('dirección') || aiText.includes('entrega') || aiText.includes('enviar') || aiText.includes('pedido'))
         );
 
-        // SAFETY NET para Wompi: si la IA habla de generar el link pero no usó [CERRAR_VENTA]
+        // SAFETY NET para Wompi: si la IA habla de link/pago online sin [CERRAR_VENTA]
+        // Se amplía a "te envío/te dejo/aquí está tu link" que antes se perdía.
         const impliesWompiClose = isWompiPayment && (
-          aiText.includes('voy a generar') || aiText.includes('proceder') || 
-          aiText.includes('generar tu link') || aiText.includes('link de pago')
+          aiText.includes('voy a generar') || aiText.includes('proceder') ||
+          aiText.includes('generar tu link') || aiText.includes('link de pago') ||
+          aiText.includes('te envío el link') || aiText.includes('te envio el link') ||
+          aiText.includes('aquí está tu link') || aiText.includes('aqui esta tu link') ||
+          aiText.includes('te dejo el link') || aiText.includes('por wompi') ||
+          (aiText.includes('link') && (aiText.includes('pago') || aiText.includes('pagar')))
         );
 
         if (impliesContraentrega) {
@@ -631,11 +637,29 @@ class MessageController {
       }
 
       // VALIDACIÓN INTELIGENTE DE CIERRE PREVIA AL ENVÍO
+      // Checklist único: nombre + ciudad + dirección + teléfono. Sin ciudad/dirección no hay etiquetas.
       const finalAddress = contactUpdates.address || contact.address;
       const finalCity = contactUpdates.city || contact.city;
       const finalNeighborhood = contactUpdates.neighborhood || contact.neighborhood;
-      const missingAddress = !finalAddress || finalAddress === 'Por confirmar' || finalAddress.trim() === '';
-      const missingCity = !finalCity || finalCity === 'Por confirmar' || finalCity.trim() === '';
+      const finalPhone = contactUpdates.deliveryPhone || contact.deliveryPhone;
+      const finalName = contactUpdates.name || contact.name;
+      const missingAddress = !finalAddress || finalAddress === 'Por confirmar' || String(finalAddress).trim() === '';
+      const missingCity = !finalCity || finalCity === 'Por confirmar' || String(finalCity).trim() === '';
+      const missingPhone = !finalPhone || finalPhone === 'Por confirmar' || String(finalPhone).trim() === '';
+      const missingName = !finalName || finalName === 'Sin nombre' || String(finalName).trim() === '';
+
+      // Contraentrega solo en ciudades COD; fuera de ellas se convierte a Wompi automáticamente
+      if (actions.shouldCreateContraEntrega && !missingCity) {
+        const codCities = String(process.env.SHIPPING_LOCAL_CITIES || 'Popayán,Florencia,Pitalito,Yopal')
+          .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+        const normCity = String(finalCity).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+        const isCod = codCities.some(c => c.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim() === normCity);
+        if (!isCod) {
+          logger.warn(`⚠️ [COD-GUARD] Ciudad ${finalCity} no es COD — convirtiendo contraentrega a Wompi`);
+          actions.shouldCreateContraEntrega = false;
+          actions.shouldCloseSale = true;
+        }
+      }
 
       let aiResponseToSend = aiResult.response;
       if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && (missingAddress || missingCity)) {
@@ -643,15 +667,15 @@ class MessageController {
         actions.shouldCreateContraEntrega = false;
         actions.shouldCloseSale = false;
 
-        const asksForDeliveryInfo = /(?:direcci[oó]n|d[oó]nde te lo enviamos|ciudad|barrio|datos de env[ií]o|para envi[aá]rtelo)/i.test(aiResponseToSend || '');
+        const asksForDeliveryInfo = /(?:direcci[oó]n|d[oó]nde te lo enviamos|ciudad|barrio|tel[eé]fono|datos de env[ií]o|para envi[aá]rtelo)/i.test(aiResponseToSend || '');
         if (!asksForDeliveryInfo) {
           const missingFields = [];
-          if (missingAddress) missingFields.push('🏠 Tu dirección exacta de entrega');
-          if (!finalNeighborhood || finalNeighborhood === 'Por confirmar') missingFields.push('🏘️ El barrio o sector');
+          if (missingName) missingFields.push('👤 Tu nombre completo para el empaque');
           if (missingCity) missingFields.push('🏙️ La ciudad');
-          if (!contact.name || contact.name === 'Sin nombre') missingFields.push('👤 Tu nombre completo para el empaque');
+          if (missingAddress) missingFields.push('🏠 Tu dirección exacta de entrega (con barrio)');
+          if (missingPhone) missingFields.push('📞 Tu número de contacto para la entrega (10 dígitos)');
 
-          aiResponseToSend = `¡Excelente elección! 💜 Con mucho gusto te dejo tu pedido empacado con total discreción.\n\nPara coordinar tu despacho, por favor compárteme:\n${missingFields.join('\n')}`;
+          aiResponseToSend = `¡Excelente elección! 💜 Con mucho gusto te dejo tu pedido empacado con total discreción.\n\nPara coordinar tu despacho, por favor compárteme en un solo mensaje:\n${missingFields.join('\n')}`;
         }
       }
 
@@ -895,16 +919,19 @@ class MessageController {
 
         const pending = conversation?.context?.sale?.pendingPayment;
         const pendingNames = (pending?.products || []).map(name => String(name).toLowerCase());
+        const payCity = contactUpdates.city || contact.city || 'Por confirmar';
+        // provisional para comparar monto (se recalcula abajo con shipping real)
         const samePending = pending?.sentAt
           && (Date.now() - new Date(pending.sentAt).getTime() < 30 * 60 * 1000)
           && productNames.length > 0
-          && productNames.every(name => pendingNames.includes(String(name).toLowerCase()));
+          && productNames.every(name => pendingNames.includes(String(name).toLowerCase()))
+          && (!pending.amount || Math.abs(Number(pending.amount) - Number(totalAmount)) < 5000)
+          && (!pending.city || String(pending.city).toLowerCase() === String(payCity).toLowerCase());
         if (samePending) {
-          logger.warn(`💰 [SALE] Link ${pending.reference} ya se envió hace poco. No se genera otro.`);
+          logger.warn(`💰 [SALE] Link ${pending.reference} ya se envió hace poco (mismo monto/ciudad). No se genera otro.`);
           return;
         }
 
-        const payCity = contactUpdates.city || contact.city || 'Por confirmar';
         const payQuote = shippingService.quote(totalAmount, payCity);
         const cartData = {
           contactId: contact.id,
