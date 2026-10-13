@@ -214,9 +214,9 @@ class AdminController {
   // ═══════════════════════════════════════
   async getProducts(req, res) {
     try {
-      const { category, available, search } = req.query;
+      const { category, available, search, page = 1, limit = 50 } = req.query;
       const { branchId, role } = req.user;
-      
+
       const where = role !== 'ADMIN' ? { branchId } : {};
 
       if (category) where.category = category;
@@ -229,16 +229,24 @@ class AdminController {
         ];
       }
 
-      const products = await prisma.product.findMany({
-        where,
-        orderBy: [{ category: 'asc' }, { isFeatured: 'desc' }, { name: 'asc' }],
-        include: {
-          branch: { select: { name: true, city: true } },
-          _count: { select: { orderItems: true } },
-        },
-      });
+      const take = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+      const currentPage = Math.max(parseInt(page) || 1, 1);
 
-      res.json({ success: true, data: products });
+      const [products, total] = await Promise.all([
+        prisma.product.findMany({
+          where,
+          orderBy: [{ category: 'asc' }, { isFeatured: 'desc' }, { name: 'asc' }],
+          include: {
+            branch: { select: { name: true, city: true } },
+            _count: { select: { orderItems: true } },
+          },
+          skip: (currentPage - 1) * take,
+          take,
+        }),
+        prisma.product.count({ where }),
+      ]);
+
+      res.json({ success: true, data: products, pagination: { total, totalPages: Math.ceil(total / take), page: currentPage, limit: take } });
     } catch (error) {
       res.status(500).json({ success: false, error: error.message });
     }
@@ -819,6 +827,24 @@ class AdminController {
       if (!name || !city || !address || !password) {
         return res.status(400).json({ success: false, error: 'Faltan datos obligatorios' });
       }
+      if (String(password).length < 8) {
+        return res.status(400).json({ success: false, error: 'Contraseña mínima 8 caracteres' });
+      }
+
+      // Coordenadas validadas (opcionales)
+      let lat = null; let lng = null;
+      if (latitude !== undefined && latitude !== null && latitude !== '') {
+        lat = parseFloat(latitude);
+        if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+          return res.status(400).json({ success: false, error: 'latitude debe estar entre -90 y 90' });
+        }
+      }
+      if (longitude !== undefined && longitude !== null && longitude !== '') {
+        lng = parseFloat(longitude);
+        if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+          return res.status(400).json({ success: false, error: 'longitude debe estar entre -180 y 180' });
+        }
+      }
 
       // El usuario para la sucursal será su ubicación/ciudad como pidió el usuario
       const username = city.toLowerCase().replace(/\s+/g, '_');
@@ -832,8 +858,8 @@ class AdminController {
             city,
             address,
             phone,
-            latitude,
-            longitude,
+            latitude: lat,
+            longitude: lng,
             isActive: true,
             isAuthorized: true
           }
@@ -1190,7 +1216,7 @@ class AdminController {
   async updateBranchSettings(req, res) {
     try {
       const id = parseInt(req.params.id);
-      const { address, phone, referencePoint, notes, storeFrontDesc, city, name } = req.body;
+      const { address, phone, referencePoint, notes, storeFrontDesc, city, name, latitude, longitude } = req.body;
 
       const data = {};
       if (address !== undefined) data.address = address;
@@ -1200,6 +1226,18 @@ class AdminController {
       if (storeFrontDesc !== undefined) data.storeFrontDesc = storeFrontDesc;
       if (city !== undefined) data.city = city;
       if (name !== undefined) data.name = name;
+      // Coordenadas para el mapa (validadas; null las borra)
+      for (const [key, val, min, max] of [['latitude', latitude, -90, 90], ['longitude', longitude, -180, 180]]) {
+        if (val !== undefined && val !== null && val !== '') {
+          const num = parseFloat(val);
+          if (!Number.isFinite(num) || num < min || num > max) {
+            return res.status(400).json({ success: false, error: `${key} debe estar entre ${min} y ${max}` });
+          }
+          data[key] = num;
+        } else if (val === null) {
+          data[key] = null;
+        }
+      }
 
       const branch = await prisma.branch.update({ where: { id }, data });
 

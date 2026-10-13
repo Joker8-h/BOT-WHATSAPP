@@ -1,31 +1,50 @@
 import { useState, useEffect } from 'react';
 import { getOrders, updateOrderStatus, downloadOrdersCSV, formatCOP, formatDate } from '../api';
+import Swal from 'sweetalert2';
 
 export default function Orders() {
   const [orders, setOrders] = useState([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  const load = async () => {
+  const load = async (p = page) => {
     const params = new URLSearchParams();
     if (statusFilter) params.append('status', statusFilter);
+    params.append('page', p);
     const r = await getOrders(params.toString());
-    if (r?.success) setOrders(r.data.orders);
+    if (r?.success) {
+      setOrders(r.data.orders);
+      setTotalPages(r.data.totalPages || 1);
+      setTotal(r.data.total || 0);
+    }
   };
 
-  useEffect(() => { load(); }, [statusFilter]);
-  useEffect(() => { const i = setInterval(load, 20000); return () => clearInterval(i); }, [statusFilter]);
+  useEffect(() => { setPage(1); }, [statusFilter]);
+  useEffect(() => { load(page); }, [statusFilter, page]);
+  useEffect(() => { const i = setInterval(() => load(page), 20000); return () => clearInterval(i); }, [statusFilter, page]);
 
-  const changeStatus = async (id, status) => {
+  const changeStatus = async (id, status, prev) => {
+    if (status === 'CANCELLED' || status === 'REFUNDED') {
+      const ok = await Swal.fire({
+        title: status === 'CANCELLED' ? '¿Cancelar pedido?' : '¿Marcar reembolsado?',
+        text: 'Esta acción afecta el historial y métricas.',
+        icon: 'warning', showCancelButton: true,
+        confirmButtonText: 'Sí, confirmar', cancelButtonText: 'Volver',
+      });
+      if (!ok.isConfirmed) { load(page); return; }
+    }
     let trackingNumber = undefined;
     if (status === 'SHIPPED') {
       const guide = window.prompt('Ingresa el número de guía de la transportadora (opcional):');
-      if (guide !== null && guide.trim() !== '') {
-        trackingNumber = guide.trim();
-      }
+      if (guide === null) { load(page); return; }
+      if (guide.trim() !== '') trackingNumber = guide.trim();
     }
-    await updateOrderStatus(id, { status, ...(trackingNumber ? { trackingNumber } : {}) });
-    load();
+    const r = await updateOrderStatus(id, { status, ...(trackingNumber ? { trackingNumber } : {}) });
+    if (!r?.success) alert('No se pudo actualizar: ' + (r?.error || 'error'));
+    load(page);
   };
 
   const handleExportCSV = async () => {
@@ -56,7 +75,7 @@ export default function Orders() {
   return (
     <div>
       <h1 className="page-title">Pedidos</h1>
-      <p className="page-subtitle">Historial de compras, despachos y pagos</p>
+      <p className="page-subtitle">Historial de compras, despachos y pagos (métricas sobre la página actual)</p>
 
       <div className="mini-metrics">
         <div className="mini-metric accent-green"><span className="mm-value">{orders.filter(o => o.status === 'PAID').length}</span><span className="mm-label">Pagados</span></div>
@@ -70,11 +89,14 @@ export default function Orders() {
           <select className="filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">Todos los estados</option>
             <option value="PENDING">Pendientes</option>
+            <option value="PAYMENT_SENT">Pago enviado</option>
             <option value="PAID">Pagados</option>
             <option value="SHIPPED">Enviados</option>
             <option value="DELIVERED">Entregados</option>
             <option value="CANCELLED">Cancelados</option>
+            <option value="REFUNDED">Reembolsados</option>
           </select>
+          <span className="muted" style={{ fontSize: '0.8rem' }}>{total} pedidos · pág. {page}/{totalPages}</span>
         </div>
 
         <button
@@ -145,8 +167,9 @@ export default function Orders() {
                   <td className="muted">{formatDate(o.createdAt)}</td>
                   <td>
                     <select className="mini-select" value={o.status}
-                      onChange={e => changeStatus(o.id, e.target.value)}>
+                      onChange={e => changeStatus(o.id, e.target.value, o.status)}>
                       <option value="PENDING">Pendiente</option>
+                      <option value="PAYMENT_SENT">Pago enviado</option>
                       <option value="PAID">Pagado</option>
                       <option value="SHIPPED">Enviado</option>
                       <option value="DELIVERED">Entregado</option>
@@ -160,6 +183,12 @@ export default function Orders() {
             {orders.length === 0 && <tr><td colSpan={9} className="empty">No hay pedidos</td></tr>}
           </tbody>
         </table>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.75rem', marginTop: '1rem' }}>
+        <button className="btn btn-secondary" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>← Anterior</button>
+        <span className="muted" style={{ fontSize: '0.85rem' }}>Página {page} de {totalPages}</span>
+        <button className="btn btn-secondary" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Siguiente →</button>
       </div>
     </div>
   );

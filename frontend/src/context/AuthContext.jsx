@@ -18,23 +18,30 @@ export const AuthProvider = ({ children }) => {
 
   const fetchProfile = async () => {
     try {
-      // VITE_API_BASE_URL puede venir con o sin /api — normalizar para evitar 404
-      const rawBase = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
-      const base = rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`;
+      // Misma base única que api.js (con o sin /api)
+      const rawBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+      const base = !rawBase ? '/api' : (rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`);
       const response = await fetch(`${base}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
+      if (response.status === 401 || response.status === 403) {
+        logout();
+        return;
+      }
       const data = await response.json();
       if (data.success) {
         setUser(data.user);
       } else {
-        logout();
+        // Error transitorio (500) no desloguea: se reintenta en el próximo ciclo
+        console.warn('Perfil no disponible, se reintentará:', data.error);
+        setLoading(false);
+        return;
       }
     } catch (error) {
-      console.error('Error fetching profile:', error);
-      logout();
+      // Caída de red: no desloguear, solo marcar no-cargado
+      console.error('Error fetching profile (red):', error);
     } finally {
       setLoading(false);
     }

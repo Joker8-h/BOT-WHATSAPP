@@ -15,18 +15,25 @@ let DefaultIcon = L.icon({
     iconAnchor: [12, 41]
 });
 
-L.Marker.prototype.options.icon = DefaultIcon;
+const isValidCoord = (lat, lng) => {
+  const la = parseFloat(lat); const ln = parseFloat(lng);
+  return Number.isFinite(la) && Number.isFinite(ln) && la >= -90 && la <= 90 && ln >= -180 && ln <= 180;
+};
 
 export default function BranchMap() {
   const [branches, setBranches] = useState([]);
+  const [missing, setMissing] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const load = async () => {
       const res = await getBranches();
       if (res?.success) {
-          // Filtrar sucursales que tienen coordenadas
-          setBranches(res.data.filter(b => b.latitude && b.longitude));
+          const all = Array.isArray(res.data) ? res.data : [];
+          // Solo activas y autorizadas en el mapa; el resto se lista como pendientes
+          const active = all.filter(b => b.isActive && b.isAuthorized);
+          setBranches(active.filter(b => isValidCoord(b.latitude, b.longitude)));
+          setMissing(all.filter(b => !isValidCoord(b.latitude, b.longitude)));
       }
       setLoading(false);
     };
@@ -45,13 +52,20 @@ export default function BranchMap() {
       </div>
 
       <div className="rounded-2xl overflow-hidden shadow-xl border border-white mt-4" style={{ height: '500px', background: 'var(--bg-2)' }}>
+        {branches.length === 0 && !loading ? (
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', color: 'var(--text-3)', padding: '2rem', textAlign: 'center' }}>
+            <span style={{ fontSize: '2rem' }}>🗺️</span>
+            <p style={{ fontWeight: '800', color: 'var(--text-2)' }}>Ninguna sede tiene coordenadas todavía</p>
+            <p style={{ fontSize: '0.85rem' }}>Agrega latitud/longitud en la configuración de cada sede para verla aquí.</p>
+          </div>
+        ) : (
         <MapContainer center={colombiaCenter} zoom={6} style={{ height: '100%', width: '100%' }}>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
           {branches.map(branch => (
-            <Marker key={branch.id} position={[branch.latitude, branch.longitude]}>
+            <Marker key={branch.id} position={[parseFloat(branch.latitude), parseFloat(branch.longitude)]} icon={DefaultIcon}>
               <Popup>
                 <div className="p-1" style={{ width: '200px' }}>
                     <h3 style={{ margin: '0 0 5px 0', color: 'var(--purple)', fontWeight: 'bold' }}>{branch.name}</h3>
@@ -71,7 +85,22 @@ export default function BranchMap() {
             </Marker>
           ))}
         </MapContainer>
+        )}
       </div>
+
+      {missing.length > 0 && (
+        <div className="card" style={{ marginTop: '1.5rem', borderLeft: '3px solid var(--gold)' }}>
+          <div className="card-title">📍 {missing.length} sede(s) sin coordenadas</div>
+          <div className="card-body">
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-3)', marginBottom: '0.75rem' }}>
+              Estas sedes no aparecen en el mapa. Edita cada sede y agrega latitud (-90 a 90) y longitud (-180 a 180).
+            </p>
+            <ul style={{ fontSize: '0.85rem', color: 'var(--text-2)', paddingLeft: '1.2rem', margin: 0 }}>
+              {missing.map(b => <li key={b.id}>{b.name} · {b.city}</li>)}
+            </ul>
+          </div>
+        </div>
+      )}
 
       <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="metric-card accent-purple">

@@ -2,7 +2,22 @@
 //  API Client — Comunicación con el backend (Multi-sucursal)
 // ─────────────────────────────────────────────────────────
 
-const API_BASE = '';
+// Base única: mismo origen por defecto; si el frontend va separado (Vercel),
+// definir VITE_API_BASE_URL="https://tu-backend.up.railway.app" (con o sin /api).
+const _rawBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const API_BASE = !_rawBase ? '' : (_rawBase.endsWith('/api') ? _rawBase.slice(0, -4) : _rawBase);
+
+let _redirecting = false;
+
+function _unauthorized() {
+  removeToken();
+  // Un solo redirect aunque N pollings fallen a la vez; no romper la SPA con href en loop
+  if (!_redirecting && window.location.pathname !== '/login') {
+    _redirecting = true;
+    window.location.replace('/login');
+  }
+  throw new Error('UNAUTHORIZED');
+}
 
 export function getToken() {
   return localStorage.getItem('fantasias_token');
@@ -30,11 +45,9 @@ export async function api(endpoint, options = {}) {
   try {
     const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
 
-    // Si el token expiró o es inválido, redirigir al login
-    if (res.status === 401 && !endpoint.includes('/auth/login')) {
-      removeToken();
-      window.location.href = '/login';
-      return null;
+    // Token expirado o inválido (401/403 del backend) → limpiar y salir al login una sola vez
+    if ((res.status === 401 || res.status === 403) && !endpoint.includes('/auth/login')) {
+      _unauthorized();
     }
 
     return await res.json();

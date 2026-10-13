@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { 
   getWhatsAppStatus, 
   initializeWhatsApp, 
@@ -20,7 +21,11 @@ import Swal from 'sweetalert2';
 export default function Settings() {
   const { isAdmin, user } = useAuth();
   const isMasterBranch = user?.branchId === 1 || isAdmin;
+  // QR por sucursal: cada gestor ve y conecta SU sede (antes solo la sede 1/admin).
+  const canSeeWhatsApp = !!user;
   const [waStatus, setWaStatus] = useState(null);
+  const [qrSeenAt, setQrSeenAt] = useState(null);
+  const [qrExpired, setQrExpired] = useState(false);
   const [audit, setAudit] = useState([]);
   const [loadingWA, setLoadingWA] = useState(false);
   
@@ -54,7 +59,16 @@ export default function Settings() {
       const results = await Promise.all(promises);
       const [statusRes, auditRes, wompiRes] = results;
       
-      if (statusRes?.success) setWaStatus(statusRes.data);
+      if (statusRes?.success) {
+        setWaStatus(statusRes.data);
+        // Temporizador de expiración: solo se reinicia si el QR cambió
+        const qr = statusRes.data?.qr || null;
+        setQrSeenAt(prev => {
+          if (!qr) return null;
+          if (prev?.qr === qr) return prev;
+          return { qr, at: Date.now() };
+        });
+      }
       if (auditRes?.success) setAudit(auditRes.data);
       
       if (includeForm && wompiRes?.success) {
@@ -88,7 +102,16 @@ export default function Settings() {
         loadData(false);
     }, 5000); 
     return () => clearInterval(interval);
-  }, []); 
+  }, []);
+
+  // 3. Expiración del QR (60s): el QR de WhatsApp rota y el viejo ya no sirve
+  useEffect(() => {
+    if (!qrSeenAt) { setQrExpired(false); return; }
+    const tick = () => setQrExpired(Date.now() - qrSeenAt.at > 60000);
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [qrSeenAt]); 
 
   const handleConnect = async () => {
     setLoadingWA(true);
@@ -169,39 +192,45 @@ export default function Settings() {
       </header>
 
       <div className="settings-grid" style={{ marginBottom: '2rem' }}>
-        {/* WhatsApp Connection Card - SOLO MASTER */}
-        {isMasterBranch && (
+        {/* WhatsApp Connection Card — cada sede conecta la suya */}
+        {canSeeWhatsApp && (
           <div className="card" data-tour="whatsapp-card" style={{ gridColumn: '1 / -1' }}>
           <div className="card-title" style={{ justifyContent: 'space-between' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <IconPhone /> Canal de Ventas WhatsApp
+              <IconPhone /> Canal de Ventas WhatsApp {user?.branchId ? `(Sede ${user.branchId})` : ''}
             </span>
             <span className={`badge ${waStatus?.isReady ? 'badge-green' : 'badge-muted'}`}>
               {waStatus?.isReady ? 'CONECTADO' : 'Desconectado'}
             </span>
           </div>
-          
+
           <div className="card-body">
             {!waStatus?.isReady ? (
               <div>
-                {waStatus?.qr ? (
+                {waStatus?.qr && !qrExpired ? (
                     <div data-tour="qr-container" style={{ textAlign: 'center', padding: '2rem 0' }}>
                     <p style={{ color: 'var(--text-2)', fontWeight: '600', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
-                      Escanea este código con tu WhatsApp Business corporativo:
+                      Escanea este código con el WhatsApp Business de tu sede:
                     </p>
                     <div style={{ display: 'inline-block', padding: '1.5rem', background: '#fff', borderRadius: '16px', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid var(--border)' }}>
-                        <img 
-                          src={`https://api.qrserver.com/v1/create-qr-code/?size=260x260&data=${encodeURIComponent(waStatus.qr)}`} 
-                          alt="WhatsApp QR Code" 
-                          style={{ width: '260px', height: '260px', display: 'block' }} 
-                        />
+                        <QRCodeCanvas value={waStatus.qr} size={260} style={{ width: '260px', height: '260px', display: 'block' }} />
+                    </div>
+                    <p style={{ fontSize: '0.72rem', color: 'var(--text-3)', marginTop: '1rem', maxWidth: '420px', margin: '1rem auto 0' }}>
+                      ⚠️ No compartas este QR: da acceso total a tu WhatsApp. Se renueva cada 60 segundos.
+                    </p>
+                    <div>
+                      <button onClick={handleConnect} className="btn-secondary" disabled={loadingWA} style={{ marginTop: '1rem' }}>
+                        {loadingWA ? 'Generando...' : 'Regenerar QR'}
+                      </button>
                     </div>
                   </div>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '3rem 1rem', background: 'var(--bg-0)', borderRadius: 'var(--r)' }}>
                     <div style={{ marginBottom: '1rem', color: 'var(--text-3)' }}><IconPhone /></div>
                     <p style={{ fontWeight: '700', color: 'var(--text-2)', marginBottom: '1.5rem' }}>
-                      Sesión de WhatsApp inactiva para esta sucursal.
+                      {waStatus?.qr && qrExpired
+                        ? 'El QR expiró (duran 60 segundos). Genera uno nuevo.'
+                        : 'Sesión de WhatsApp inactiva para esta sucursal.'}
                     </p>
                     {(!wompiStatus.isConfigured && wompiMissing) && (
                       <div style={{ padding: '1rem', background: 'rgba(180,83,9,0.06)', border: '1px solid rgba(180,83,9,0.15)', borderRadius: '10px', marginBottom: '1.5rem', maxWidth: '420px', margin: '0 auto 1.5rem' }}>

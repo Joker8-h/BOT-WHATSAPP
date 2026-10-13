@@ -7,13 +7,23 @@ import { IconProducts, IconBarChart, IconDollar, IconAlertTriangle, IconUpload, 
 import Swal from 'sweetalert2';
 
 // Valida que la URL sea una imagen real (evita src="null" o strings vacíos)
-const isValidUrl = (url) => url && typeof url === 'string' && url.startsWith('http');
+const isValidUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch { return false; }
+};
 
 export default function Products() {
   const [products, setProducts] = useState([]);
   const [filter, setFilter] = useState('');
+  const [debouncedFilter, setDebouncedFilter] = useState('');
   const [catFilter, setCatFilter] = useState('');
   const [imageFilter, setImageFilter] = useState('ALL');
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [modal, setModal] = useState(null);
   const [stockModal, setStockModal] = useState(null);
   const [uploadResult, setUploadResult] = useState(null);
@@ -21,22 +31,38 @@ export default function Products() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef();
 
-  const load = useCallback(async () => {
+  // Debounce de búsqueda: evita un request por cada tecla
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedFilter(filter); setPage(1); }, 400);
+    return () => clearTimeout(t);
+  }, [filter]);
+
+  const load = useCallback(async (p = page) => {
     const params = new URLSearchParams();
     if (catFilter) params.append('category', catFilter);
-    if (filter) params.append('search', filter);
+    if (debouncedFilter) params.append('search', debouncedFilter);
+    params.append('page', p);
+    params.append('limit', 50);
     const r = await getProducts(params.toString());
-    if (r?.success) setProducts(r.data);
-  }, [filter, catFilter]);
+    if (r?.success) {
+      setProducts(r.data);
+      setTotalPages(r.pagination?.totalPages || 1);
+      setTotal(r.pagination?.total ?? r.data.length);
+    }
+  }, [debouncedFilter, catFilter, page]);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { const i = setInterval(load, 30000); return () => clearInterval(i); }, [load]);
+  useEffect(() => { load(page); }, [load, page]);
+  useEffect(() => { const i = setInterval(() => load(page), 30000); return () => clearInterval(i); }, [load, page]);
 
   const handleFile = async (file) => {
     if (!file) return;
     const ext = file.name.split('.').pop().toLowerCase();
     if (!['xlsx', 'xls', 'csv'].includes(ext)) {
       Swal.fire('Formato no válido', 'Solo se permiten archivos .xlsx, .xls o .csv', 'warning');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      Swal.fire('Archivo muy grande', 'Máximo 10 MB por archivo Excel', 'warning');
       return;
     }
     setUploading(true);
@@ -83,8 +109,19 @@ export default function Products() {
   const saveProduct = async (e) => {
     e.preventDefault();
     const data = { ...form, price: parseFloat(form.price), stock: parseInt(form.stock) };
-    if (modal === 'new') await createProduct(data);
-    else await updateProduct(modal.id, data);
+    if (!(data.price > 0)) {
+      Swal.fire('Precio inválido', 'El precio debe ser mayor a 0', 'warning');
+      return;
+    }
+    if (!(data.stock >= 0)) {
+      Swal.fire('Stock inválido', 'El stock no puede ser negativo', 'warning');
+      return;
+    }
+    const r = modal === 'new' ? await createProduct(data) : await updateProduct(modal.id, data);
+    if (!r?.success) {
+      Swal.fire('Error al guardar', r?.error || 'No se pudo guardar el producto', 'error');
+      return;
+    }
     setModal(null);
     Swal.fire({
       toast: true,
@@ -94,7 +131,7 @@ export default function Products() {
       showConfirmButton: false,
       timer: 2000
     });
-    load();
+    load(page);
   };
 
   const handleToggleAvailability = async (id, name, currentlyAvailable) => {
@@ -145,7 +182,7 @@ export default function Products() {
     load();
   };
 
-  const totalProducts = products.length;
+  const totalProducts = total || products.length;
   const totalStock = products.reduce((s, p) => s + p.stock, 0);
   const totalValue = products.reduce((s, p) => s + Number(p.price) * p.stock, 0);
   const lowStock = products.filter(p => p.stock <= 5).length;
@@ -245,7 +282,7 @@ export default function Products() {
           <input type="text" className="search-input" style={{ paddingLeft: '2.2rem' }} placeholder="Buscar productos..."
             value={filter} onChange={e => setFilter(e.target.value)} />
         </div>
-        <select className="filter-select" value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+        <select className="filter-select" value={catFilter} onChange={e => { setCatFilter(e.target.value); setPage(1); }}>
           <option value="">Todas las categorías</option>
           {Object.entries(CATEGORIES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
@@ -325,6 +362,12 @@ export default function Products() {
           </div>
         ))}
         {displayedProducts.length === 0 && <p className="empty full-width">No hay productos que coincidan con los filtros.</p>}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.75rem', marginTop: '1.5rem' }}>
+        <button className="btn btn-secondary" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>← Anterior</button>
+        <span className="muted" style={{ fontSize: '0.85rem' }}>Página {page} de {totalPages} · {totalProducts} productos</span>
+        <button className="btn btn-secondary" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Siguiente →</button>
       </div>
 
       {modal && (
