@@ -47,7 +47,8 @@ function getRetryAfterMs(err, attempt) {
   const header = err?.headers?.['retry-after'] || err?.response?.headers?.['retry-after'] || err?.error?.headers?.['retry-after'];
   if (header) {
     const secs = parseInt(header, 10);
-    if (!isNaN(secs)) return secs * 1000;
+    // Tope 10s: en ventas es mejor fallar rápido al siguiente modelo que colgar 1 min
+    if (!isNaN(secs)) return Math.min(secs * 1000, 10000);
   }
   // backoff exponencial + jitter: 800ms, 1800ms, 4000ms
   const base = Math.min(800 * Math.pow(2, attempt), 5000);
@@ -128,7 +129,8 @@ async function callChatWithFallback(messages, opts = {}) {
             model,
             messages,
             temperature: provider === 'groq' ? Math.min(temperature, 0.4) : temperature,
-            max_tokens: provider === 'groq' ? Math.max(max_tokens, 500) : max_tokens,
+            // Groq tier on_demand limita el total por request: prompt adelgazado + completion 400-600
+            max_tokens: provider === 'groq' ? Math.min(Math.max(max_tokens, 400), 600) : max_tokens,
             // gpt-oss en Groq son modelos reasoning: effort low deja tokens para el contenido real
             ...(provider === 'groq' ? { reasoning_effort: 'low' } : {}),
             ...(response_format ? { response_format } : {}),
@@ -393,7 +395,7 @@ class AIService {
     const relevant = scored
       .filter(s => s.score > 0)
       .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
+      .slice(0, 6);
 
     const products = relevant.map(s => s.p);
 
@@ -859,10 +861,15 @@ Responde SOLO con el texto del mensaje.`;
     if (/\bdomicilio\b/i.test(response) && response.length < 500) actions.deliveryOption = 'DOMICILIO';
 
     // Capturas: última ocurrencia gana (la IA a veces corrige ciudad/nombre en el mismo mensaje)
+    // Se ignoran valores placeholder del prompt ("PENDIENTE POR CAPTURAR").
+    const isPlaceholder = (v) => /pendiente/i.test(v || '');
     const lastTag = (tag) => {
       const re = new RegExp(`\\[${tag}:\\s*(.+?)\\]`, 'gi');
       let m; let last = null;
-      while ((m = re.exec(response)) !== null) last = m[1].trim();
+      while ((m = re.exec(response)) !== null) {
+        const v = m[1].trim();
+        if (v && !isPlaceholder(v)) last = v;
+      }
       return last;
     };
 
@@ -912,6 +919,21 @@ Responde SOLO con el texto del mensaje.`;
     if (contraMatch) {
       actions.shouldCreateContraEntrega = true;
       actions.contraProducts = splitProducts(contraMatch[1]);
+      actions.productsToSell = actions.contraProducts;
+    }
+
+    // Coherencia método↔cierre: si el método capturado contradice la única etiqueta
+    // de cierre (ej. pago=wompi pero solo [PEDIDO_CONTRAENTREGA]), alinear a la etiqueta
+    // del método capturado en vez de crear el pedido por el canal equivocado.
+    if (actions.capturedPaymentMethod === 'wompi' && actions.shouldCreateContraEntrega && !actions.shouldCloseSale) {
+      actions.shouldCreateContraEntrega = false;
+      actions.shouldCloseSale = true;
+      actions.wompiProducts = actions.contraProducts;
+      actions.productsToSell = actions.wompiProducts;
+    } else if (actions.capturedPaymentMethod === 'contraentrega' && actions.shouldCloseSale && !actions.shouldCreateContraEntrega) {
+      actions.shouldCloseSale = false;
+      actions.shouldCreateContraEntrega = true;
+      actions.contraProducts = actions.wompiProducts;
       actions.productsToSell = actions.contraProducts;
     }
 

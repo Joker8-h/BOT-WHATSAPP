@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────
 //  AI: Sistema de Decisión — Clasificación de Clientes
 // ─────────────────────────────────────────────────────────
-const { openai, MODEL, MODEL_CHAIN } = require('../config/openai');
+const { openai, MODEL, MODEL_CHAIN, groq, GROQ_CHAIN } = require('../config/openai');
 const logger = require('../utils/logger');
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -70,6 +70,29 @@ CRITERIOS:
           continue;
         }
         throw err;
+      }
+    }
+    // Fase Groq (OpenAI sin créditos): prompt corto, sin response_format (no todos lo soportan)
+    if (groq) {
+      for (const model of GROQ_CHAIN) {
+        try {
+          const response = await groq.chat.completions.create({
+            model,
+            messages: [{ role: 'user', content: analysisPrompt }],
+            temperature: 0.3,
+            max_tokens: 500,
+            reasoning_effort: 'low',
+          });
+          const raw = response.choices[0].message.content || '';
+          const jsonStr = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+          const result = JSON.parse(jsonStr);
+          logger.info(`✅ [FALLBACK-OK] classifyClient groq:${model}`);
+          return result;
+        } catch (err) {
+          lastErr = err;
+          logger.warn(`⚠️ classifyClient groq:${model} falló, probando siguiente`);
+          await sleep(400);
+        }
       }
     }
     throw lastErr;

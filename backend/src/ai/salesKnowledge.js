@@ -237,8 +237,9 @@ function formatComplementsSection(mainProducts, catalog) {
   for (const main of mainProducts) {
     const comps = pickComplements(main, catalog);
     if (!comps.length) continue;
+    // Sin URLs en el prompt (el motor de imágenes las resuelve determinista): ahorra ~30% del prompt
     const compStr = comps
-      .map(c => `${c.product.name} (${formatCOPShort(c.product.price)})${c.product.imageUrl ? ` [IMAGEN:${c.product.imageUrl}]` : ''}`)
+      .map(c => `${c.product.name} (${formatCOPShort(c.product.price)})`)
       .join(' + ');
     lines.push(`- Si lleva *${main.name}* (${formatCOPShort(main.price)}) → ofrécele: ${compStr}`);
   }
@@ -247,10 +248,11 @@ function formatComplementsSection(mainProducts, catalog) {
 }
 
 /**
- * Índice compacto de TODO el catálogo (tipo → nombre + precio) para que Sofía
+ * Índice compacto del catálogo (tipo → nombre + precio) para que Sofía
  * sepa lo que existe aunque no esté entre los productos detallados.
+ * 120 líneas bastan: lo relevante va detallado y el resto marcado como "...y N más".
  */
-function buildCatalogIndex(catalog, maxLines = 260) {
+function buildCatalogIndex(catalog, maxLines = 60) {
   if (!catalog?.length) return '';
   const groups = new Map();
   for (const p of catalog) {

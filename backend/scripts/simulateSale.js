@@ -74,6 +74,52 @@ const SCENARIOS = [
       'bueno ya, qué me recomiendas para durar más?',
     ],
   },
+  // ── Bloque CIERRE (pruebas 7/7 excelencia) ──
+  {
+    id: 'cierre-cod',
+    title: 'Cierre COD completo en 1 mensaje (Popayán)',
+    turns: [
+      'hola, quiero un vibrador',
+      'me gusta, lo llevo. Soy Carlos Ruiz, vivo en Popayán, calle 5 # 12-34 barrio Modelo, mi número es 3150001122, pago contraentrega',
+    ],
+    expect: { close: 'contra', city: 'Popayán' },
+  },
+  {
+    id: 'cierre-wompi',
+    title: 'Cierre Wompi en ciudad no-COD (Bogotá)',
+    turns: [
+      'hola, quiero un lubricante',
+      'lo llevo. Soy Ana Gómez, Bogotá, carrera 10 # 4-50 apartamento 201, 3201112233, pago con Nequi',
+    ],
+    expect: { close: 'wompi', city: 'Bogotá' },
+  },
+  {
+    id: 'correccion-ciudad',
+    title: 'Corrección de ciudad (Bogotá → Popayán)',
+    turns: [
+      'quiero un vibrador, vivo en Bogotá',
+      'no perdón, vivo en Popayán, calle 5 # 12-34',
+    ],
+    expect: { close: 'none', city: 'Popayán' },
+  },
+  {
+    id: 'cantidad-prosa',
+    title: 'Cantidad en prosa (dos unidades)',
+    turns: [
+      'hola, quiero dos lubricantes íntimos',
+      'sí, los dos, soy María, Cali, avenida 6 # 20-30, 3182223344, pago online',
+    ],
+    expect: { close: 'wompi', qty: 2 },
+  },
+  {
+    id: 'nequi-cod',
+    title: 'Nequi en ciudad COD (debe ir a Wompi, no contraentrega)',
+    turns: [
+      'quiero un vibrador, soy de Popayán',
+      'lo pago por Nequi, mi dirección es calle 5 # 12-34, 3150001122, soy Pedro',
+    ],
+    expect: { close: 'wompi', city: 'Popayán' },
+  },
 ];
 
 const COLORS = {
@@ -91,8 +137,33 @@ function summarizeActions(actions = {}) {
   if (actions.complementsOffered?.length) parts.push(`complementos=[${actions.complementsOffered.join(', ')}]`);
   if (actions.images?.length) parts.push(`imágenes=[${actions.images.join(', ')}]`);
   if (actions.productsToSell?.length) parts.push(`vender=[${actions.productsToSell.map(p => p.name || p).join(', ')}]`);
+  if (actions.shouldCreateContraEntrega) parts.push('CONTRAENTREGA');
+  if (actions.shouldCloseSale) parts.push('CERRAR_VENTA(Wompi)');
+  if (actions.capturedName || actions.capturedFullName) parts.push(`nombre=${actions.capturedFullName || actions.capturedName}`);
+  if (actions.capturedCity) parts.push(`ciudad=${actions.capturedCity}`);
+  if (actions.capturedAddress) parts.push(`dir=${actions.capturedAddress}`);
+  if (actions.capturedNeighborhood) parts.push(`barrio=${actions.capturedNeighborhood}`);
+  if (actions.capturedDeliveryPhone) parts.push(`tel=${actions.capturedDeliveryPhone}`);
+  if (actions.capturedPaymentMethod) parts.push(`pago=${actions.capturedPaymentMethod}`);
   if (actions.shouldEscalate) parts.push('ESCALAR');
   return parts.length ? parts.join(' | ') : '(sin etiquetas)';
+}
+
+// Datos 7/7 capturados al final del escenario (para la hoja de resultados)
+function scoreScenario(scenario, contact, sale, lastActions) {
+  const checks = [];
+  const has = (v) => v && v !== 'Sin nombre' && v !== 'Por confirmar' && String(v).trim() !== '';
+  checks.push(['producto', (sale.interestProducts || lastActions.productsToSell || []).length > 0]);
+  checks.push(['nombre', has(contact.name)]);
+  checks.push(['ciudad', has(contact.city)]);
+  checks.push(['dirección', has(contact.address)]);
+  checks.push(['barrio', has(contact.neighborhood)]);
+  checks.push(['teléfono', has(contact.deliveryPhone)]);
+  checks.push(['cierre', !!(lastActions.shouldCreateContraEntrega || lastActions.shouldCloseSale)]);
+  if (scenario.expect?.close === 'contra') checks.push(['cierre==CONTRA', !!lastActions.shouldCreateContraEntrega]);
+  if (scenario.expect?.close === 'wompi') checks.push(['cierre==WOMPI', !!lastActions.shouldCloseSale]);
+  if (scenario.expect?.city) checks.push([`ciudad==${scenario.expect.city}`, (contact.city || '').toLowerCase().includes(scenario.expect.city.toLowerCase().slice(0, 5))]);
+  return checks;
 }
 
 async function resolveBranchId() {
@@ -113,6 +184,9 @@ async function runScenario(scenario, branchId) {
     phone: `sim-${scenario.id}`,
     name: null,
     city: null,
+    address: null,
+    neighborhood: null,
+    deliveryPhone: null,
     clientType: 'NUEVO',
     purchaseStage: 'CURIOSO',
     totalPurchases: 0,
@@ -122,6 +196,7 @@ async function runScenario(scenario, branchId) {
   const conversation = { id: null, context: {} };
   const history = [];
   let totalTokens = 0;
+  let lastActions = {};
 
   for (const userMessage of scenario.turns) {
     console.log(`\n${c('cyan', '👤 Cliente:')} ${userMessage}`);
@@ -143,7 +218,12 @@ async function runScenario(scenario, branchId) {
       console.log(c('magenta', `   ↳ clasificación: ${contact.clientType} / ${contact.purchaseStage}`));
     }
     if (result.actions?.capturedName) contact.name = result.actions.capturedName;
+    if (result.actions?.capturedFullName) contact.name = result.actions.capturedFullName;
     if (result.actions?.capturedCity) contact.city = result.actions.capturedCity;
+    if (result.actions?.capturedAddress) contact.address = result.actions.capturedAddress;
+    if (result.actions?.capturedNeighborhood) contact.neighborhood = result.actions.capturedNeighborhood;
+    if (result.actions?.capturedDeliveryPhone) contact.deliveryPhone = result.actions.capturedDeliveryPhone;
+    lastActions = result.actions || {};
 
     const merged = mergeSaleState(conversation.context.sale, result.actions, result.flow);
     if (merged) conversation.context.sale = merged;
@@ -159,6 +239,12 @@ async function runScenario(scenario, branchId) {
   const sale = conversation.context.sale || {};
   console.log(c('dim', `\n   Resumen: etapa=${sale.stage || '-'} · intención=${sale.intent || '-'} · ` +
     `interés=${(sale.interestProducts || []).join(', ') || '-'} · tokens totales=${totalTokens}`));
+  const checks = scoreScenario(scenario, contact, sale, lastActions);
+  const passed = checks.filter(([, ok]) => ok).length;
+  console.log(c(passed === checks.length ? 'green' : 'yellow',
+    `   ✔ Datos 7/7 + expectativas: ${passed}/${checks.length} ` +
+    checks.map(([k, ok]) => `${ok ? '✓' : '✗'}${k}`).join(' ')));
+  return { id: scenario.id, passed, total: checks.length, checks };
 }
 
 async function main() {
@@ -184,12 +270,20 @@ async function main() {
   }
   console.log(c('dim', `Usando sede ${branchId} · ${scenarios.length} escenario(s)`));
 
+  const results = [];
   for (const scenario of scenarios) {
     try {
-      await runScenario(scenario, branchId);
+      results.push(await runScenario(scenario, branchId));
     } catch (err) {
       console.log(c('red', `❌ Error en escenario ${scenario.id}: ${err.message}`));
+      results.push({ id: scenario.id, passed: 0, total: 0, error: err.message });
     }
+  }
+
+  console.log('\n' + c('bold', '═'.repeat(70)));
+  console.log(c('bold', '📊 TABLA FINAL'));
+  for (const r of results) {
+    console.log(`  ${r.passed === r.total && r.total ? '✅' : '⚠️'} ${r.id}: ${r.passed}/${r.total}${r.error ? ` ERROR ${r.error}` : ''}`);
   }
 }
 

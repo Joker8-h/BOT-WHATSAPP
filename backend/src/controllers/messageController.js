@@ -547,6 +547,40 @@ class MessageController {
             actions.productsToSell = [wRescuedProduct];
           }
         }
+
+        // SAFETY NET de CIERRE: la IA entró en CLOSING pero no emitió ninguna etiqueta
+        // (modelos pequeños a veces solo conversan). Rescatar producto del texto de la IA
+        // o de la ficha, y decidir método por palabras del cliente. ORDER-GATE/COD-GUARD
+        // validan después; aquí solo se evita perder la venta.
+        if (!actions.shouldCreateContraEntrega && !actions.shouldCloseSale && aiResult.flow === 'CLOSING') {
+          const aiFullTextC = aiResult.response || '';
+          const closePatterns = [
+            /[-•]\s*\*?([^*\n$]{5,60}?)\*?\s+por\s+\$/i,
+            /(?:recomiendo|recomendado|sugiero|llévate|te dejo|te presento)\s+(?:el\s+|la\s+|este\s+|esta\s+)?\*?([^*\n$]{5,60}?)\*?(?:\s+para|\s+por|\.|,|\n)/i,
+            /([A-Za-záéíóúÁÉÍÓÚñÑ][A-Za-záéíóúÁÉÍÓÚñÑ\s]{3,40}[A-Z0-9]{2,6}[-][A-Z0-9]{2,10})/,
+          ];
+          let cRescued = null;
+          for (const pat of closePatterns) {
+            const m = aiFullTextC.match(pat);
+            if (m && m[1]) { cRescued = m[1].trim().replace(/[*_]/g, '').replace(/^(el|la|este|esta)\s+/i, ''); break; }
+          }
+          if (!cRescued) {
+            const saleInterest = conversation?.context?.sale?.interestProducts;
+            if (saleInterest?.length) cRescued = saleInterest[saleInterest.length - 1];
+          }
+          if (cRescued) {
+            const combined = `${body} ${aiFullTextC}`.toLowerCase();
+            const electronic = /nequi|daviplata|transferencia|tarjeta|wompi|pse|\blink\b|online|cuotas|pago seguro/.test(combined);
+            const contraKw = /contraentrega|contra entrega|efectivo|pago al recibir|pago contra entrega/.test(combined);
+            if (contraKw && !electronic) {
+              actions.shouldCreateContraEntrega = true;
+            } else {
+              actions.shouldCloseSale = true;
+            }
+            actions.productsToSell = [cRescued];
+            logger.warn(`⚠️ [SAFETY-NET-CLOSE] CLOSING sin etiquetas — producto "${cRescued}" contra=${!!actions.shouldCreateContraEntrega} wompi=${!!actions.shouldCloseSale}`);
+          }
+        }
       }
 
       // Actualizar cliente

@@ -23,7 +23,7 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 
 // Cadena de fallbacks cuando gpt-4o está rate-limited / agotado
 const FALLBACK_MODELS = (process.env.FALLBACK_MODELS || 'gpt-4o-mini,gpt-4o-mini-2024-07-18,gpt-4-turbo,gpt-3.5-turbo')
-  .split(',')
+  .split(/[,\s]+/)
   .map(m => m.trim())
   .filter(Boolean);
 
@@ -47,7 +47,7 @@ if (process.env.GROQ_API_KEY) {
 
 const GROQ_MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 const GROQ_FALLBACK_MODELS = (process.env.GROQ_FALLBACK_MODELS || 'openai/gpt-oss-20b,qwen/qwen3.8-27b')
-  .split(',')
+  .split(/[,\s]+/)
   .map(m => m.trim())
   .filter(Boolean);
 const GROQ_CHAIN = [GROQ_MODEL, ...GROQ_FALLBACK_MODELS.filter(m => m !== GROQ_MODEL)];
