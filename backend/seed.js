@@ -18,7 +18,7 @@ async function main() {
         city: 'Administración Global',
         address: 'N/A',
         phone: '0000000000',
-        notificationPhone: process.env.ADMIN_PHONE || '573126279506',
+        notificationPhone: process.env.ADMIN_PHONE || '573166575904',
         isActive: true,
         isAuthorized: true
       }
@@ -27,7 +27,7 @@ async function main() {
   console.log('✅ Infraestructura base verificada (sede 1).');
 
   // Rellenar SOLO sedes sin teléfono (nunca pisar lo configurado en el panel)
-  const fallbackPhone = process.env.ADMIN_PHONE || '573126279506';
+  const fallbackPhone = process.env.ADMIN_PHONE || '573166575904';
   const filled = await prisma.branch.updateMany({
     where: { OR: [{ notificationPhone: null }, { notificationPhone: '' }] },
     data: { notificationPhone: fallbackPhone }

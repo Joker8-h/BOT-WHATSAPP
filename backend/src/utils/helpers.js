@@ -184,6 +184,16 @@ function cleanPhoneDigits(raw) {
 }
 
 /**
+ * Normaliza un teléfono colombiano a formato internacional sin + (573...).
+ * Un móvil de 10 dígitos empezando en 3 necesita el 57: sin eso el JID falla.
+ */
+function normalizeCoPhone(raw) {
+  const digits = cleanPhoneDigits(raw);
+  if (digits.length === 10 && digits.startsWith('3')) return `57${digits}`;
+  return digits;
+}
+
+/**
  * Formatea un número de teléfono en formato normal colombiano (ej: "316 657 5904").
  * Elimina completamente cualquier ID técnico (@c.us, @lid, etc.).
  */
@@ -253,6 +263,7 @@ module.exports = {
   formatCOP,
   cleanPhone,
   cleanPhoneDigits,
+  normalizeCoPhone,
   formatDisplayPhone,
   formatWaLink,
   formatClientDisplayName,

@@ -33,6 +33,31 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * Adelgaza mensajes para reintento Groq tras un 413 (tier on_demand limita el total).
+ * Recorta el índice del catálogo (inicio→primeras 20 líneas) y deja sistema + últimos 6.
+ * El protocolo de cierre va al final del system prompt, así que no se toca la cola.
+ */
+function slimMessagesForGroq(messages) {
+  const sysIdx = messages.findIndex(m => m.role === 'system' && typeof m.content === 'string');
+  const tail = messages.slice(-6);
+  const out = tail.map(m => ({ ...m }));
+  if (sysIdx >= 0 && !out.includes(messages[sysIdx])) out.unshift({ ...messages[sysIdx] });
+  const sys = out.find(m => m.role === 'system' && typeof m.content === 'string');
+  if (sys) {
+    const marker = '## ÍNDICE DEL CATÁLOGO';
+    const at = sys.content.indexOf(marker);
+    if (at > 0) {
+      const head = sys.content.slice(0, at);
+      const indexBody = sys.content.slice(at).split('\n').slice(0, 22).join('\n');
+      sys.content = `${head}\n${indexBody}\n- ...(índice recortado por límite; usa los productos detallados)`;
+    }
+    // Recortar descripciones largas del catálogo detallado (220 → 120 chars c/u)
+    sys.content = sys.content.replace(/(\n- [^\n]{0,80}: )([^\n|]{120})[^\n|]*/g, '$1$2…');
+  }
+  return out;
+}
+
 function isRateLimitError(err) {
   if (!err) return false;
   const status = err.status || err.statusCode || err?.error?.status || err?.response?.status;
@@ -118,16 +143,19 @@ async function callChatWithFallback(messages, opts = {}) {
 
     for (let mIdx = 0; mIdx < chain.length; mIdx++) {
       const model = chain[mIdx];
-      const maxRetriesForModel = 1; // 1 intento/modelo en 429 (pasar rápido al siguiente)
+      // Groq: 2 intentos (normal + slim tras 413). OpenAI: 1 (falla rápido al siguiente).
+      const maxRetriesForModel = provider === 'groq' ? 2 : 1;
+      let useSlim = false;
 
       for (let attempt = 0; attempt < maxRetriesForModel; attempt++) {
         try {
           if (mIdx > 0 || provider === 'groq') {
-            logger.warn(`🔄 [FALLBACK] Probando ${provider}:${model} (paso ${mIdx + 1}/${chain.length})`);
+            logger.warn(`🔄 [FALLBACK] Probando ${provider}:${model} (paso ${mIdx + 1}/${chain.length})${useSlim ? ' [slim]' : ''}`);
           }
+          const effectiveMessages = (provider === 'groq' && useSlim) ? slimMessagesForGroq(messages) : messages;
           const completionPromise = client.chat.completions.create({
             model,
-            messages,
+            messages: effectiveMessages,
             temperature: provider === 'groq' ? Math.min(temperature, 0.4) : temperature,
             // Groq tier on_demand limita el total por request: prompt adelgazado + completion 400-600
             max_tokens: provider === 'groq' ? Math.min(Math.max(max_tokens, 400), 600) : max_tokens,
@@ -171,9 +199,16 @@ async function callChatWithFallback(messages, opts = {}) {
           }
 
           // Error no recuperable en OpenAI -> no reintentar, escalar.
-          // En Groq: un 400 (parámetro no soportado por el modelo) pasa al siguiente
-          // modelo en vez de tumbar toda la cadena.
+          // En Groq: 413 (request grande para el tier) reintenta UNA vez con prompt
+          // adelgazado; 400 (parámetro no soportado) pasa al siguiente modelo.
           if (provider === 'groq') {
+            const isTooLarge = err.status === 413 || /too large|payload too large/i.test(err.message || '');
+            if (isTooLarge && !useSlim) {
+              logger.warn(`⚠️ [FALLBACK] groq:${model} 413 — reintentando con prompt adelgazado`);
+              useSlim = true;
+              await sleep(500);
+              continue;
+            }
             logger.warn(`⚠️ [FALLBACK] groq:${model} error ${err.status || err.message?.substring(0, 80)} — probando siguiente modelo`);
             await sleep(500);
             break;

@@ -1,5 +1,6 @@
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
+const { normalizeCoPhone } = require('../utils/helpers');
 
 class NotificationService {
   /**
@@ -32,7 +33,7 @@ class NotificationService {
         for (const employee of employees) {
           try {
             const phone = employee.phone;
-            const formattedPhone = phone.includes('@c.us') ? phone : `${phone}@c.us`;
+            const formattedPhone = phone.includes('@') ? phone : `${normalizeCoPhone(phone)}@c.us`;
             
             await whatsappService.sendMessage(branchId, formattedPhone, fullMessage);
             logger.info(`📢 Alerta enviada a empleado ${phone} (${employee.name})`);

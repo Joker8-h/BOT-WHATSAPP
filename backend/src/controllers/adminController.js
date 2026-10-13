@@ -1092,7 +1092,11 @@ class AdminController {
       if (!branchId) return res.status(400).json({ success: false, error: 'Usuario sin sucursal asignada' });
 
       const data = {};
-      if (notificationPhone !== undefined) data.notificationPhone = notificationPhone;
+      // Normalizar a 57... al guardar (el panel acepta 10 dígitos): si no, los avisos fallan
+      if (notificationPhone !== undefined) {
+        const digits = String(notificationPhone).replace(/\D/g, '');
+        data.notificationPhone = (digits.length === 10 && digits.startsWith('3')) ? `57${digits}` : notificationPhone;
+      }
       if (notificationGroupName !== undefined) data.notificationGroupName = notificationGroupName;
       
       // Encriptar TODAS las llaves de Wompi con AES-256

@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
-const { isWorkingHours, formatCOP, isPhoneBlocked } = require('../utils/helpers');
+const { isWorkingHours, formatCOP, isPhoneBlocked, normalizeCoPhone } = require('../utils/helpers');
 const { OBJECTION_LABELS } = require('../ai/saleState');
 const { normalizeText, classifyProduct, pickProductOfType } = require('../ai/salesKnowledge');
 
@@ -197,7 +197,7 @@ class FollowUpService {
           const branchId = conv.branchId || contact.branchId || 1;
           if (!this.whatsappService.getBranchStatus(branchId)?.isReady) continue;
 
-          const chatId = contact.phone.includes('@') ? contact.phone : `${contact.phone}@c.us`;
+          const chatId = contact.phone.includes('@') ? contact.phone : normalizeCoPhone(contact.phone) + '@c.us';
           const firstName = contact.name && contact.name !== 'Sin nombre' ? contact.name.split(' ')[0] : '';
           const history = [...conv.messages].reverse();
           let sent = false;
@@ -345,7 +345,7 @@ class FollowUpService {
           if (!pendingUserMsgs.length) continue;
           const userMessage = pendingUserMsgs.map(m => m.content).join('\n');
 
-          const chatId = conv.contact.phone.includes('@') ? conv.contact.phone : `${conv.contact.phone}@c.us`;
+          const chatId = conv.contact.phone.includes('@') ? conv.contact.phone : normalizeCoPhone(conv.contact.phone) + '@c.us';
           const aiResult = await this.aiService.generateResponse(
             userMessage,
             conv.contact,

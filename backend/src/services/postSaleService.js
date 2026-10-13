@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────
 const { prisma } = require('../config/database');
 const logger = require('../utils/logger');
-const { isWorkingHours, formatCOP, isPhoneBlocked } = require('../utils/helpers');
+const { isWorkingHours, formatCOP, isPhoneBlocked, normalizeCoPhone } = require('../utils/helpers');
 const {
   classifyProduct, pickComplements, getRepurchaseTypes, pickProductOfType,
 } = require('../ai/salesKnowledge');
@@ -163,7 +163,7 @@ class PostSaleService {
             contact, goal, facts, history: conversation.messages || [],
           })) || this._fallbackText(stepNumber, firstName, suggested);
 
-          const chatId = contact.phone.includes('@') ? contact.phone : `${contact.phone}@c.us`;
+          const chatId = contact.phone.includes('@') ? contact.phone : normalizeCoPhone(contact.phone) + '@c.us';
           const sent = await this.whatsappService.sendMessage(branchId, chatId, text);
           if (!sent) continue;
 

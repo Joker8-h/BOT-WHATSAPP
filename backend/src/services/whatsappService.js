@@ -1,6 +1,6 @@
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const logger = require('../utils/logger');
-const { antiBanDelay, isPhoneBlocked, cleanPhoneDigits } = require('../utils/helpers');
+const { antiBanDelay, isPhoneBlocked, cleanPhoneDigits, normalizeCoPhone } = require('../utils/helpers');
 const { prisma } = require('../config/database');
 const path = require('path');
 const fs = require('fs');
@@ -861,13 +861,14 @@ class WhatsAppService {
           select: { notificationPhone: true, notificationGroupName: true }
         });
         if (branch?.notificationPhone) {
-          phone = cleanPhoneDigits(branch.notificationPhone);
+          // Normaliza 10 dígitos → 57... (el panel acepta ambos formatos)
+          phone = normalizeCoPhone(branch.notificationPhone);
         }
       }
 
       // Si la sede no tiene teléfono configurado, enviar siempre al administrador maestro
       if (!phone) {
-        phone = cleanPhoneDigits(DEFAULT_ADMIN_PHONE);
+        phone = normalizeCoPhone(DEFAULT_ADMIN_PHONE);
       }
 
       const chatId = `${phone}@c.us`;
@@ -894,7 +895,7 @@ class WhatsAppService {
 
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
-      const digits = String(contact.phone || '').replace(/\D/g, '').slice(-10);
+      const digits = normalizeCoPhone(contact.phone);
       if (!digits) { results.push({ phone: contact.phone, sent: false, error: 'sin teléfono' }); continue; }
       const chatId = `${digits}@c.us`;
 
