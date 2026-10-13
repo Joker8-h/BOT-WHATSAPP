@@ -46,7 +46,21 @@ class StoreCatalogService {
     let page = 1;
     let totalPages = 1;
     do {
-      const { data } = await axios.get(url, { params: { limit: PAGE_SIZE, page }, timeout: 20000 });
+      let resp = null;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          resp = await axios.get(url, { params: { limit: PAGE_SIZE, page }, timeout: 20000 });
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          logger.warn(`⚠️ [STORE-API] Intento ${attempt}/3 falló pág. ${page}: ${e.response?.status || e.message}`);
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+        }
+      }
+      if (!resp) throw lastErr || new Error('Sin respuesta de la tienda');
+      const { data } = resp;
       const list = Array.isArray(data?.products) ? data.products : (Array.isArray(data) ? data : []);
       all.push(...list);
       totalPages = Number(data?.totalPages) || 1;
@@ -101,7 +115,9 @@ class StoreCatalogService {
       price,
       stock,
       category: this._category(name, description),
-      isAvailable: item.isActive !== false && price > 0 && stock > 0,
+      // No apagar por stock=0: la tienda a veces reporta 0/null y dejaba al bot sin catálogo.
+      // El quiebre de stock se avisa vía outOfStock en catalogService, no desactivando.
+      isAvailable: item.isActive !== false && price > 0,
       imageUrl,
       branchId,
       excelRef: `${API_REF_PREFIX}${item.id}`.slice(0, 50),

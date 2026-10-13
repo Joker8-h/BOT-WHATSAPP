@@ -18,7 +18,10 @@ export const AuthProvider = ({ children }) => {
 
   const fetchProfile = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || '/api'}/auth/me`, {
+      // VITE_API_BASE_URL puede venir con o sin /api — normalizar para evitar 404
+      const rawBase = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/+$/, '');
+      const base = rawBase.endsWith('/api') ? rawBase : `${rawBase}/api`;
+      const response = await fetch(`${base}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

@@ -16,6 +16,10 @@ if (CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET) {
     api_secret: CLOUDINARY_API_SECRET.trim(),
     secure: true,
   });
+} else if (process.env.CLOUDINARY_URL) {
+  // Hereda credenciales de CLOUDINARY_URL (cloudinary://API_KEY:API_SECRET@CLOUD_NAME)
+  cloudinary.config();
+  cloudinary.config({ secure: true });
 } else {
   cloudinary.config({ secure: true });
 }

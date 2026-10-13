@@ -100,8 +100,11 @@ class WompiService {
         currency: 'COP',
         amount_in_cents: amountInCents,
         sku: reference,
-        redirect_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/payment-status` : undefined
+        redirect_url: process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL.replace(/\/+$/, '')}/payment-status` : undefined
       };
+      if (!payload.redirect_url) {
+        logger.warn('⚠️ Wompi: FRONTEND_URL no configurado — el link quedará sin redirect_url');
+      }
 
       const response = await axios.post(`${activeUrl}/payment_links`, payload, {
         headers: {
@@ -179,7 +182,9 @@ class WompiService {
    */
   async getPaymentLink(paymentLinkId, environment = 'prod') {
     if (!paymentLinkId) return null;
-    const base = environment === 'test' ? this.sandboxUrl : this.productionUrl;
+    const env = String(environment || 'prod').toLowerCase();
+    const isTest = ['test', 'sandbox', 'test_sandbox'].includes(env);
+    const base = isTest ? this.sandboxUrl : this.productionUrl;
     try {
       const response = await axios.get(`${base}/payment_links/${encodeURIComponent(paymentLinkId)}`, { timeout: 8000 });
       return response.data?.data || null;

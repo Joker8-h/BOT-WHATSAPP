@@ -18,7 +18,7 @@ const { isWorkingHours, formatCOP, isPhoneBlocked, formatDisplayPhone, formatWaL
 const crypto = require('crypto');
 
 // Ventana para agrupar ráfagas: el cliente suele escribir 2-3 mensajes seguidos
-const BURST_WINDOW_MS = parseInt(process.env.MESSAGE_BURST_WINDOW_MS || '4000', 10);
+const BURST_WINDOW_MS = parseInt(process.env.MESSAGE_BURST_WINDOW_MS || '6000', 10);
 const ADMIN_MAX_FAILED_ATTEMPTS = 5;
 const ADMIN_LOCK_MS = 60 * 60 * 1000;
 
@@ -580,14 +580,27 @@ class MessageController {
         }
       }
 
-      // FALLBACK: Si la IA mencionó una ciudad (Popayán, Pitalito, etc.) pero no usó [CAPTURAR_CIUDAD]
+      // FALLBACK: Si la IA mencionó una ciudad pero no usó [CAPTURAR_CIUDAD]
+      // Lista amplia (igual que _extractCustomerDataFromText) + ciudades de envío local por ENV
       if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && !contactUpdates.city && !contact.city) {
-        const ciudadesContraentrega = ['Popayán', 'Pitalito', 'Florencia', 'Yopal'];
+        const envCities = String(process.env.SHIPPING_LOCAL_CITIES || '').split(',').map(s => s.trim()).filter(Boolean);
+        const ciudadesContraentrega = [...new Set([
+          'Popayán', 'Popayan', 'Pitalito', 'Florencia', 'Yopal',
+          'Bogotá', 'Bogota', 'Medellín', 'Medellin', 'Cali', 'Neiva', 'Pasto',
+          'Barranquilla', 'Bucaramanga', 'Pereira', 'Manizales', 'Armenia',
+          'Ibagué', 'Ibague', 'Cartagena', 'Villavicencio', 'Tunja', 'Cúcuta', 'Cucuta',
+          'Valledupar', 'Santa Marta', 'Mocoa', 'San Vicente', 'Garzon', 'Garzón', 'La Plata',
+          ...envCities,
+        ])];
         const bodyAndResponse = `${body} ${aiResult.response || ''}`;
         for (const ciudad of ciudadesContraentrega) {
-          if (bodyAndResponse.toLowerCase().includes(ciudad.toLowerCase())) {
+          const rx = new RegExp(`\\b${ciudad.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+          if (rx.test(bodyAndResponse)) {
             logger.info(`🔍 [CITY-RESCUE] Ciudad rescatada del texto: "${ciudad}"`);
-            contactUpdates.city = ciudad;
+            contactUpdates.city = ciudad
+              .replace(/^Popayan$/i, 'Popayán').replace(/^Bogota$/i, 'Bogotá')
+              .replace(/^Medellin$/i, 'Medellín').replace(/^Ibague$/i, 'Ibagué')
+              .replace(/^Cucuta$/i, 'Cúcuta').replace(/^Garzon$/i, 'Garzón');
             break;
           }
         }
