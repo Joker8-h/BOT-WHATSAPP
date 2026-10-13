@@ -168,7 +168,14 @@ async function callChatWithFallback(messages, opts = {}) {
             break;
           }
 
-          // Error no recuperable -> no reintentar, probar siguiente modelo solo si es 429-like
+          // Error no recuperable en OpenAI -> no reintentar, escalar.
+          // En Groq: un 400 (parámetro no soportado por el modelo) pasa al siguiente
+          // modelo en vez de tumbar toda la cadena.
+          if (provider === 'groq') {
+            logger.warn(`⚠️ [FALLBACK] groq:${model} error ${err.status || err.message?.substring(0, 80)} — probando siguiente modelo`);
+            await sleep(500);
+            break;
+          }
           throw wrapOpenRouterError(err);
         }
       }
