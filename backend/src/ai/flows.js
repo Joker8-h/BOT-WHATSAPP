@@ -149,6 +149,7 @@ function getFlowInstructions(flow) {
   [CAPTURAR_NOMBRE: Carlos Ruiz] [CAPTURAR_CIUDAD: Popayán] [CAPTURAR_DIRECCION: calle 5 # 12-34] [CAPTURAR_BARRIO: Modelo] [CAPTURAR_TELEFONO_ENTREGA: 3150001122] [PEDIDO_CONTRAENTREGA: Vibrador Narzizo]
 - **PROHIBIDO** preguntar "¿te lo agrego?" o "¿confirmas?" cuando el cliente YA dio nombre+ciudad+dirección+teléfono: cierra directo con las etiquetas.
 - Después de la etiqueta, NO digas "Pedido registrado". Di "Perfecto, procedo a registrar tu pedido..." o "Voy a generar tu link de pago..." y el sistema hace el resto.
+- **PROHIBIDO** decir "Tu pedido queda registrado", "ya quedó registrado" o "tu envío va": el sistema registra y confirma con el ticket oficial; tú solo anuncia que procedes.
 - **REGLA CRÍTICA**: Sin dirección capturada con [CAPTURAR_DIRECCION], NO uses [CERRAR_VENTA] ni [PEDIDO_CONTRAENTREGA].`,
 
     CONTACT_REPLY: `FLUJO ACTUAL: RESPUESTA A CONTACTO
