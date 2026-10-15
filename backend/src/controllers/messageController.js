@@ -12,6 +12,7 @@ const postSaleService = require('../services/postSaleService');
 const ownerAlertService = require('../services/ownerAlertService');
 const shippingService = require('../services/shippingService');
 const productImageService = require('../services/productImageService');
+const googleSheetsService = require('../services/googleSheetsService');
 const { mergeSaleState } = require('../ai/saleState');
 const { prisma } = require('../config/database');
 const { isWorkingHours, formatCOP, isPhoneBlocked, formatDisplayPhone, formatWaLink, formatClientDisplayName, cleanPhoneDigits } = require('../utils/helpers');
@@ -682,14 +683,17 @@ class MessageController {
       const missingPhone = !finalPhone || finalPhone === 'Por confirmar' || String(finalPhone).trim() === '';
       const missingName = !finalName || finalName === 'Sin nombre' || String(finalName).trim() === '';
 
-      // Contraentrega solo en ciudades COD; fuera de ellas se convierte a Wompi automáticamente
-      if (actions.shouldCreateContraEntrega && !missingCity) {
-        const codCities = String(process.env.SHIPPING_LOCAL_CITIES || 'Popayán,Florencia,Pitalito,Yopal')
-          .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-        const normCity = String(finalCity).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-        const isCod = codCities.some(c => c.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim() === normCity);
-        if (!isCod) {
-          logger.warn(`⚠️ [COD-GUARD] Ciudad ${finalCity} no es COD — convirtiendo contraentrega a Wompi`);
+      // Blindar COD-GUARD (Solo Popayán y Florencia)
+      let action = actions.shouldCreateContraEntrega ? 'CREAR_PEDIDO_CONTRAENTREGA' : (actions.shouldCloseSale ? 'GENERAR_LINK_PAGO' : null);
+      const extractedData = contactUpdates;
+
+      if (action === 'CREAR_PEDIDO_CONTRAENTREGA') {
+        const finalCity = extractedData.city || contact.city || '';
+        const isAllowedCOD = shippingService.isLocalCity(finalCity);
+
+        if (!isAllowedCOD) {
+          logger.warn(`🛡️ [COD-GUARD] Intento de contraentrega bloqueado para ciudad "${finalCity}" (${chatId}). Convirtiendo automáticamente a GENERAR_LINK_PAGO.`);
+          action = 'GENERAR_LINK_PAGO';
           actions.shouldCreateContraEntrega = false;
           actions.shouldCloseSale = true;
         }

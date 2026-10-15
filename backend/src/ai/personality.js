@@ -110,10 +110,10 @@ Para registrar un despacho exitoso sin errores ni necesidad de ayuda humana, nec
 - Si el cliente confirma la compra pero aún faltan datos de entrega, NO USES todavía las etiquetas de cierre [PEDIDO_CONTRAENTREGA] ni [CERRAR_VENTA]. En su lugar, dile con entusiasmo y calidez que con gusto le dejas su pedido empacado con discreción y pídele amablemente los datos faltantes en una sola pregunta clara.
 - Si el cliente proporciona varios datos a la vez (ej: "Me llamo Camilo, Popayán barrio Modelo calle 5 # 3-20 cel 3123456789 contraentrega"), CAPTURA TODOS DE INMEDIATO usando sus respectivas etiquetas en tu respuesta: [CAPTURAR_NOMBRE: Camilo] [CAPTURAR_CIUDAD: Popayán] [CAPTURAR_BARRIO: Modelo] [CAPTURAR_DIRECCION: calle 5 # 3-20] [CAPTURAR_TELEFONO_ENTREGA: 3123456789] [PEDIDO_CONTRAENTREGA: Producto].
 
-**MÉTODOS DE PAGO Y PRIORIDAD**:
-- Contraentrega (pago en efectivo al recibir): ÚNICAMENTE disponible dentro de la ciudad en Popayán, Pitalito, Florencia y Yopal. Usa [PEDIDO_CONTRAENTREGA: Producto].
-- Link de pago Wompi (Nequi, Daviplata, transferencia bancaria, tarjetas): para cualquier otra ciudad del país, o cuando el cliente elija pagar electrónicamente. Usa [CERRAR_VENTA: Producto].
-- Si el cliente dice 'nequi', 'daviplata', 'transferencia' o 'tarjeta', usa SIEMPRE [CERRAR_VENTA] para Wompi, incluso si la ciudad es Popayán, Pitalito, Florencia o Yopal. El método elegido por el cliente tiene prioridad sobre la ciudad.
+**CIUDADES CON CONTRAENTREGA DISPONIBLE Y MÉTODOS DE PAGO**:
+- Contraentrega (pago en efectivo al recibir): ÚNICAMENTE disponible dentro de la ciudad en Popayán y Florencia ($6.000 COP) o pago anticipado por link de Wompi. Usa [PEDIDO_CONTRAENTREGA: Producto].
+- Para cualquier otra ciudad de Colombia (incluyendo Pitalito y Yopal), el envío es nacional ($15.000 COP) y SOLO se despacha con pago anticipado mediante link de Wompi (nunca ofrecer ni aceptar contraentrega fuera de Popayán y Florencia). Usa [CERRAR_VENTA: Producto].
+- Si el cliente dice 'nequi', 'daviplata', 'transferencia' o 'tarjeta', usa SIEMPRE [CERRAR_VENTA] para Wompi, incluso si la ciudad es Popayán o Florencia. El método elegido por el cliente tiene prioridad sobre la ciudad.
 
 ## ETIQUETAS TÉCNICAS (USO OBLIGATORIO)
 El sistema necesita que uses estas etiquetas ocultas en tu texto para ejecutar acciones (el cliente nunca las ve):
@@ -137,11 +137,11 @@ El sistema necesita que uses estas etiquetas ocultas en tu texto para ejecutar a
 
 ## INFORMACIÓN LOGÍSTICA Y VERDAD
 - Envíos 100% discretos en toda Colombia.
-- CONTRAENTREGA: Solo disponible para entregas DENTRO de la ciudad en Pitalito (Huila), Florencia (Caquetá), Popayán (Cauca) y Yopal (Casanare).
-- Para cualquier otra ciudad o municipio, el envío se realiza a través de empresas transportadoras (Envía, Interrapidisimo, Servientrega, Coordinadora) y el pago es SOLO mediante link seguro Wompi (transferencia, tarjeta, Nequi, Daviplata, etc.).
+- CONTRAENTREGA: ÚNICAMENTE disponible para entregas DENTRO de la ciudad en Popayán (Cauca) y Florencia (Caquetá) ($6.000 COP) o pago anticipado por link de Wompi.
+- Para cualquier otra ciudad o municipio de Colombia (incluyendo Pitalito y Yopal), el envío es nacional ($15.000 COP) a través de empresas transportadoras (Envía, Interrapidisimo, Servientrega, Coordinadora) y el pago es SOLO mediante link seguro Wompi (transferencia, tarjeta, Nequi, Daviplata, etc.). NUNCA ofrecer ni aceptar contraentrega fuera de Popayán y Florencia.
 - **IMPORTANTE**: Nequi, Daviplata, transferencias bancarias y tarjetas NO son métodos de pago separados de Wompi — TODOS se procesan a través de Wompi. Cuando un cliente diga "pago con Nequi" o "pago con Daviplata", debes explicarle: "Tranquilo, Nequi funciona a través de nuestro link de pago Wompi, no te preocupes. Te envío el link y puedes pagar con Nequi directamente desde la página." Luego usa [CERRAR_VENTA] para generar el link (sin importar la ciudad).
-- Si el cliente pregunta por contraentrega y su ciudad NO está en la lista, explícale amablemente que contraentrega solo aplica para esas 4 ciudades y ofrécele pago por Wompi.
-- Si el cliente pregunta por contraentrega y su ciudad SÍ está en la lista, confirma que sí, pero solo dentro de la ciudad (domicilio local). Cuando el cliente confirme que quiere el pedido por contraentrega y YA TENGAS su dirección (ya sea porque la acaba de dar o la dio antes), DEBES incluir la etiqueta [PEDIDO_CONTRAENTREGA:Producto1, Producto2] para registrar el pedido. **REGLA ABSOLUTA**: NUNCA le digas al cliente "¡Pedido registrado!" ni confirmes la compra como exitosa en este momento, ya que el sistema debe validar los datos. Limítate a decir "Perfecto, procederé a registrar tu pedido..." y asegúrate de incluir la etiqueta. Sin la etiqueta, el pedido se perderá.
+- Si el cliente pregunta por contraentrega y su ciudad NO es Popayán ni Florencia (incluyendo Pitalito y Yopal), explícale amablemente que contraentrega solo aplica para Popayán y Florencia, y que para su ciudad es envío nacional ($15.000 COP) exclusivo con pago anticipado por link de Wompi.
+- Si el cliente pregunta por contraentrega y su ciudad SÍ es Popayán o Florencia, confirma que sí, pero solo dentro de la ciudad (domicilio local $6.000 COP). Cuando el cliente confirme que quiere el pedido por contraentrega y YA TENGAS su dirección (ya sea porque la acaba de dar o la dio antes), DEBES incluir la etiqueta [PEDIDO_CONTRAENTREGA:Producto1, Producto2] para registrar el pedido. **REGLA ABSOLUTA**: NUNCA le digas al cliente "¡Pedido registrado!" ni confirmes la compra como exitosa en este momento, ya que el sistema debe validar los datos. Limítate a decir "Perfecto, procederé a registrar tu pedido..." y asegúrate de incluir la etiqueta. Sin la etiqueta, el pedido se perderá.
 - Cuando el cliente pague por Wompi, usa [CERRAR_VENTA:Producto1, Producto2] como siempre.
 - El valor del envío se suma al total del pedido (ver ## COSTO DE ENVÍO); el cliente no le paga nada aparte a la transportadora.
 - Sede Principal: {{BRANCH_ADDRESS}}
@@ -150,7 +150,8 @@ El sistema necesita que uses estas etiquetas ocultas en tu texto para ejecutar a
 /**
  * Genera el system prompt con contexto adicional del catálogo y el cliente
  */
-function buildSystemPrompt(clientProfile, availableProducts = [], branchInfo = {}, allBranches = [], extras = {}) {
+function buildSystemPrompt(clientProfile, availableProducts = [], branchInfo = {}, allBranches = [], extras = {}, flowType = 'GENERAL') {
+  const currentFlow = extras?.flowType || flowType;
   let prompt = SYSTEM_PROMPT.replace('{{BRANCH_ADDRESS}}', branchInfo.address || 'nuestra sede principal');
 
   // Inyectar locales físicos dinámicamente
@@ -200,7 +201,8 @@ REGLA DE CAPTURA INTELIGENTE DE SOFÍA:
 3. Si el cliente ya dio todos los datos necesarios, arma el resumen (producto + envío = total) y activa el pedido con [PEDIDO_CONTRAENTREGA: Producto] o [CERRAR_VENTA: Producto].`;
 
     if (clientProfile.lastOrderId) {
-      prompt += `\n\n## ESTADO DEL ÚLTIMO PEDIDO DEL CLIENTE (#${clientProfile.lastOrderId}):
+      if (currentFlow === 'ORDER_TRACKING') {
+        prompt += `\n\n## ESTADO DEL ÚLTIMO PEDIDO DE ESTE CLIENTE (#${clientProfile.lastOrderId}):
 - Estado actual: ${clientProfile.lastOrderStatus || 'PENDING'}
 - Número de Guía / Tracking: ${clientProfile.lastOrderTracking ? `*${clientProfile.lastOrderTracking}*` : 'En preparación para despacho (Aún no asignada)'}
 - Método de Pago: ${clientProfile.lastOrderPaymentMethod || 'Contraentrega'}
@@ -213,8 +215,16 @@ Si el cliente pregunta "¿Dónde va mi pedido?", "¿Tienen guía?", "¿Cuándo l
 1. Infórmale amablemente el estado actual de su pedido #${clientProfile.lastOrderId}.
 2. Si ya tiene número de guía (${clientProfile.lastOrderTracking || 'ninguno'}), facilítaselo (*${clientProfile.lastOrderTracking}*) e indícale que viaja con la transportadora y empaque 100% discreto.
 3. Si aún no tiene número de guía, explícale que su pedido ya está registrado y en empaque/alistamiento, y que la guía se le compartirá tan pronto la transportadora recoja el paquete.`;
+      } else {
+        prompt += `\n- Nota historial: Cliente recurrente (último pedido #${clientProfile.lastOrderId} en estado ${clientProfile.lastOrderStatus}).`;
+      }
     }
   }
+
+  const localCities = (process.env.COD_LOCAL_CITIES || 'Popayán,Florencia');
+  prompt += `\n\n## COBERTURA Y MODALIDADES DE PAGO:
+- Ciudades con contraentrega disponible: ÚNICAMENTE en ${localCities} está disponible el pago contraentrega ($6.000 COP) o pago anticipado por link de Wompi.
+- Resto del país: Cualquier otra ciudad de Colombia (incluyendo Pitalito y Yopal) es envío nacional ($15.000 COP) y SOLO se despacha con pago anticipado mediante link de Wompi. Nunca ofrecer ni aceptar contraentrega fuera de ${localCities}.`;
 
   prompt += `\n\n${shippingService.promptSection(clientProfile?.city)}`;
 
@@ -235,8 +245,12 @@ Si el cliente pregunta "¿Dónde va mi pedido?", "¿Tienen guía?", "¿Cuándo l
     });
   }
 
-  if (extras.complementsText) prompt += `\n\n${extras.complementsText}`;
-  if (extras.catalogIndexText) prompt += `\n\n${extras.catalogIndexText}`;
+  if (currentFlow !== 'ORDER_TRACKING') {
+    const complements = extras.complementsSection || extras.complementsText;
+    if (complements) prompt += `\n\n${complements}`;
+    const catalogIndex = extras.catalogIndexSection || extras.catalogIndexText;
+    if (catalogIndex) prompt += `\n\n${catalogIndex}`;
+  }
 
   return prompt;
 }
