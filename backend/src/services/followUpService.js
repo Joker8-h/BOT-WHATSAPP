@@ -11,7 +11,7 @@ const { normalizeText, classifyProduct, pickProductOfType } = require('../ai/sal
 
 const HOUR_MS = 60 * 60 * 1000;
 const MIN_GAP_BETWEEN_FOLLOWUPS_MS = 18 * HOUR_MS;
-const COD_CITIES = ['popayan', 'pitalito', 'florencia', 'yopal'];
+const shippingService = require('./shippingService');
 
 const STEPS = [
   {
@@ -56,8 +56,7 @@ class FollowUpService {
   }
 
   _isCodCity(city) {
-    const c = normalizeText(city);
-    return !!c && COD_CITIES.some(x => c.includes(x));
+    return shippingService.isLocalCity(city);
   }
 
   /**

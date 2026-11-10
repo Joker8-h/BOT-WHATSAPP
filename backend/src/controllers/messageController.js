@@ -76,10 +76,11 @@ class MessageController {
   }
 
   _enqueue(chatId, msg, branchId) {
-    let queue = this.chatQueues.get(chatId);
+    const queueKey = `${branchId}:${chatId}`;
+    let queue = this.chatQueues.get(queueKey);
     if (!queue) {
-      queue = { items: [], timer: null, processing: false };
-      this.chatQueues.set(chatId, queue);
+      queue = { chatId, items: [], timer: null, processing: false };
+      this.chatQueues.set(queueKey, queue);
     }
     queue.items.push({ msg, branchId });
 
@@ -89,14 +90,15 @@ class MessageController {
       return;
     }
     clearTimeout(queue.timer);
-    queue.timer = setTimeout(() => this._drain(chatId), BURST_WINDOW_MS);
+    queue.timer = setTimeout(() => this._drain(queueKey), BURST_WINDOW_MS);
   }
 
-  async _drain(chatId) {
-    const queue = this.chatQueues.get(chatId);
+  async _drain(queueKey) {
+    const queue = this.chatQueues.get(queueKey);
     if (!queue || queue.processing) return;
+    const chatId = queue.chatId;
     if (queue.items.length === 0) {
-      this.chatQueues.delete(chatId);
+      this.chatQueues.delete(queueKey);
       return;
     }
 
@@ -111,9 +113,9 @@ class MessageController {
     } finally {
       queue.processing = false;
       if (queue.items.length > 0) {
-        queue.timer = setTimeout(() => this._drain(chatId), Math.round(BURST_WINDOW_MS / 2));
+        queue.timer = setTimeout(() => this._drain(queueKey), Math.round(BURST_WINDOW_MS / 2));
       } else {
-        this.chatQueues.delete(chatId);
+        this.chatQueues.delete(queueKey);
       }
     }
   }
@@ -700,13 +702,11 @@ class MessageController {
       }
 
       let aiResponseToSend = aiResult.response;
-      if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && (missingAddress || missingCity)) {
+      if ((actions.shouldCreateContraEntrega || actions.shouldCloseSale) && (missingAddress || missingCity || missingName || missingPhone)) {
         logger.warn(`⚠️ [ORDER-GATE] Cierre prematuro detectado sin dirección/ciudad (missingAddress=${missingAddress}, missingCity=${missingCity}). Cancelando creación inmediata.`);
         actions.shouldCreateContraEntrega = false;
         actions.shouldCloseSale = false;
 
-        const asksForDeliveryInfo = /(?:direcci[oó]n|d[oó]nde te lo enviamos|ciudad|barrio|tel[eé]fono|datos de env[ií]o|para envi[aá]rtelo)/i.test(aiResponseToSend || '');
-        if (!asksForDeliveryInfo) {
           const missingFields = [];
           if (missingName) missingFields.push('👤 Tu nombre completo para el empaque');
           if (missingCity) missingFields.push('🏙️ La ciudad');
@@ -714,7 +714,6 @@ class MessageController {
           if (missingPhone) missingFields.push('📞 Tu número de contacto para la entrega (10 dígitos)');
 
           aiResponseToSend = `¡Excelente elección! 💜 Con mucho gusto te dejo tu pedido empacado con total discreción.\n\nPara coordinar tu despacho, por favor compárteme en un solo mensaje:\n${missingFields.join('\n')}`;
-        }
       }
 
       logger.info(`📤 [MSG-DEBUG] aiResponseToSend: ${aiResponseToSend ? 'SÍ tiene respuesta' : 'NULL — sin respuesta'}, shouldContraEntrega=${actions.shouldCreateContraEntrega}, shouldCloseSale=${actions.shouldCloseSale}, missingAddress=${missingAddress}, missingCity=${missingCity}`);
@@ -791,9 +790,11 @@ class MessageController {
         const resolved = await catalogService.resolveSaleProducts(actions.productsToSell, branchId);
         const { items: orderItems, productNames, notFound, totalAmount } = resolved;
 
-        if (orderItems.length === 0) {
+        if (orderItems.length === 0 || notFound.length > 0 || resolved.outOfStock?.length > 0) {
           logger.error(`⚠️ [CONTRAENTREGA] No se encontraron productos en BD para: ${actions.productsToSell.join(', ')}`);
-          const fallbackMsg = '⚠️ Hubo un problema identificando los productos en nuestro sistema. Un asesor revisará tu pedido en breve para confirmarlo manualmente.';
+          const fallbackMsg = resolved.outOfStock?.length
+            ? `⚠️ En este momento se agotó: ${resolved.outOfStock.join(', ')}. Un asesor te ayudará a ofrecerte una alternativa disponible. 💜`
+            : '⚠️ Hubo un problema identificando los productos en nuestro sistema. Un asesor revisará tu pedido en breve para confirmarlo manualmente.';
           await whatsappService.sendMessage(branchId, chatId, fallbackMsg);
           await crmService.saveMessage(conversation.id, 'ASSISTANT', fallbackMsg);
           
@@ -805,7 +806,8 @@ class MessageController {
           return;
         }
 
-        const duplicate = await crmService.findRecentSimilarOrder(contact.id, 'CONTRAENTREGA', orderItems.map(i => i.productId));
+        if (await this._requestUnselectedProducts({ productNames, body, messageHistory, branchId, chatId, conversationId: conversation.id })) return;
+        const duplicate = await crmService.findRecentSimilarOrder(contact.id, 'CONTRAENTREGA', orderItems);
         if (duplicate) {
           logger.warn(`⚠️ [CONTRAENTREGA] Pedido #${duplicate.id} ya existe para este cliente. No se crea ni se avisa otra vez.`);
           return;
@@ -814,24 +816,37 @@ class MessageController {
         const codCity = contactUpdates.city || contact.city || 'Por confirmar';
         const codQuote = shippingService.quote(totalAmount, codCity);
         const deliveryPhone = contactUpdates.deliveryPhone || contact.deliveryPhone || 'No proporcionado';
-        const order = await crmService.createOrder({
-          contactId: contact.id,
-          branchId,
-          items: orderItems,
-          amount: codQuote.total,
-          shippingCity: codCity,
-          shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
-          status: 'PENDING',
-          paymentMethod: 'CONTRAENTREGA',
-          notes: [
-            contactUpdates.neighborhood || contact.neighborhood ? `Barrio: ${contactUpdates.neighborhood || contact.neighborhood}` : null,
-            deliveryPhone && deliveryPhone !== 'No proporcionado' ? `Tel Entrega: ${deliveryPhone}` : null,
-            `${codQuote.label}: ${formatCOP(codQuote.fee)}`,
-            notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
-          ].filter(Boolean).join(' | '),
-        });
+        let order;
+        try {
+          order = await crmService.createOrderAndReserveStock({
+            contactId: contact.id,
+            branchId,
+            items: orderItems,
+            amount: codQuote.total,
+            shippingCity: codCity,
+            shippingAddress: contactUpdates.address || contact.address || 'Por confirmar',
+            status: 'PENDING',
+            paymentMethod: 'CONTRAENTREGA',
+            notes: [
+              contactUpdates.neighborhood || contact.neighborhood ? `Barrio: ${contactUpdates.neighborhood || contact.neighborhood}` : null,
+              deliveryPhone && deliveryPhone !== 'No proporcionado' ? `Tel Entrega: ${deliveryPhone}` : null,
+              `${codQuote.label}: ${formatCOP(codQuote.fee)}`,
+              notFound.length ? `No identificados: ${notFound.join(', ')}` : null,
+            ].filter(Boolean).join(' | '),
+          });
+        } catch (orderError) {
+          if (orderError.code === 'INSUFFICIENT_STOCK') {
+            const stockMsg = '⚠️ Justo mientras confirmábamos tu pedido se agotó una unidad. Un asesor te contactará con una alternativa disponible. 💜';
+            await whatsappService.sendMessage(branchId, chatId, stockMsg);
+            await crmService.saveMessage(conversation.id, 'ASSISTANT', stockMsg);
+            await whatsappService.notifyPhone(branchId, `⚠️ *STOCK CAMBIÓ DURANTE EL CIERRE*\nCliente: ${formatClientDisplayName(contact.name, contact.phone)}\nProductos: ${actions.productsToSell.join(', ')}`);
+            return;
+          }
+          throw orderError;
+        }
 
         logger.info(`✅ [CONTRAENTREGA] Pedido #${order.id} creado por ${formatCOP(codQuote.total)} (envío ${formatCOP(codQuote.fee)}).`);
+        catalogService.invalidateCache(branchId);
 
         // Ticket oficial al cliente con los valores exactos calculados por el sistema
         try {
@@ -855,22 +870,6 @@ class MessageController {
 
         await crmService.recordPurchase(contact.id, codQuote.total, conversation.id);
 
-        // Descontar inventario de cada producto vendido
-        for (const item of orderItems) {
-          try {
-            const prod = await prisma.product.findUnique({ where: { id: item.productId } });
-            if (prod) {
-              const newStock = Math.max(0, (prod.stock || 0) - (item.quantity || 1));
-              await prisma.product.update({
-                where: { id: prod.id },
-                data: { stock: newStock, isAvailable: newStock > 0 },
-              });
-              logger.info(`📉 [STOCK-COD] Stock actualizado para "${prod.name}" (ID ${prod.id}): ${prod.stock} -> ${newStock}`);
-            }
-          } catch (errStock) {
-            logger.error(`Error actualizando stock COD para producto ID ${item.productId}:`, errStock.message);
-          }
-        }
         await crmService.patchContext(conversation.id, (ctx) => {
           const next = { ...ctx };
           delete next.pedido;
@@ -942,7 +941,7 @@ class MessageController {
         const resolved = await catalogService.resolveSaleProducts(actions.productsToSell, branchId);
         const { items: orderItems, productNames, notFound, totalAmount } = resolved;
 
-        if (orderItems.length === 0) {
+        if (orderItems.length === 0 || notFound.length > 0 || resolved.outOfStock?.length > 0) {
           logger.error(`⚠️ [WOMPI] No se encontraron productos en BD para: ${actions.productsToSell.join(', ')}`);
           const fallbackMsg = '⚠️ Hubo un problema identificando los productos en nuestro sistema. Un asesor revisará tu pedido en breve para generar el link de pago manualmente.';
           await whatsappService.sendMessage(branchId, chatId, fallbackMsg);
@@ -955,22 +954,24 @@ class MessageController {
           return;
         }
 
+        if (await this._requestUnselectedProducts({ productNames, body, messageHistory, branchId, chatId, conversationId: conversation.id })) return;
         const pending = conversation?.context?.sale?.pendingPayment;
         const pendingNames = (pending?.products || []).map(name => String(name).toLowerCase());
         const payCity = contactUpdates.city || contact.city || 'Por confirmar';
+        const payQuote = shippingService.quote(totalAmount, payCity);
         // provisional para comparar monto (se recalcula abajo con shipping real)
         const samePending = pending?.sentAt
           && (Date.now() - new Date(pending.sentAt).getTime() < 30 * 60 * 1000)
           && productNames.length > 0
+          && productNames.length === pendingNames.length
           && productNames.every(name => pendingNames.includes(String(name).toLowerCase()))
-          && (!pending.amount || Math.abs(Number(pending.amount) - Number(totalAmount)) < 5000)
-          && (!pending.city || String(pending.city).toLowerCase() === String(payCity).toLowerCase());
+          && Number(pending.amount) === payQuote.total
+          && String(pending.city || '').toLowerCase() === String(payCity).toLowerCase();
         if (samePending) {
           logger.warn(`💰 [SALE] Link ${pending.reference} ya se envió hace poco (mismo monto/ciudad). No se genera otro.`);
           return;
         }
 
-        const payQuote = shippingService.quote(totalAmount, payCity);
         const cartData = {
           contactId: contact.id,
           branchId,
@@ -1039,10 +1040,14 @@ class MessageController {
   async sendPaymentLink({ conversationId, contact, chatId, branchId, cartData, productNames, intro = null }) {
     const reference = `PAY-${conversationId}-${Date.now()}`;
 
-    await crmService.patchContext(conversationId, (ctx) => ({
+    const savedCart = await crmService.patchContext(conversationId, (ctx) => ({
       ...ctx,
       pendingCarts: { ...(ctx.pendingCarts || {}), [reference]: cartData },
     }));
+    if (!savedCart?.pendingCarts?.[reference]) {
+      logger.error('❌ [SALE-ERR] No se pudo persistir el carrito; link cancelado');
+      return null;
+    }
 
     try {
       const wompiLink = await wompiService.generatePaymentLink({
@@ -1056,12 +1061,16 @@ class MessageController {
 
       // Las transacciones de links de pago llegan con una referencia propia de Wompi:
       // el webhook solo puede reconocer la venta por payment_link_id.
-      await crmService.patchContext(conversationId, (ctx) => {
+      const linkedCart = await crmService.patchContext(conversationId, (ctx) => {
         const carts = { ...(ctx.pendingCarts || {}) };
         if (!carts[reference]) return null;
         carts[reference] = { ...carts[reference], paymentLinkId: wompiLink.id };
         return { ...ctx, pendingCarts: carts };
       });
+      if (linkedCart?.pendingCarts?.[reference]?.paymentLinkId !== wompiLink.id) {
+        logger.error('❌ [SALE-ERR] No se pudo vincular el link al carrito; envío cancelado');
+        return null;
+      }
 
       const subtotal = (cartData.items || []).reduce((sum, i) => sum + Number(i.price) * (i.quantity || 1), 0);
       const fee = Number(cartData.amount) - subtotal;
@@ -1071,17 +1080,29 @@ class MessageController {
       const paymentMsg = intro
         ? `${intro}\n\n🔗 ${wompiLink.url}`
         : `✨ *¡Todo listo!* Aquí tienes tu link de pago seguro por *$${Number(cartData.amount).toLocaleString('es-CO')} COP*${fee > 0 ? ' (envío incluido)' : ''}:\n\n${breakdown}🔗 ${wompiLink.url}\n\nConfírmame cuando lo realices para despachar tu pedido discreto. 🌹`;
-      await whatsappService.sendMessage(branchId, chatId, paymentMsg);
+      const delivered = await whatsappService.sendMessage(branchId, chatId, paymentMsg);
+      if (!delivered) return null;
       await crmService.saveMessage(conversationId, 'ASSISTANT', paymentMsg);
 
       await crmService.setSaleStage(conversationId, 'link_enviado', {
-        pendingPayment: { reference, paymentLinkId: wompiLink.id, amount: cartData.amount, products: productNames, sentAt: new Date().toISOString() },
+        pendingPayment: { reference, paymentLinkId: wompiLink.id, amount: cartData.amount, city: cartData.shippingCity, products: productNames, sentAt: new Date().toISOString() },
       });
       return wompiLink;
     } catch (err) {
       logger.error(`❌ [SALE-ERR] Wompi falló: ${err.message}`);
       return null;
     }
+  }
+
+  async _requestUnselectedProducts({ productNames, body, messageHistory = [], branchId, chatId, conversationId }) {
+    const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const priorText = normalize([body, ...messageHistory.slice(-8).map(m => m.content)].join(' '));
+    const established = productNames.every(name => priorText.includes(normalize(String(name).replace(/\s+x\d+$/i, ''))));
+    if (established) return false;
+    const question = `Antes de registrar o cobrar, confirma los productos de tu pedido:\n${productNames.map(name => `• ${name}`).join('\n')}\n\n¿Quieres llevar exactamente estos productos?`;
+    const sent = await whatsappService.sendMessage(branchId, chatId, question);
+    if (sent) await crmService.saveMessage(conversationId, 'ASSISTANT', question);
+    return true;
   }
 
   _isMessageBlocked(chatId, msg) {

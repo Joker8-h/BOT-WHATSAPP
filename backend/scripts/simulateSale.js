@@ -153,16 +153,23 @@ function summarizeActions(actions = {}) {
 function scoreScenario(scenario, contact, sale, lastActions) {
   const checks = [];
   const has = (v) => v && v !== 'Sin nombre' && v !== 'Por confirmar' && String(v).trim() !== '';
-  checks.push(['producto', (sale.interestProducts || lastActions.productsToSell || []).length > 0]);
-  checks.push(['nombre', has(contact.name)]);
+  if (scenario.expect?.close !== 'none') checks.push(['producto', (sale.interestProducts?.length || lastActions.productsToSell?.length || 0) > 0]);
+  if (scenario.expect?.close !== 'none') checks.push(['nombre', has(contact.name)]);
   checks.push(['ciudad', has(contact.city)]);
   checks.push(['dirección', has(contact.address)]);
-  checks.push(['barrio', has(contact.neighborhood)]);
-  checks.push(['teléfono', has(contact.deliveryPhone)]);
-  checks.push(['cierre', !!(lastActions.shouldCreateContraEntrega || lastActions.shouldCloseSale)]);
+  const suppliedNeighborhood = scenario.turns.join(' ').match(/barrio\s+([\p{L}]+)/iu);
+  if (suppliedNeighborhood) checks.push(['barrio', has(contact.neighborhood)]);
+  else checks.push(['sin barrio inventado', !has(contact.neighborhood)]);
+  if (scenario.expect?.close !== 'none') checks.push(['teléfono', has(contact.deliveryPhone)]);
+  if (scenario.expect?.close === 'none') checks.push(['sin cierre prematuro', !lastActions.shouldCreateContraEntrega && !lastActions.shouldCloseSale]);
+  else checks.push(['cierre', !!(lastActions.shouldCreateContraEntrega || lastActions.shouldCloseSale)]);
   if (scenario.expect?.close === 'contra') checks.push(['cierre==CONTRA', !!lastActions.shouldCreateContraEntrega]);
   if (scenario.expect?.close === 'wompi') checks.push(['cierre==WOMPI', !!lastActions.shouldCloseSale]);
   if (scenario.expect?.city) checks.push([`ciudad==${scenario.expect.city}`, (contact.city || '').toLowerCase().includes(scenario.expect.city.toLowerCase().slice(0, 5))]);
+  if (scenario.expect?.qty) {
+    const catalogService = require('../src/services/catalogService');
+    checks.push([`cantidad==${scenario.expect.qty}`, (lastActions.productsToSell || []).reduce((sum, p) => sum + catalogService._parseQuantity(p).quantity, 0) === scenario.expect.qty]);
+  }
   return checks;
 }
 
@@ -285,9 +292,10 @@ async function main() {
   for (const r of results) {
     console.log(`  ${r.passed === r.total && r.total ? '✅' : '⚠️'} ${r.id}: ${r.passed}/${r.total}${r.error ? ` ERROR ${r.error}` : ''}`);
   }
+  if (results.some(r => r.error || (r.total > 0 && r.passed !== r.total))) process.exitCode = 1;
 }
 
-main()
+if (require.main === module) main()
   .catch(err => {
     console.error(c('red', `❌ ${err.message}`));
     process.exitCode = 1;
@@ -295,3 +303,5 @@ main()
   .finally(async () => {
     await prisma.$disconnect().catch(() => {});
   });
+
+module.exports = { scoreScenario };

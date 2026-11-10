@@ -54,7 +54,8 @@ RUN node scripts/patchWwebjs.js
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Asegurar permisos y directorios de sesión
-RUN mkdir -p /app/.wwebjs_auth /app/logs /app/data && \
+RUN sed -i 's/\r$//' ./scripts/docker-start.sh && \
+    mkdir -p /app/.wwebjs_auth /app/logs /app/data && \
     chmod +x ./scripts/docker-start.sh
 
 EXPOSE 5000

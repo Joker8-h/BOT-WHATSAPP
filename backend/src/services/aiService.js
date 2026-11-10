@@ -137,7 +137,7 @@ async function callChatWithFallback(messages, opts = {}) {
   const chains = { openai: MODEL_CHAIN, gemini: GEMINI_CHAIN, groq: GROQ_CHAIN };
   const hasSecondary = !!gemini || !!groq;
 
-  for (const provider of order) {
+  providerLoop: for (const provider of order) {
     if (provider !== 'openai' && hasVision) continue; // secundarios no hacen visión
     const client = clients[provider] || openai;
     const chain = chains[provider] || MODEL_CHAIN;
@@ -167,10 +167,16 @@ async function callChatWithFallback(messages, opts = {}) {
             // response_format solo OpenAI/Groq (la capa OpenAI de Gemini lo soporta parcial)
             ...(response_format && provider !== 'gemini' ? { response_format } : {}),
           });
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error(`${provider} timeout: la respuesta tardó más de 30 segundos`)), 30000)
-          );
-          const completion = await Promise.race([completionPromise, timeoutPromise]);
+          let timeoutId;
+          const timeoutPromise = new Promise((_, reject) => {
+            timeoutId = setTimeout(() => reject(new Error(`${provider} timeout: la respuesta tardó más de 30 segundos`)), 30000);
+          });
+          let completion;
+          try {
+            completion = await Promise.race([completionPromise, timeoutPromise]);
+          } finally {
+            clearTimeout(timeoutId);
+          }
           // Modelos reasoning (gpt-oss en Groq) pueden devolver content vacío si el
           // razonamiento consumió los tokens: reintentar con el siguiente modelo
           const content = completion?.choices?.[0]?.message?.content;
@@ -190,8 +196,11 @@ async function callChatWithFallback(messages, opts = {}) {
           const isTimeout = err.message && err.message.includes('timeout');
 
           if (rateLimited) {
-            lastRateLimitTimestamp = Date.now();
+            if (provider === 'openai') lastRateLimitTimestamp = Date.now();
             logger.warn(`⚠️ [RATE_LIMIT] ${provider}:${model}: ${err.message?.substring(0, 120)}`);
+            if (provider === 'openai' && /insufficient_quota|no credits|billing|quota.*exceeded/i.test(`${err.code || ''} ${err.message || ''} ${err.error?.code || ''}`)) {
+              continue providerLoop;
+            }
             await sleep(getRetryAfterMs(err, attempt));
             break; // siguiente modelo / proveedor
           }
@@ -215,6 +224,10 @@ async function callChatWithFallback(messages, opts = {}) {
             }
             logger.warn(`⚠️ [FALLBACK] ${provider}:${model} error ${err.status || err.message?.substring(0, 80)} — probando siguiente modelo`);
             await sleep(500);
+            break;
+          }
+          if (err.status === 404 || err.code === 'model_not_found' || err.error?.code === 'model_not_found') {
+            logger.warn(`⚠️ [FALLBACK] Modelo ${provider}:${model} no disponible; probando siguiente`);
             break;
           }
           throw wrapOpenRouterError(err);
@@ -638,6 +651,7 @@ class AIService {
       const tokensUsed = completion.usage?.total_tokens || 0;
 
       const actions = this.parseActions(aiResponse);
+      this.validateCapturedData(actions, userMessage, messageHistory, contact);
       const cleanResponse = this.cleanResponse(aiResponse);
 
       if (products.length === 0) {
@@ -885,6 +899,17 @@ Responde SOLO con el texto del mensaje.`;
     const contactCity = contact.city.toLowerCase().trim();
     const exactMatch = branches.find(b => b.city.toLowerCase().trim() === contactCity);
     return exactMatch || branches[0];
+  }
+
+  validateCapturedData(actions, userMessage, history = [], contact = {}) {
+    if (!actions.capturedNeighborhood) return;
+    const normalize = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const neighborhood = normalize(actions.capturedNeighborhood);
+    const sources = [userMessage, contact.neighborhood, ...history.filter(m => m.role === 'USER').map(m => m.content)];
+    if (!neighborhood || !sources.some(text => ` ${normalize(text)} `.includes(` ${neighborhood} `))) {
+      logger.warn('⚠️ [DATA-GUARD] Barrio sin respaldo en los datos del cliente; captura descartada');
+      delete actions.capturedNeighborhood;
+    }
   }
 
   parseActions(response) {

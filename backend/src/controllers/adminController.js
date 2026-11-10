@@ -621,14 +621,20 @@ class AdminController {
       }
 
       const data = { status };
+      if (['CANCELLED', 'REFUNDED'].includes(existing.status) && status !== existing.status) {
+        return res.status(409).json({ success: false, error: 'Un pedido cancelado o reembolsado no puede reactivarse. Crea un pedido nuevo.' });
+      }
       if (trackingNumber) data.trackingNumber = trackingNumber;
       if (shippingAddress) data.shippingAddress = shippingAddress;
 
-      const order = await prisma.order.update({ where: { id }, data });
+      const order = status === 'CANCELLED'
+        ? await crmService.cancelOrder(id, data)
+        : await prisma.order.update({ where: { id }, data });
+      catalogService.invalidateCache(existing.branchId);
       logger.info(`📋 Orden #${id} actualizada: ${status}`);
       res.json({ success: true, data: order });
     } catch (error) {
-      res.status(500).json({ success: false, error: error.message });
+      res.status(error.code === 'ORDER_CONFLICT' ? 409 : 500).json({ success: false, error: error.message });
     }
   }
 

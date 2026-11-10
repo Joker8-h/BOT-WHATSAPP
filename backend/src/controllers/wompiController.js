@@ -5,7 +5,7 @@ const whatsappService = require('../services/whatsappService');
 const ownerAlertService = require('../services/ownerAlertService');
 const shippingService = require('../services/shippingService');
 const { decrypt } = require('../utils/encryption');
-const { formatCOP, formatDisplayPhone, formatWaLink, formatClientDisplayName } = require('../utils/helpers');
+const { formatCOP, formatDisplayPhone, formatWaLink, formatClientDisplayName, normalizeCoPhone } = require('../utils/helpers');
 
 const DECLINE_STATUSES = ['DECLINED', 'ERROR', 'VOIDED'];
 
@@ -157,8 +157,8 @@ class WompiController {
     if (transaction.status !== 'APPROVED') {
       logger.info(`ℹ️ Wompi: transacción ${reference} no aprobada (${transaction.status}). No se crea pedido.`);
       if (DECLINE_STATUSES.includes(transaction.status)) {
-        const chatId = `${this._cleanPhone(conversation.contact.phone)}@c.us`;
-        const declineMsg = `❌ *Pago Rechazado* \n\nHola, tu pago no ha podido ser procesado. Por favor intenta con otro medio o contacta a tu banco.\n\nSi prefieres, también puedes pagar contraentrega 😊`;
+        const chatId = this._customerChatId(conversation.contact.phone);
+        const declineMsg = `❌ *Pago Rechazado* \n\nHola, tu pago no ha podido ser procesado. Por favor intenta con otro medio o contacta a tu banco.${shippingService.isLocalCity(cartData?.shippingCity || conversation.contact.city) ? '\n\nTambién puedes solicitar contraentrega.' : ''}`;
         await whatsappService.sendMessage(conversation.branchId, chatId, declineMsg).catch(() => {});
         await ownerAlertService.onPaymentDeclined({
           contact: conversation.contact,
@@ -219,7 +219,7 @@ class WompiController {
     });
 
     const paid = (transaction.amount_in_cents || 0) / 100;
-    const mismatch = Math.abs(paid - Number(order.amount)) > 1;
+    const mismatch = transaction.currency !== 'COP' || !Number.isFinite(paid) || Math.abs(paid - Number(order.amount)) > 1;
     if (mismatch) {
       await ownerAlertService.onPaymentMismatch({
         branchId: order.branchId, contact: order.contact,
@@ -266,9 +266,14 @@ class WompiController {
         }
         throw error;
       }
-      await this._afterApproved(order, transaction, null);
+      const paid = Number(transaction.amount_in_cents) / 100;
+      const mismatch = transaction.currency !== 'COP' || !Number.isFinite(paid) || Math.abs(paid - Number(order.amount)) > 1;
+      if (mismatch) {
+        await ownerAlertService.onPaymentMismatch({ branchId: order.branchId, contact: order.contact, expected: Number(order.amount), paid, transactionId: transaction.id });
+      }
+      await this._afterApproved(order, transaction, null, { mismatch });
     } else if (DECLINE_STATUSES.includes(transaction.status)) {
-      const chatId = `${this._cleanPhone(order.contact.phone)}@c.us`;
+      const chatId = this._customerChatId(order.contact.phone);
       const declineMsg = `❌ *Pago Rechazado* \n\nHola, tu pago por ${formatCOP(order.amount)} no ha podido ser procesado.`;
       await whatsappService.sendMessage(order.branchId, chatId, declineMsg).catch(() => {});
       // Cerrar la orden pendiente para que no quede colgada como PAYMENT_SENT eterna
@@ -297,37 +302,49 @@ class WompiController {
     if (mismatch) {
       await prisma.order.update({ where: { id: order.id }, data: { status: 'PENDING' } }).catch(() => {});
       logger.warn(`⚠️ Wompi: orden ${order.id} en revisión por monto distinto — stock intacto hasta confirmar`);
+      return;
     }
 
+    let stockReady = false;
     await step('stock', async () => {
       if (mismatch) return;
       const googleSheetsService = require('../services/googleSheetsService');
+      await prisma.$transaction(async (tx) => {
       for (const item of order.items) {
         // Decremento atómico: evita oversell con webhooks concurrentes
-        const res = await prisma.product.updateMany({
+        const res = await tx.product.updateMany({
           where: { id: item.product.id, stock: { gte: item.quantity } },
           data: { stock: { decrement: item.quantity } },
         });
         if (res.count === 0) {
           logger.warn(`⚠️ Wompi post-pago [stock] sin stock suficiente para ${item.product.name} (orden ${order.id})`);
-          await ownerAlertService.onPaymentMismatch({
-            branchId: order.branchId, contact: order.contact,
-            expected: Number(order.amount), paid: (transaction.amount_in_cents || 0) / 100,
-            transactionId: `${transaction.id}-sin-stock`,
-          }).catch(() => {});
-          continue;
+          throw new Error(`Stock insuficiente para pedido ${order.id}`);
         }
-        const fresh = await prisma.product.findUnique({ where: { id: item.product.id }, select: { stock: true } });
-        await prisma.product.update({
+        const fresh = await tx.product.findUnique({ where: { id: item.product.id }, select: { stock: true } });
+        await tx.product.update({
           where: { id: item.product.id },
           data: { isAvailable: (fresh?.stock ?? 0) > 0 },
-        }).catch(() => {});
-        await googleSheetsService.updateStock(item.product.id, fresh?.stock ?? 0);
+        });
+      }
+      });
+      stockReady = true;
+      require('../services/catalogService').invalidateCache(order.branchId);
+      for (const item of order.items) {
+        await step('sincronizar stock', async () => {
+          const fresh = await prisma.product.findUnique({ where: { id: item.product.id }, select: { stock: true } });
+          await googleSheetsService.updateStock(item.product.id, fresh?.stock ?? 0);
+        });
       }
     });
 
+    if (!stockReady) {
+      await prisma.order.update({ where: { id: order.id }, data: { status: 'PENDING', notes: `${order.notes || ''} | Pago recibido: inventario pendiente de revisión` } });
+      await ownerAlertService.onPaymentOrphan({ branchId: order.branchId, transaction, reason: `Pedido #${order.id}: pago recibido, reserva de inventario fallida; revisar antes de despachar` });
+      return;
+    }
+
     await step('cliente', async () => {
-      const chatId = `${this._cleanPhone(order.contact.phone)}@c.us`;
+      const chatId = this._customerChatId(order.contact.phone);
       const customerMsg = `✅ *¡Pago confirmado!* \n\nHola ${order.contact.name || ''}, hemos recibido tu pago por valor de ${formatCOP(order.amount)}. \n\nEstamos preparando tu pedido. Pronto te notificaremos cuando sea despachado. ¡Gracias por confiar en Fantasías! 🌹`;
       await whatsappService.sendMessage(order.branchId, chatId, customerMsg);
     });
@@ -397,6 +414,11 @@ class WompiController {
       const postSaleService = require('../services/postSaleService');
       await postSaleService.schedule(order.id);
     });
+  }
+
+  _customerChatId(phone) {
+    const value = String(phone || '').trim();
+    return value.includes('@') ? value : `${normalizeCoPhone(value)}@c.us`;
   }
 
   _cleanPhone(phone) {

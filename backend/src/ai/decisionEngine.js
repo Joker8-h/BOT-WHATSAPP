@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────
 const { openai, MODEL, MODEL_CHAIN, groq, GROQ_CHAIN, gemini, GEMINI_CHAIN } = require('../config/openai');
 const logger = require('../utils/logger');
+let openaiUnavailableUntil = 0;
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function isRateLimitError(err) {
@@ -51,6 +52,7 @@ CRITERIOS:
     // Retry con fallback de modelos en caso de RATE_LIMIT (evita bloquear el flujo principal)
     let lastErr = null;
     for (const model of MODEL_CHAIN.slice(0, 3)) { // solo 3 primeros para clasificación (rápido)
+      if (Date.now() < openaiUnavailableUntil) break;
       try {
         const response = await openai.chat.completions.create({
           model,
@@ -64,11 +66,16 @@ CRITERIOS:
         return result;
       } catch (err) {
         lastErr = err;
+        if (/insufficient_quota|no credits|billing/i.test(`${err.code || ''} ${err.message || ''} ${err.error?.code || ''}`)) {
+          openaiUnavailableUntil = Date.now() + 5 * 60 * 1000;
+          break;
+        }
         if (isRateLimitError(err)) {
           logger.warn(`⚠️ [RATE_LIMIT] classifyClient ${model} agotado, probando siguiente`);
           await sleep(400 + Math.random() * 400);
           continue;
         }
+        if (err.status === 404 || err.status >= 500 || err.code === 'model_not_found') continue;
         throw err;
       }
     }

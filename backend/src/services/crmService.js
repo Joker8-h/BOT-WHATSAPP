@@ -128,7 +128,7 @@ class CRMService {
         where: {
           contactId,
           branchId,
-          status: { in: ['ACTIVE', 'PAUSED'] },
+          status: { in: ['ACTIVE', 'PAUSED', 'ESCALATED'] },
         },
         include: {
           messages: {
@@ -488,11 +488,13 @@ class CRMService {
           createdAt: { gte: new Date(Date.now() - windowMs) },
         },
         orderBy: { createdAt: 'desc' },
-        include: { items: { select: { productId: true } } },
+        include: { items: { select: { productId: true, quantity: true } } },
       });
       if (!recent) return null;
-      const existing = new Set(recent.items.map(item => item.productId));
-      return productIds.every(id => existing.has(id)) ? recent : null;
+      const requested = productIds.map(item => typeof item === 'object' ? item : { productId: item, quantity: 1 });
+      const identical = recent.items.length === requested.length && requested.every(item =>
+        recent.items.some(existing => existing.productId === item.productId && existing.quantity === item.quantity));
+      return identical ? recent : null;
     } catch (error) {
       logger.warn(`⚠️ No se pudo buscar un pedido reciente del contacto ${contactId}: ${error.message}`);
       return null;
@@ -511,6 +513,31 @@ class CRMService {
     } catch (error) {
       logger.warn(`⚠️ No se pudo marcar la notificación del pedido #${orderId}: ${error.message}`);
     }
+  }
+
+  async cancelOrder(orderId, data = {}, database = prisma) {
+    return database.$transaction(async tx => {
+      const order = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
+      if (!order) throw new Error('Orden no encontrada');
+      if (order.status === 'CANCELLED') return order;
+      if (!['PENDING', 'PAYMENT_SENT', 'PAID'].includes(order.status)) {
+        const error = new Error('No se puede cancelar automáticamente un pedido despachado o finalizado');
+        error.code = 'ORDER_CONFLICT';
+        throw error;
+      }
+      const changed = await tx.order.updateMany({ where: { id: orderId, status: order.status }, data: { ...data, status: 'CANCELLED', postSaleNextAt: null } });
+      if (changed.count !== 1) {
+        const error = new Error('El pedido cambió durante la cancelación; actualiza la lista');
+        error.code = 'ORDER_CONFLICT';
+        throw error;
+      }
+      if (order.paymentMethod === 'CONTRAENTREGA' || order.status === 'PAID') {
+        for (const item of order.items) {
+          await tx.product.update({ where: { id: item.productId }, data: { stock: { increment: item.quantity }, isAvailable: true } });
+        }
+      }
+      return tx.order.findUnique({ where: { id: orderId } });
+    });
   }
 
   /**
@@ -542,6 +569,60 @@ class CRMService {
       logger.error('Error en crmService.createOrder:', error);
       throw error;
     }
+  }
+
+  /**
+   * Crea un pedido contraentrega y reserva su inventario en una sola
+   * transacción. Si otro pedido tomó el stock antes, se revierte todo y el
+   * controlador puede pedir revisión manual sin dejar un pedido fantasma.
+   */
+  async createOrderAndReserveStock({ contactId, branchId, items, amount, shippingCity, shippingAddress, status = 'PENDING', paymentMethod = null, notes = null }, database = prisma) {
+    if (!items?.length || !Number.isFinite(Number(amount)) || Number(amount) <= 0 || items.some(item => !Number.isInteger(item.quantity) || item.quantity <= 0)) {
+      throw new Error('Pedido inválido: se requieren productos, cantidades positivas y un total válido');
+    }
+    return database.$transaction(async (tx) => {
+      for (const item of items) {
+        const reserved = await tx.product.updateMany({
+          where: {
+            id: item.productId,
+            isAvailable: true,
+            stock: { gte: item.quantity },
+          },
+          data: { stock: { decrement: item.quantity } },
+        });
+
+        if (reserved.count !== 1) {
+          const error = new Error(`Stock insuficiente para el producto ${item.productId}`);
+          error.code = 'INSUFFICIENT_STOCK';
+          throw error;
+        }
+
+        const product = await tx.product.findUnique({ where: { id: item.productId }, select: { stock: true } });
+        if (product && product.stock <= 0) {
+          await tx.product.update({ where: { id: item.productId }, data: { isAvailable: false } });
+        }
+      }
+
+      return tx.order.create({
+        data: {
+          contactId,
+          branchId,
+          amount,
+          status,
+          shippingCity,
+          shippingAddress,
+          paymentMethod,
+          notes,
+          items: {
+            create: items.map(item => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              price: item.price,
+            })),
+          },
+        },
+      });
+    });
   }
 
   /**
